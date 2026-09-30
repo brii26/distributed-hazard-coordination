@@ -1,0 +1,12 @@
+go 1.26.7
+
+use (
+	./services/aggregator
+	./services/audit-logger
+	./services/auth-service
+	./services/bmkg-mock
+	./services/client-facing-api
+	./services/dashboard-updater
+	./services/notifier
+	./services/pvmbg-mock
+)

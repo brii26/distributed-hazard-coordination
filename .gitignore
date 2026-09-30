@@ -1,0 +1,29 @@
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+# secrets
+.env
+
+# Go
+/bin/
+*.test
+
+# `go build` with no -o run inside a service dir produces a binary
+# named after that directory (e.g. services/bmkg-mock/bmkg-mock).
+services/*/bmkg-mock
+services/*/pvmbg-mock
+services/*/aggregator
+services/*/client-facing-api
+services/*/auth-service
+services/*/dashboard-updater
+services/*/notifier
+services/*/audit-logger
+

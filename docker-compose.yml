@@ -1,0 +1,207 @@
+version: "3.9"
+
+# See doc/TRD_M1.md for the full specification each service implements.
+
+services:
+  bmkg-mock:
+    build: ./services/bmkg-mock
+    ports:
+      - "${BMKG_PORT:-8081}:8081"
+    environment:
+      PORT: 8081
+      BMKG_API_KEY: ${BMKG_API_KEY}
+      SEED_COUNT: ${BMKG_SEED_COUNT:-20}
+      EVENT_INTERVAL_S: ${BMKG_EVENT_INTERVAL_S:-10}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pvmbg-mock:
+    build: ./services/pvmbg-mock
+    ports:
+      - "${PVMBG_PORT:-8082}:8082"
+    environment:
+      PORT: 8082
+      OAUTH_CLIENT_ID: ${PVMBG_OAUTH_CLIENT_ID}
+      OAUTH_CLIENT_SECRET: ${PVMBG_OAUTH_CLIENT_SECRET}
+      PVMBG_ONE_TIME_CODE: ${PVMBG_ONE_TIME_CODE}
+      PVMBG_DELAY_MIN_MS: ${PVMBG_DELAY_MIN_MS:-500}
+      PVMBG_DELAY_MAX_MS: ${PVMBG_DELAY_MAX_MS:-3000}
+      SEED_COUNT: ${PVMBG_SEED_COUNT:-20}
+      EVENT_INTERVAL_S: ${PVMBG_EVENT_INTERVAL_S:-10}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  canonical-store:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${CANONICAL_DB_USER:-aggregator}
+      POSTGRES_PASSWORD: ${CANONICAL_DB_PASSWORD}
+      POSTGRES_DB: ${CANONICAL_DB_NAME:-canonical_store}
+    volumes:
+      - canonical_store_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CANONICAL_DB_USER:-aggregator}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  user-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${USER_DB_USER:-auth}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
+      POSTGRES_DB: ${USER_DB_NAME:-user_db}
+    volumes:
+      - user_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-auth}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  aggregator:
+    build: ./services/aggregator
+    depends_on:
+      canonical-store:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      bmkg-mock:
+        condition: service_healthy
+      pvmbg-mock:
+        condition: service_healthy
+    environment:
+      GRPC_PORT: 9091
+      HEALTH_PORT: 8091
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-3000}
+      POLL_TIMEOUT_MS: ${POLL_TIMEOUT_MS:-4000}
+      CB_FAILURE_THRESHOLD: ${CB_FAILURE_THRESHOLD:-3}
+      CB_OPEN_DURATION_MS: ${CB_OPEN_DURATION_MS:-10000}
+      MAX_INFLIGHT_REQUESTS: ${AGGREGATOR_MAX_INFLIGHT_REQUESTS:-100}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-20}
+      DATABASE_URL: postgres://${CANONICAL_DB_USER:-aggregator}:${CANONICAL_DB_PASSWORD}@canonical-store:5432/${CANONICAL_DB_NAME:-canonical_store}?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
+      BMKG_BASE_URL: http://bmkg-mock:8081
+      BMKG_API_KEY: ${BMKG_API_KEY}
+      PVMBG_BASE_URL: http://pvmbg-mock:8082
+      PVMBG_OAUTH_CLIENT_ID: ${PVMBG_OAUTH_CLIENT_ID}
+      PVMBG_OAUTH_CLIENT_SECRET: ${PVMBG_OAUTH_CLIENT_SECRET}
+      PVMBG_ONE_TIME_CODE: ${PVMBG_ONE_TIME_CODE}
+      PVMBG_TOKEN_VOLUME_PATH: /var/lib/aggregator/pvmbg-token.json
+    volumes:
+      - aggregator_token_data:/var/lib/aggregator
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8091/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  auth-service:
+    build: ./services/auth-service
+    depends_on:
+      user-db:
+        condition: service_healthy
+    environment:
+      GRPC_PORT: 9092
+      HEALTH_PORT: 8092
+      USER_DB_URL: postgres://${USER_DB_USER:-auth}:${USER_DB_PASSWORD}@user-db:5432/${USER_DB_NAME:-user_db}?sslmode=disable
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET}
+      SECRET_SALT: ${SECRET_SALT}
+      ACCESS_TOKEN_TTL_S: ${ACCESS_TOKEN_TTL_S:-60}
+      SEED_OPERATOR_EMAIL: ${SEED_OPERATOR_EMAIL}
+      SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8092/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  client-facing-api:
+    build: ./services/client-facing-api
+    depends_on:
+      aggregator:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_FACING_API_PORT:-8080}:8080"
+    environment:
+      PORT: 8080
+      AGGREGATOR_GRPC_ADDR: aggregator:9091
+      AUTH_SERVICE_GRPC_ADDR: auth-service:9092
+      JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET}
+      MAX_INFLIGHT_REQUESTS: ${CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS:-100}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-50}
+      UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-1000}
+      ACCESS_TOKEN_TTL_S: ${ACCESS_TOKEN_TTL_S:-60}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  dashboard-updater:
+    build: ./services/dashboard-updater
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      HEALTH_PORT: 8093
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
+      QUEUE_NAME: dashboard-updater
+
+  notifier:
+    build: ./services/notifier
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      HEALTH_PORT: 8094
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
+      QUEUE_NAME: notifier
+      DEDUP_STORE_PATH: /var/lib/notifier/dedup.log
+    volumes:
+      - notifier_dedup_data:/var/lib/notifier
+
+  audit-logger:
+    build: ./services/audit-logger
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      HEALTH_PORT: 8095
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
+      QUEUE_NAME: audit-logger
+      DEDUP_STORE_PATH: /var/lib/audit-logger/dedup.log
+    volumes:
+      - audit_logger_dedup_data:/var/lib/audit-logger
+
+volumes:
+  canonical_store_data:
+  user_db_data:
+  rabbitmq_data:
+  aggregator_token_data:
+  notifier_dedup_data:
+  audit_logger_dedup_data:
