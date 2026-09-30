@@ -73,10 +73,10 @@ jobs:
         with:
           go-version: "1.23"
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           working-directory: services/${{ matrix.service }}
-          version: latest
+          version: v2.13
 
   docker-build:
     name: Docker build (${{ matrix.service }})
