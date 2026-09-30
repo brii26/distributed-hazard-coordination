@@ -6,28 +6,19 @@ Full technical spec: [`doc/TRD_M1.md`](doc/TRD_M1.md). Assignment spec: [`doc/IF
 
 ## Prerequisites
 
-- [Nix](https://nixos.org/download) with flakes enabled
-- [devenv](https://devenv.sh/getting-started/)
-- Docker (for `docker compose up` — not required just to build/test individual services)
+- Go 1.23+
+- Docker + Docker Compose (only needed for `docker compose up` — not required to build/test an individual service)
+- `git`
 
-Everything else (Go, `gh`, `golangci-lint`) is pinned in `devenv.nix` and installed automatically when you enter the shell.
+How you get these on your machine is up to you — a system package manager, `asdf`, whatever. If you'd rather not manage them yourself, this repo happens to include a [devenv](https://devenv.sh/) config (`devenv.nix`) that pins Go, `golangci-lint`, and `gh` for you: `devenv shell` drops you into a shell with all of it on `PATH`. That's just how the maintainers set their own machines up, not something the project requires — every command below is a plain command that works the same whether it's typed directly or inside a devenv shell.
 
 ## Setup
 
 ```bash
 git clone https://github.com/brii26/distributed-hazard-coordination.git
 cd distributed-hazard-coordination
-devenv shell          # first entry downloads/builds the pinned toolchain, be patient
 cp .env.example .env  # fill in real values — .env is gitignored, never commit it
 ```
-
-Authenticate `gh` once per machine (needed for creating PRs, viewing issues, etc.):
-
-```bash
-gh auth login --hostname github.com --git-protocol https --web
-```
-
-(The default interactive prompt can break on some terminals with an "unexpected escape sequence" error — the flags above skip the broken prompt entirely.)
 
 ## Repository layout
 
@@ -50,7 +41,7 @@ Each service directory is its **own Go module** (`go.work` lists them all). This
 ## Running the full stack
 
 ```bash
-devenv shell -- docker compose up --build
+docker compose up --build
 ```
 
 Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`; BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
@@ -59,7 +50,7 @@ Waits on health checks before dependent services start (e.g. Aggregator waits on
 
 ```bash
 cd services/bmkg-mock
-devenv shell -- go run .
+go run .
 ```
 
 Reads config from env vars (see that service's section in `doc/TRD_M1.md` for the full list, or `.env.example` at the repo root for every variable across all services).
@@ -69,7 +60,6 @@ Reads config from env vars (see that service's section in `doc/TRD_M1.md` for th
 CI (`.github/workflows/ci.yml`) runs these per service on every push/PR. Run them yourself first so you're not waiting on a red CI run to find out:
 
 ```bash
-devenv shell -- bash -c '
 for d in services/*/; do
   echo "== $d =="
   (cd "$d" &&
@@ -79,8 +69,9 @@ for d in services/*/; do
     go test -race -v ./... &&
     golangci-lint run ./...)
 done
-'
 ```
+
+`golangci-lint` isn't part of a plain Go install — grab it from [golangci-lint.run/welcome/install](https://golangci-lint.run/welcome/install/) if you're not using the devenv shell, which already has it on `PATH`.
 
 Any non-empty `gofmt -l` output means run `gofmt -w .` in that service directory before committing. `golangci-lint` uses the repo-root `.golangci.yml` (vendored from the `golang-lint` skill) — it's strict on purpose (unchecked errors, missing timeouts on HTTP servers, etc.); fix the underlying issue rather than reaching for a `//nolint` comment unless you can justify it in the comment itself.
 
@@ -91,9 +82,11 @@ CI also does a `docker build` per service — if you've changed a `Dockerfile` o
 - Adding a new service: create `services/<new-name>/`, add its `go.mod`, then `go work use ./services/<new-name>` from the repo root so it joins the workspace.
 - Cross-module builds (e.g. checking everything compiles at once) use the module path, not a directory glob:
   ```bash
-  devenv shell -- go build github.com/brii26/distributed-hazard-coordination/services/...
+  go build github.com/brii26/distributed-hazard-coordination/services/...
   ```
 
 ## Where things are tracked
 
 Feature/task backlog lives in [GitHub Issues](https://github.com/brii26/distributed-hazard-coordination/issues), labeled by `service:*` and `problem:P1`–`P5` (traceable back to `doc/TRD_M1.md` §11). Dependencies between issues are set as native GitHub relationships (`blocked-by`/`blocking`) — see `doc/BACKLOG_DEPENDENCIES.md` for the whole-graph view and what's unblocked right now.
+
+`gh` (GitHub CLI) is entirely optional for a human contributor — the web UI does everything `gh` does. It's called out here because it's genuinely convenient for an AI coding agent working in this repo: creating issues/PRs, checking CI status, and reading issue bodies from the terminal without a browser round-trip. See `AGENTS.md` for that recommendation; nothing in this repo requires it.
