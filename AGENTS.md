@@ -38,3 +38,12 @@ Not lazy about: understanding the problem (read it fully and trace the real flow
 - `gh` (GitHub CLI) is available and authenticated in this environment. Prefer it over asking the user to do things in the browser: create issues/PRs, check CI status, read issue bodies, link issues to PRs (`Closes #N`), and set/inspect native issue dependencies (`gh issue edit --add-blocked-by`) directly from here. Humans working on this repo don't need `gh` — the web UI covers everything for them — but for an agent it avoids a lot of round-trips.
 - Branch protection on `main` isn't active yet (pending repo-owner admin action), but treat it as if it is: never push directly to `main`, always branch + PR, per `CONTRIBUTING.md`.
 - Backlog and dependencies: `doc/BACKLOG_DEPENDENCIES.md` before picking up work — it lists which issues have no open blockers.
+
+### Owning the dependency graph
+
+GitHub's `blocked-by`/`blocking` links are manual — nothing auto-creates, clears, or updates them, and closing/merging a blocker does not remove the link on what it blocked. Since this is tedious and easy to let rot, treat it as the agent's job, not the human's:
+
+- **Closing/merging an issue that blocks others:** immediately run `gh issue edit <blocked-issue> --remove-blocked-by <this-issue>` for every issue it was blocking, then update `doc/BACKLOG_DEPENDENCIES.md` — move the now-unblocked issue(s) into "Ready now" and drop the edge from the Mermaid graph.
+- **Opening a new issue that depends on an existing one:** set the link at creation time (`gh issue create ... ` then `gh issue edit --add-blocked-by`), and add the issue as a new node/edge in `doc/BACKLOG_DEPENDENCIES.md` in the same PR/session — don't leave it for later.
+- **Before telling the user an issue is "ready to start":** verify against current `blocked-by` state (`gh issue view <n>`), not against a stale reading of the doc — the doc can lag reality between edits.
+- Whenever you touch the graph, keep the doc and GitHub's native links in sync in the same action — don't update one without the other.
