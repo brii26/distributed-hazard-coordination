@@ -12,6 +12,11 @@ devenv.local.yaml
 # secrets
 .env
 
+# Emacs
+*~
+\#*#
+.#*
+
 # Go
 /bin/
 *.test
@@ -27,3 +32,6 @@ services/*/dashboard-updater
 services/*/notifier
 services/*/audit-logger
 
+
+# local learning scratchpad, never committed
+/playground/
