@@ -17,6 +17,23 @@ const defaultPort = "8081"
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
+func requireAPIKey(expectedKey string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-BMKG-Key")
+		if key == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if key != expectedKey {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -25,10 +42,22 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func newMux() *http.ServeMux {
+func seismicEventHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(map[string]string{"test": "test"}); err != nil {
+		log.Printf("failed to write response: %v", err)
+	}
+}
+
+func newMux(apiKey string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	// TODO: implement the endpoints specified for bmkg-mock in doc/TRD_M1.md
+
+	// Future endpoints must be wrapped with requireAPIKey
+	mux.HandleFunc("GET /seismic-events", requireAPIKey(apiKey, seismicEventHandler))
+
 	return mux
 }
 
@@ -52,6 +81,12 @@ func main() {
 		log.Fatal(err)
 	}
 
+	apiKey := os.Getenv("BMKG_API_KEY")
+
+	if len(apiKey) == 0 {
+		log.Fatal("API key is not provided")
+	}
+
 	// Reparsed as an int purely so the log line below carries a numeric
 	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
@@ -61,7 +96,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(),
+		Handler:           newMux(apiKey),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
