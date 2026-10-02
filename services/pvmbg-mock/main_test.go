@@ -43,7 +43,9 @@ func TestResolvePortInvalid(t *testing.T) {
 }
 
 func TestSchemaVersionToggle(t *testing.T) {
-	// Not parallel: mutates the package-level schemaExtended flag.
+	t.Parallel()
+
+	// Only test touching schemaExtended, so parallel is safe.
 	for _, want := range []string{"extended", "legacy"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/schema-version", nil)
 		rec := httptest.NewRecorder()
