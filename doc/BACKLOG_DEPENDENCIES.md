@@ -23,29 +23,39 @@ Once #1 lands, #2 (BMKG endpoints) unblocks — the seed store #2 reads from nee
 
 ## Full graph
 
+Green = merged. Merged issues stay in the graph (edges kept) so progress is visible; only the "Ready now" list drops them.
+
 ```mermaid
 graph TD
   1["#1 bmkg seed+generator"] --> 2["#2 bmkg endpoints"]
   5["#5 pvmbg seed+generator"] -.->|informs, not blocking| 7
 
+  6["#6 pvmbg oauth issuance"] --> 15["#15 agg pvmbg token bootstrap/rotation"]
+  6 --> 7["#7 pvmbg endpoint+delay"]
+
   2 --> 16["#16 agg pollers"]
-  7["#7 pvmbg endpoint+delay"] --> 16
+  7 --> 16
   16 --> 17["#17 agg map seismic"]
   16 --> 18["#18 agg map volcanic"]
   16 --> 20["#20 agg circuit breaker"]
   17 --> 19["#19 agg unknown-field policy"]
   18 --> 19
 
-  19 --> 21["#21 agg upsert"]
+  10["#10 canonical store schema"] --> 21["#21 agg upsert"]
+  19 --> 21
   21 --> 22["#22 agg grpc read api"]
   20 --> 22
 
-  21 --> 23["#23 agg publish"]
+  14["#14 rabbitmq topology"] --> 23["#23 agg publish"]
+  21 --> 23
 
-  12["#12 auth login/refresh/logout rpcs"] --> 24["#24 cfa login proxy"]
+  11["#11 auth userdb schema"] --> 12["#12 auth login/refresh/logout rpcs"]
+  11 --> 13["#13 auth register/createaccount rpcs"]
+
+  12 --> 24["#24 cfa login proxy"]
   24 --> 25["#25 cfa jwt middleware"]
   25 --> 26["#26 cfa transparent refresh"]
-  25 --> 13["#13 auth register/createaccount rpcs"]
+  25 --> 13
   25 --> 27["#27 cfa register/accounts"]
   13 --> 27
   25 --> 29["#29 cfa /hazards field auth"]
@@ -66,6 +76,9 @@ graph TD
 
   28 --> 37["#37 p2 load-test harness"]
   20 --> 37
+
+  classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+  class 6,10,11,14 done
 ```
 
 ## Notes on reading this
