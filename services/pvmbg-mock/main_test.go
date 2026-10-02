@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,21 @@ func TestOutageToggle(t *testing.T) {
 
 	if rec := do(http.MethodGet, "/volcanic-reports"); rec.Code == http.StatusServiceUnavailable {
 		t.Fatal("outage should be cleared after second toggle")
+	}
+}
+
+func TestSchemaVersionToggle(t *testing.T) {
+	t.Parallel()
+
+	// Only test touching schemaExtended, so parallel is safe.
+	for _, want := range []string{"extended", "legacy"} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/schema-version", nil)
+		rec := httptest.NewRecorder()
+
+		newMux().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("expected 200 with %q, got %d %s", want, rec.Code, rec.Body.String())
+		}
 	}
 }
