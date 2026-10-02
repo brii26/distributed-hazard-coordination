@@ -83,9 +83,10 @@ func schemaVersion(extended bool) string {
 	return "legacy"
 }
 
-func newMux() http.Handler {
+func newMux(store *tokenStore) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("POST /oauth/token", store.tokenHandler)
 	mux.HandleFunc("POST /admin/outage", outageHandler)
 	mux.HandleFunc("POST /admin/schema-version", schemaVersionHandler)
 	// TODO: implement the endpoints specified for pvmbg-mock in doc/TRD_M1.md
@@ -107,6 +108,14 @@ func resolvePort(raw string) (string, error) {
 }
 
 func main() {
+	clientID := os.Getenv("OAUTH_CLIENT_ID")
+	clientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
+	oneTimeCode := os.Getenv("PVMBG_ONE_TIME_CODE")
+
+	if clientID == "" || clientSecret == "" || oneTimeCode == "" {
+		log.Fatal("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET and PVMBG_ONE_TIME_CODE must be set")
+	}
+
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
 		log.Fatal(err)
@@ -121,7 +130,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(),
+		Handler:           newMux(newTokenStore(clientID, clientSecret, oneTimeCode)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
