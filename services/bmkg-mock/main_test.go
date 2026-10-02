@@ -15,7 +15,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey).ServeHTTP(rec, req)
+	newMux(testAPIKey, discardLogger()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -49,7 +49,7 @@ func TestUnauthorized(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/seismic-events", nil)
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey).ServeHTTP(rec, req)
+	newMux(testAPIKey, discardLogger()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d", rec.Code)
@@ -64,7 +64,7 @@ func TestForbidden(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey).ServeHTTP(rec, req)
+	newMux(testAPIKey, discardLogger()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d", rec.Code)
@@ -79,7 +79,7 @@ func TestAuthorized(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey).ServeHTTP(rec, req)
+	newMux(testAPIKey, discardLogger()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -21,15 +22,20 @@ func requireAPIKey(expectedKey string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-BMKG-Key")
 		if key == "" {
+			logFrom(r.Context()).Warn("api key rejected", "reason", "missing X-BMKG-Key")
 			w.WriteHeader(http.StatusUnauthorized)
+
 			return
 		}
 
 		if key != expectedKey {
+			logFrom(r.Context()).Warn("api key rejected", "reason", "invalid X-BMKG-Key")
 			w.WriteHeader(http.StatusForbidden)
+
 			return
 		}
 
+		logFrom(r.Context()).Info("api key accepted")
 		next(w, r)
 	}
 }
@@ -50,7 +56,7 @@ func seismicEventHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func newMux(apiKey string) *http.ServeMux {
+func newMux(apiKey string, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	// TODO: implement the endpoints specified for bmkg-mock in doc/TRD_M1.md
@@ -58,7 +64,7 @@ func newMux(apiKey string) *http.ServeMux {
 	// Future endpoints must be wrapped with requireAPIKey
 	mux.HandleFunc("GET /seismic-events", requireAPIKey(apiKey, seismicEventHandler))
 
-	return mux
+	return withRequestLog(logger, mux)
 }
 
 // resolvePort validates a raw port value (as read from the PORT env var),
@@ -76,6 +82,11 @@ func resolvePort(raw string) (string, error) {
 }
 
 func main() {
+	logger := newLogger(os.Stdout)
+	// Routes the stdlib log package (including log.Fatal) through the JSON
+	// handler too; "-" marks lines that aren't tied to a request.
+	slog.SetDefault(logger.With("correlation_id", "-"))
+
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
 		log.Fatal(err)
@@ -96,7 +107,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(apiKey),
+		Handler:           newMux(apiKey, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
