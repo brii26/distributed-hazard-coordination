@@ -30,7 +30,7 @@ func postToken(t *testing.T, store *tokenStore, secret string, form url.Values) 
 	req.SetBasicAuth(testClientID, secret)
 
 	rec := httptest.NewRecorder()
-	newMux(store).ServeHTTP(rec, req)
+	newMux(store, testAdminKey).ServeHTTP(rec, req)
 
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
