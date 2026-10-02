@@ -83,12 +83,33 @@ func schemaVersion(extended bool) string {
 	return "legacy"
 }
 
-func newMux(store *tokenStore) http.Handler {
+// requireAdminKey guards /admin/* with the X-Admin-Key header: missing is 401,
+// wrong is 403 (same shape as the BMKG mock's X-BMKG-Key).
+func requireAdminKey(adminKey string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-Admin-Key")
+		if key == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		if !equal(key, adminKey) {
+			w.WriteHeader(http.StatusForbidden)
+
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func newMux(store *tokenStore, adminKey string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("POST /oauth/token", store.tokenHandler)
-	mux.HandleFunc("POST /admin/outage", outageHandler)
-	mux.HandleFunc("POST /admin/schema-version", schemaVersionHandler)
+	mux.HandleFunc("POST /admin/outage", requireAdminKey(adminKey, outageHandler))
+	mux.HandleFunc("POST /admin/schema-version", requireAdminKey(adminKey, schemaVersionHandler))
 	// TODO: implement the endpoints specified for pvmbg-mock in doc/TRD_M1.md
 	return withOutage(mux)
 }
@@ -111,9 +132,10 @@ func main() {
 	clientID := os.Getenv("OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
 	oneTimeCode := os.Getenv("PVMBG_ONE_TIME_CODE")
+	adminKey := os.Getenv("ADMIN_KEY")
 
-	if clientID == "" || clientSecret == "" || oneTimeCode == "" {
-		log.Fatal("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET and PVMBG_ONE_TIME_CODE must be set")
+	if clientID == "" || clientSecret == "" || oneTimeCode == "" || adminKey == "" {
+		log.Fatal("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, PVMBG_ONE_TIME_CODE and ADMIN_KEY must be set")
 	}
 
 	port, err := resolvePort(os.Getenv("PORT"))
@@ -130,7 +152,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(newTokenStore(clientID, clientSecret, oneTimeCode)),
+		Handler:           newMux(newTokenStore(clientID, clientSecret, oneTimeCode), adminKey),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
