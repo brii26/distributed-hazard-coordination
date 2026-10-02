@@ -13,7 +13,7 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 - #4 BMKG mock: structured logging and correlation ID
 - #5 PVMBG mock: seed data and background event generator
 - #6 PVMBG mock: OAuth token issuance (bootstrap + refresh rotation)
-- #11 Auth Service: users and refresh_tokens schema
+- #12 Auth Service: Login/Refresh/Logout RPCs
 - #14 RabbitMQ: fanout exchange and durable per-consumer queue setup
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #34 Cross-cutting: correlation ID propagation across all services
@@ -47,13 +47,10 @@ graph TD
   14["#14 rabbitmq topology"] --> 23["#23 agg publish"]
   21 --> 23
 
-  11["#11 auth userdb schema"] --> 12["#12 auth login/refresh/logout rpcs"]
-  11 --> 13["#13 auth register/createaccount rpcs"]
-
-  12 --> 24["#24 cfa login proxy"]
+  12["#12 auth login/refresh/logout rpcs"] --> 24["#24 cfa login proxy"]
   24 --> 25["#25 cfa jwt middleware"]
   25 --> 26["#26 cfa transparent refresh"]
-  25 --> 13
+  25 --> 13["#13 auth register/createaccount rpcs"]
   25 --> 27["#27 cfa register/accounts"]
   13 --> 27
   25 --> 29["#29 cfa /hazards field auth"]
