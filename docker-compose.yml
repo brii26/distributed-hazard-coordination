@@ -57,8 +57,13 @@ services:
       POSTGRES_USER: ${USER_DB_USER:-auth}
       POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
       POSTGRES_DB: ${USER_DB_NAME:-user_db}
+      # Read only by the init seed script.
+      SEED_OPERATOR_EMAIL: ${SEED_OPERATOR_EMAIL}
+      SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD}
+      SECRET_SALT: ${SECRET_SALT}
     volumes:
       - user_db_data:/var/lib/postgresql/data
+      - ./services/auth-service/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-auth}"]
       interval: 5s
