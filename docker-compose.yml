@@ -71,8 +71,8 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-      - ./services/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
-      - ./services/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-definitions.conf:ro
+      - ./infra/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./infra/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-definitions.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s
