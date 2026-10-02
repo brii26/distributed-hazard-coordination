@@ -444,7 +444,7 @@ CREATE TABLE users (
     user_id       VARCHAR(255) PRIMARY KEY,
     email         VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role          VARCHAR(32) NOT NULL   -- Media | Lapangan | Operator
+    role          VARCHAR(32) NOT NULL CHECK (role IN ('Media','Lapangan','Operator'))
 );
 
 CREATE TABLE refresh_tokens (
