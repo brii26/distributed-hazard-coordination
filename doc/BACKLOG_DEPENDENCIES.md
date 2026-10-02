@@ -13,14 +13,12 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 - #4 BMKG mock: structured logging and correlation ID
 - #5 PVMBG mock: seed data and background event generator
 - #6 PVMBG mock: OAuth token issuance (bootstrap + refresh rotation)
-- #8 PVMBG mock: POST /admin/outage toggle
-- #9 PVMBG mock: POST /admin/schema-version toggle (confidence_level)
-- #10 Canonical Store: hazard_events schema and indexes
 - #11 Auth Service: users and refresh_tokens schema
 - #14 RabbitMQ: fanout exchange and durable per-consumer queue setup
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #34 Cross-cutting: correlation ID propagation across all services
 - #35 Cross-cutting: health check depth per service
+- #54 PVMBG mock: require admin key on /admin/* endpoints (added after M1 issues #1-#37; stacked on #53 in practice, no GitHub blocker)
 
 Once #1 lands, #2 (BMKG endpoints) unblocks — the seed store #2 reads from needs to exist first, so #2 isn't in the "ready now" list even though it has no *other* dependents.
 
@@ -42,8 +40,7 @@ graph TD
   17 --> 19["#19 agg unknown-field policy"]
   18 --> 19
 
-  10["#10 canonical store schema"] --> 21["#21 agg upsert"]
-  19 --> 21
+  19 --> 21["#21 agg upsert"]
   21 --> 22["#22 agg grpc read api"]
   20 --> 22
 
