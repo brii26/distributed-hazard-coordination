@@ -42,6 +42,35 @@ func TestResolvePortInvalid(t *testing.T) {
 	}
 }
 
+func TestOutageToggle(t *testing.T) {
+	t.Parallel()
+
+	do := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		newMux().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, path, nil))
+
+		return rec
+	}
+
+	if rec := do(http.MethodPost, "/admin/outage"); rec.Code != http.StatusOK {
+		t.Fatalf("toggle on: got %d", rec.Code)
+	}
+
+	if rec := do(http.MethodGet, "/volcanic-reports"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("during outage: expected 503, got %d", rec.Code)
+	}
+
+	if rec := do(http.MethodGet, "/health"); rec.Code != http.StatusOK {
+		t.Fatalf("health during outage: got %d", rec.Code)
+	}
+
+	do(http.MethodPost, "/admin/outage")
+
+	if rec := do(http.MethodGet, "/volcanic-reports"); rec.Code == http.StatusServiceUnavailable {
+		t.Fatal("outage should be cleared after second toggle")
+	}
+}
+
 func TestSchemaVersionToggle(t *testing.T) {
 	t.Parallel()
 
