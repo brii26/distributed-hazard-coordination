@@ -26,6 +26,36 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// outageActive makes /volcanic-reports fail fast with 503 (no hang, no
+// auto-recovery). /health keeps reporting ok: the process is up, only the
+// simulated upstream is down.
+var outageActive atomic.Bool
+
+func outageHandler(w http.ResponseWriter, _ *http.Request) {
+	active := !outageActive.Load()
+	outageActive.Store(active)
+
+	log.Printf("outage toggled: %t -> %t at %s", !active, active, time.Now().UTC().Format(time.RFC3339))
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(map[string]bool{"outage_active": active}); err != nil {
+		log.Printf("failed to write outage response: %v", err)
+	}
+}
+
+func withOutage(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if outageActive.Load() && r.URL.Path == "/volcanic-reports" {
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
 // schemaExtended is read by the /volcanic-reports generator and handler (#5,
 // #7) to decide whether reports carry confidence_level.
 var schemaExtended atomic.Bool
@@ -53,12 +83,13 @@ func schemaVersion(extended bool) string {
 	return "legacy"
 }
 
-func newMux() *http.ServeMux {
+func newMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("POST /admin/outage", outageHandler)
 	mux.HandleFunc("POST /admin/schema-version", schemaVersionHandler)
 	// TODO: implement the endpoints specified for pvmbg-mock in doc/TRD_M1.md
-	return mux
+	return withOutage(mux)
 }
 
 // resolvePort validates a raw port value (as read from the PORT env var),
