@@ -12,17 +12,18 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 - #3 BMKG mock: X-BMKG-Key validation
 - #4 BMKG mock: structured logging and correlation ID
 - #5 PVMBG mock: seed data and background event generator
-- #6 PVMBG mock: OAuth token issuance (bootstrap + refresh rotation)
+- #7 PVMBG mock: GET /volcanic-reports with configurable delay
 - #12 Auth Service: Login/Refresh/Logout RPCs
-- #14 RabbitMQ: fanout exchange and durable per-consumer queue setup
+- #15 Aggregator: PVMBG token bootstrap and rotation
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #34 Cross-cutting: correlation ID propagation across all services
 - #35 Cross-cutting: health check depth per service
-- #54 PVMBG mock: require admin key on /admin/* endpoints (added after M1 issues #1-#37; stacked on #53 in practice, no GitHub blocker)
 
 Once #1 lands, #2 (BMKG endpoints) unblocks — the seed store #2 reads from needs to exist first, so #2 isn't in the "ready now" list even though it has no *other* dependents.
 
 ## Full graph
+
+Green = merged. Merged issues stay in the graph (edges kept) so progress is visible; only the "Ready now" list drops them.
 
 ```mermaid
 graph TD
@@ -40,17 +41,21 @@ graph TD
   17 --> 19["#19 agg unknown-field policy"]
   18 --> 19
 
-  19 --> 21["#21 agg upsert"]
+  10["#10 canonical store schema"] --> 21["#21 agg upsert"]
+  19 --> 21
   21 --> 22["#22 agg grpc read api"]
   20 --> 22
 
   14["#14 rabbitmq topology"] --> 23["#23 agg publish"]
   21 --> 23
 
-  12["#12 auth login/refresh/logout rpcs"] --> 24["#24 cfa login proxy"]
+  11["#11 auth userdb schema"] --> 12["#12 auth login/refresh/logout rpcs"]
+  11 --> 13["#13 auth register/createaccount rpcs"]
+
+  12 --> 24["#24 cfa login proxy"]
   24 --> 25["#25 cfa jwt middleware"]
   25 --> 26["#26 cfa transparent refresh"]
-  25 --> 13["#13 auth register/createaccount rpcs"]
+  25 --> 13
   25 --> 27["#27 cfa register/accounts"]
   13 --> 27
   25 --> 29["#29 cfa /hazards field auth"]
@@ -69,8 +74,11 @@ graph TD
   31 --> 36
   32 --> 36
 
-  28 --> 37["#37 p2 load-test harness"]
+  28["#28 cfa rate limit + concurrency cap"] --> 37["#37 p2 load-test harness"]
   20 --> 37
+
+  classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+  class 6,10,11,14 done
 ```
 
 ## Notes on reading this
