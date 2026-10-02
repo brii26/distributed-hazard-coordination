@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,9 +26,37 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// schemaExtended is read by the /volcanic-reports generator and handler (#5,
+// #7) to decide whether reports carry confidence_level.
+var schemaExtended atomic.Bool
+
+func schemaVersionHandler(w http.ResponseWriter, _ *http.Request) {
+	extended := !schemaExtended.Load()
+	schemaExtended.Store(extended)
+	version := schemaVersion(extended)
+
+	log.Printf("schema-version toggled: %s -> %s at %s",
+		schemaVersion(!extended), version, time.Now().UTC().Format(time.RFC3339))
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(map[string]string{"schema_version": version}); err != nil {
+		log.Printf("failed to write schema-version response: %v", err)
+	}
+}
+
+func schemaVersion(extended bool) string {
+	if extended {
+		return "extended"
+	}
+
+	return "legacy"
+}
+
 func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("POST /admin/schema-version", schemaVersionHandler)
 	// TODO: implement the endpoints specified for pvmbg-mock in doc/TRD_M1.md
 	return mux
 }
