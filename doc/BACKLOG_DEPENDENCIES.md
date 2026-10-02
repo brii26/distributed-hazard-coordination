@@ -18,6 +18,7 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #34 Cross-cutting: correlation ID propagation across all services
 - #35 Cross-cutting: health check depth per service
+- #54 PVMBG mock: require admin key on /admin/* endpoints (added after M1 issues #1-#37; stacked on #53 in practice, no GitHub blocker)
 
 Once #1 lands, #2 (BMKG endpoints) unblocks — the seed store #2 reads from needs to exist first, so #2 isn't in the "ready now" list even though it has no *other* dependents.
 
