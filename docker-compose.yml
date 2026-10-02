@@ -45,6 +45,7 @@ services:
       POSTGRES_DB: ${CANONICAL_DB_NAME:-canonical_store}
     volumes:
       - canonical_store_data:/var/lib/postgresql/data
+      - ./services/aggregator/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${CANONICAL_DB_USER:-aggregator}"]
       interval: 5s
