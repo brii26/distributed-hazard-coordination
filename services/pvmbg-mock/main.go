@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -128,6 +129,21 @@ func resolvePort(raw string) (string, error) {
 	return raw, nil
 }
 
+// envPositiveInt reads a positive integer env var, falling back to def when unset.
+func envPositiveInt(name string, def int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid %s value: %q", name, raw)
+	}
+
+	return n, nil
+}
+
 func main() {
 	clientID := os.Getenv("OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
@@ -149,6 +165,23 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	store := &reportStore{}
+
+	seedCount, err := envPositiveInt("SEED_COUNT", defaultSeedCount)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	intervalS, err := envPositiveInt("EVENT_INTERVAL_S", int(defaultEventInterval/time.Second))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	interval := time.Duration(intervalS) * time.Second
+	store.seed(seedCount, interval, time.Now(), schemaExtended.Load())
+
+	go store.run(context.Background(), interval, schemaExtended.Load)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
