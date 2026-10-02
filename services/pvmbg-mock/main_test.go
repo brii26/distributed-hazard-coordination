@@ -14,7 +14,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	newMux().ServeHTTP(rec, req)
+	newMux(newTestStore()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -47,7 +47,7 @@ func TestOutageToggle(t *testing.T) {
 
 	do := func(method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		newMux().ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, path, nil))
+		newMux(newTestStore()).ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, path, nil))
 
 		return rec
 	}
@@ -79,7 +79,7 @@ func TestSchemaVersionToggle(t *testing.T) {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/schema-version", nil)
 		rec := httptest.NewRecorder()
 
-		newMux().ServeHTTP(rec, req)
+		newMux(newTestStore()).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("expected 200 with %q, got %d %s", want, rec.Code, rec.Body.String())
