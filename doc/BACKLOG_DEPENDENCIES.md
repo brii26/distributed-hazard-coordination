@@ -74,7 +74,7 @@ graph TD
   31 --> 36
   32 --> 36
 
-  28 --> 37["#37 p2 load-test harness"]
+  28["#28 cfa rate limit + concurrency cap"] --> 37["#37 p2 load-test harness"]
   20 --> 37
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
