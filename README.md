@@ -28,6 +28,7 @@ services/<name>/     one Go module per service (see doc/TRD_M1.md for what each 
   main.go
   main_test.go
   Dockerfile
+infra/<name>/        config for third-party components (no Go code), e.g. infra/rabbitmq
 frontend/             CSR web frontend (not Go — scaffolded separately, see issue #33)
 doc/                  spec, assignment docs, backlog dependency graph
 .claude/skills/       vendored Go skills (also symlinked at .agents/skills for Codex)
@@ -37,6 +38,8 @@ go.work               ties all service modules together for cross-module tooling
 ```
 
 Each service directory is its **own Go module** (`go.work` lists them all). This means `go build ./...`/`go test ./...` from the repo root won't work as a single command — the repo root isn't itself a module. Run per-service commands from inside `services/<name>/`, or use the loop shown below.
+
+CI treats every directory under `services/` as a Go module (`gofmt`, `go vet`, `golangci-lint`, `docker build`). Config-only components such as the broker go in `infra/` so they aren't picked up.
 
 ## Running the full stack
 
