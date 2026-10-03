@@ -90,3 +90,29 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build -t ${{ matrix.service }}:ci services/${{ matrix.service }}
+
+  govulncheck:
+    name: Vuln check (${{ matrix.service }})
+    needs: discover
+    runs-on: ubuntu-latest
+    # ponytail: non-blocking for now. auth-service is affected by GO-2026-6443
+    # (grpc server panic on missing :authority/Host); the fix isn't in a released
+    # grpc yet (>= 1.85.0). Drop continue-on-error once it ships and go.mod is bumped.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.discover.outputs.services) }}
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...
