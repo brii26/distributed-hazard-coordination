@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -61,6 +62,21 @@ func newMux(apiKey string) *http.ServeMux {
 	return mux
 }
 
+// envPositiveInt reads a positive integer env var, falling back to def when unset.
+func envPositiveInt(name string, def int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid %s value: %q", name, raw)
+	}
+
+	return n, nil
+}
+
 // resolvePort validates a raw port value (as read from the PORT env var),
 // falling back to defaultPort when raw is empty.
 func resolvePort(raw string) (string, error) {
@@ -93,6 +109,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	seedCount, err := envPositiveInt("SEED_COUNT", defaultSeedCount)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	intervalS, err := envPositiveInt("EVENT_INTERVAL_S", int(defaultEventInterval/time.Second))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	interval := time.Duration(intervalS) * time.Second
+	store := &eventStore{}
+	store.seed(seedCount, interval, time.Now())
+
+	go store.run(context.Background(), interval)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
