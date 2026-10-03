@@ -291,7 +291,7 @@ func TestADataErrorIsNotRetried(t *testing.T) {
 
 	close(ch)
 
-	// A deadline so that wrongly retrying a data error fails the test instead of hanging it.
+	// A deadline so a wrongly retried data error fails the test instead of hanging it.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -357,8 +357,7 @@ func TestShutdownDuringAnOutageDoesNotHang(t *testing.T) {
 }
 
 // The whole path against a real Postgres: both sources land in hazard_events,
-// the same records polled again do not create duplicates, and only new records
-// reach the publish hook.
+// repeated polls add no duplicates, and each record is published once.
 func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 	t.Parallel()
 

@@ -37,9 +37,8 @@ type poller struct {
 	interval time.Duration
 	fetch    func(ctx context.Context, since time.Time) (pollResult, error)
 	breaker  *breaker
-	// out carries the records of each successful poll to this source's ingest
-	// goroutine. The poller is its only writer and closes it when it stops, which
-	// is how the ingest side knows to drain and exit.
+	// out carries each successful poll to this source's ingest goroutine. The
+	// poller is its only writer and closes it on exit, which tells ingest to drain.
 	out chan<- pollResult
 
 	// since is only touched by the run goroutine.
@@ -103,11 +102,9 @@ func (p *poller) pollOnce(ctx context.Context) {
 	}
 }
 
-// handoff sends a poll's records to the ingest goroutine. When the channel is
-// full it waits, so a slow ingest slows only this source's polling and no
-// batch is dropped: the cursor has moved past what a dropped batch held, so it
-// would never be fetched again. The cursor therefore moves only after the
-// channel has accepted the batch.
+// handoff sends a poll's records to ingest. A full channel makes it wait rather
+// than drop: the cursor has moved past a dropped batch, which would never be
+// fetched again. So the cursor moves only once the channel accepted the batch.
 func (p *poller) handoff(ctx context.Context, res pollResult) {
 	if len(res.records)+len(res.warnings) == 0 {
 		return

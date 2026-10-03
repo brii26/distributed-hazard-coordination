@@ -110,9 +110,8 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 
 const defaultDBPoolSize = 20
 
-// loadStore opens the Canonical Store from DATABASE_URL, with a pool of
-// DB_POOL_SIZE connections. An unreachable database stops the service at start
-// (compose only starts the Aggregator once the store reports healthy).
+// loadStore opens the Canonical Store from DATABASE_URL with DB_POOL_SIZE connections.
+// An unreachable database stops the service at start; compose waits for it to be healthy.
 func loadStore() (*store, error) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -157,8 +156,7 @@ func run() error {
 	// keeps retrying and the failure shows up through LastError().
 	_ = tokens.load()
 
-	// Stopping on SIGINT or SIGTERM lets the pollers stop and the ingest side
-	// write what it already holds before the process exits.
+	// On SIGINT or SIGTERM the pollers stop and ingest writes what it holds.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -176,9 +174,7 @@ func run() error {
 
 	defer func() { _ = db.close() }()
 
-	// One poller and one ingest goroutine per source, so a slow PVMBG poll or a
-	// slow write for it never delays BMKG. Both ingest goroutines share the one
-	// connection pool.
+	// One poller and one ingest goroutine per source; both share the one pool.
 	var wg sync.WaitGroup
 
 	// publish is a no-op until the RabbitMQ publisher (#23) is plugged in here.
