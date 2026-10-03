@@ -9,7 +9,7 @@ Regenerate after adding/closing issues: `gh issue list --repo brii26/distributed
 These have zero dependencies and can be picked up immediately, by anyone, in any order:
 
 - #13 Auth Service: Register/CreateAccount RPCs
-- #16 Aggregator: independent single-in-flight pollers for BMKG and PVMBG
+- #19 Aggregator: unknown/changed-field policy enforcement
 - #24 Client-Facing API: POST /auth/login and /auth/logout proxy
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #35 Cross-cutting: health check depth per service
@@ -45,6 +45,7 @@ graph TD
 
   14["#14 rabbitmq topology"] --> 23["#23 agg publish"]
   21 --> 23
+  21 --> 83["#83 agg ingest pipeline"]
 
   11["#11 auth userdb schema"] --> 12["#12 auth login/refresh/logout rpcs"]
   11 --> 13["#13 auth register/createaccount rpcs"]
@@ -80,7 +81,7 @@ graph TD
   73["#73 db network isolation"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 1,2,5,6,7,10,11,12,14,15,69,71 done
+  class 1,2,5,6,7,10,11,12,14,15,16,17,18,20,69,71 done
 ```
 
 ## Notes on reading this
@@ -89,4 +90,5 @@ graph TD
 - **Aggregator** (#15–#23) is the critical path: nothing in Client-Facing API's real data flow (#29 onward) or the consumers (#30–#32) can start until the Aggregator chain reaches #21 (upsert) and #22/#23 (the two things it feeds).
 - **Auth Service** (#11–#13) and **Client-Facing API's auth chain** (#24–#27) can run fully in parallel with the Aggregator chain — they don't share a blocker until #29, which needs *both* #25 (JWT middleware) and #22 (Aggregator's read API).
 - **#28** (rate limiting), **#35** (health checks), **#71** (BMKG delay), **#72** (structured logging) and **#73** (network isolation) are deliberately unblocked: they touch one or every service but need no other issue to land first. Fold them into whichever issue you are already touching rather than leaving them for a separate pass at the end. **#34** (correlation IDs) waits only on #72, so it reuses that logger instead of adding its own.
+- **#83** (ingest pipeline) is what connects the pollers, the mapper and the store. It waits only on #21, and publishing plugs into it later through #23, which is not a blocker.
 - **#36/#37** are integration-level checks, by design the last things that can go green, since they need real pieces on both sides of the stack. **#74** (README run guide and scenario triggers) follows #36 because it documents the finished stack.
