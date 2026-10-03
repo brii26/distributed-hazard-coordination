@@ -92,7 +92,7 @@ func TestSeismicFieldsMapped(t *testing.T) {
 	t.Parallel()
 
 	h := mapOneQuake(t)
-	if h.Source != "BMKG" || h.SourceRefID != "E1" || h.HazardType != "SEISMIC" || h.HazardID == "" {
+	if h.Source != sourceBMKG || h.SourceRefID != "E1" || h.HazardType != "SEISMIC" || h.HazardID == "" {
 		t.Fatalf("identity fields wrong: %+v", h)
 	}
 
@@ -148,7 +148,7 @@ func TestVolcanicKnownVolcanoAndSeverity(t *testing.T) {
 	}
 
 	h := got[0]
-	if h.Source != "PVMBG" || h.SourceRefID != "R1" || h.HazardType != "VOLCANIC" || *h.Severity != severitySiaga {
+	if h.Source != sourcePVMBG || h.SourceRefID != "R1" || h.HazardType != "VOLCANIC" || *h.Severity != severitySiaga {
 		t.Fatalf("fields wrong: %+v", h)
 	}
 
