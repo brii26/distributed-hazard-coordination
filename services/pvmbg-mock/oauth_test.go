@@ -111,15 +111,11 @@ func TestOAuthOneTimeCodeConcurrent(t *testing.T) {
 	var ok atomic.Int32
 
 	for range 20 {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
+		wg.Go(func() {
 			if status, _ := postToken(t, store, testClientSecret, codeForm(testCode)); status == http.StatusOK {
 				ok.Add(1)
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
