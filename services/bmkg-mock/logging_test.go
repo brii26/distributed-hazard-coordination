@@ -33,7 +33,7 @@ func logLines(t *testing.T, path, key, correlation string) ([]map[string]any, *h
 	}
 
 	rec := httptest.NewRecorder()
-	newMux(testAPIKey, newLogger(&buf)).ServeHTTP(rec, req)
+	newMux(testAPIKey, &eventStore{}, newLogger(&buf)).ServeHTTP(rec, req)
 
 	var lines []map[string]any
 
