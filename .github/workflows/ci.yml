@@ -95,10 +95,6 @@ jobs:
     name: Vuln check (${{ matrix.service }})
     needs: discover
     runs-on: ubuntu-latest
-    # ponytail: non-blocking for now. auth-service is affected by GO-2026-6443
-    # (grpc server panic on missing :authority/Host); the fix isn't in a released
-    # grpc yet (>= 1.85.0). Drop continue-on-error once it ships and go.mod is bumped.
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
@@ -115,4 +111,18 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: govulncheck
-        run: govulncheck ./...
+        # Fails on any reachable vulnerability except the allowlisted IDs below.
+        # (JSON mode always exits 0, so the pass/fail decision is made here.)
+        # ponytail: GO-2026-6443 (grpc server panic on missing :authority/Host,
+        # auth-service) is allowlisted because the fix is not in a released grpc
+        # yet (>= 1.85.0). Bump grpc in go.mod and delete the allowlist entry then.
+        run: |
+          govulncheck -format json ./... > vuln.json
+          test -s vuln.json
+          found=$(jq -r 'select(.finding != null and .finding.trace[0].function != null) | .finding.osv' vuln.json \
+            | sort -u | grep -v -x -e GO-2026-6443 || true)
+          if [ -n "$found" ]; then
+            echo "::error::govulncheck found reachable vulnerabilities: $found"
+            govulncheck ./... || true
+            exit 1
+          fi
