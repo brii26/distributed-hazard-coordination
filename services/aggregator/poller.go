@@ -21,7 +21,9 @@ const (
 
 // pollResult is what one poll cycle brings back from a source.
 type pollResult struct {
-	records int
+	// records are the source's own records (BMKG seismic events, PVMBG
+	// volcanic reports); warnings are BMKG's tsunami warnings polled with them.
+	records, warnings []map[string]any
 	// cursor is the newest record timestamp seen, used as the next ?since=.
 	// Zero means the poll carried nothing to advance it with.
 	cursor time.Time
@@ -35,6 +37,10 @@ type poller struct {
 	interval time.Duration
 	fetch    func(ctx context.Context, since time.Time) (pollResult, error)
 	breaker  *breaker
+	// out carries the records of each successful poll to this source's ingest
+	// goroutine. The poller is its only writer and closes it when it stops, which
+	// is how the ingest side knows to drain and exit.
+	out chan<- pollResult
 
 	// since is only touched by the run goroutine.
 	// ponytail: the cursor lives in memory, so a restart re-reads everything
@@ -49,8 +55,10 @@ func nextWait(interval, elapsed time.Duration) time.Duration {
 	return max(interval-elapsed, 0)
 }
 
-// run polls until ctx is done.
+// run polls until ctx is done, then closes out.
 func (p *poller) run(ctx context.Context) {
+	defer close(p.out)
+
 	for {
 		start := time.Now()
 
@@ -64,8 +72,9 @@ func (p *poller) run(ctx context.Context) {
 	}
 }
 
-// pollOnce makes one call and logs how it ended. Any error, including a
-// timeout, counts as a failed poll; the cursor only moves on success.
+// pollOnce makes one call, logs how it ended and hands the records on. Any
+// error, including a timeout, counts as a failed poll; the cursor only moves
+// once the records have been handed over.
 func (p *poller) pollOnce(ctx context.Context) {
 	// While the breaker is OPEN the source is left alone; the loop keeps its
 	// rhythm and asks again next cycle.
@@ -85,15 +94,31 @@ func (p *poller) pollOnce(ctx context.Context) {
 
 	switch {
 	case err == nil:
-		if res.cursor.After(p.since) {
-			p.since = res.cursor
-		}
-
-		log.Printf("poll source=%s result=success duration_ms=%d records=%d", p.name, elapsed, res.records)
+		log.Printf("poll source=%s result=success duration_ms=%d records=%d", p.name, elapsed, len(res.records)+len(res.warnings))
+		p.handoff(ctx, res)
 	case errors.Is(err, context.DeadlineExceeded):
 		log.Printf("poll source=%s result=timeout duration_ms=%d err=%q", p.name, elapsed, err)
 	default:
 		log.Printf("poll source=%s result=failure duration_ms=%d err=%q", p.name, elapsed, err)
+	}
+}
+
+// handoff sends a poll's records to the ingest goroutine. When the channel is
+// full it waits, so a slow ingest slows only this source's polling and no
+// batch is dropped: the cursor has moved past what a dropped batch held, so it
+// would never be fetched again. The cursor therefore moves only after the
+// channel has accepted the batch.
+func (p *poller) handoff(ctx context.Context, res pollResult) {
+	if len(res.records)+len(res.warnings) == 0 {
+		return
+	}
+
+	select {
+	case p.out <- res:
+		if res.cursor.After(p.since) {
+			p.since = res.cursor
+		}
+	case <-ctx.Done():
 	}
 }
 
@@ -174,7 +199,7 @@ func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, er
 			return pollResult{}, err
 		}
 
-		return pollResult{records: len(events) + len(warnings), cursor: newest(events, "occurred_at")}, nil
+		return pollResult{records: events, warnings: warnings, cursor: newest(events, "occurred_at")}, nil
 	}
 }
 
@@ -192,7 +217,7 @@ func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, ti
 			return pollResult{}, err
 		}
 
-		return pollResult{records: len(reports), cursor: newest(reports, "reported_at")}, nil
+		return pollResult{records: reports, cursor: newest(reports, "reported_at")}, nil
 	}
 }
 
