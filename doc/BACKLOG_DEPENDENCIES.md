@@ -14,8 +14,6 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #35 Cross-cutting: health check depth per service
 - #61 Cross-cutting: integration test layer (real Postgres/RabbitMQ in CI)
-- #69 PVMBG mock: enforce access-token expiration
-- #71 BMKG mock: fixed 50-150 ms per-request delay
 - #72 Cross-cutting: structured JSON logging and outbound call latency for every service
 - #73 Infra: Docker network isolation for Canonical Store and User DB
 
@@ -82,7 +80,7 @@ graph TD
   73["#73 db network isolation"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 1,2,5,6,7,10,11,12,14,15 done
+  class 1,2,5,6,7,10,11,12,14,15,69,71 done
 ```
 
 ## Notes on reading this
