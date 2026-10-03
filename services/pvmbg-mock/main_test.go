@@ -8,13 +8,15 @@ import (
 	"testing"
 )
 
+const testAdminKey = "admin-secret"
+
 func TestHealthHandler(t *testing.T) {
 	t.Parallel()
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	newMux().ServeHTTP(rec, req)
+	newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -42,18 +44,72 @@ func TestResolvePortInvalid(t *testing.T) {
 	}
 }
 
+func TestOutageToggle(t *testing.T) {
+	t.Parallel()
+
+	do := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequestWithContext(context.Background(), method, path, nil)
+		req.Header.Set("X-Admin-Key", testAdminKey)
+
+		newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	if rec := do(http.MethodPost, "/admin/outage"); rec.Code != http.StatusOK {
+		t.Fatalf("toggle on: got %d", rec.Code)
+	}
+
+	if rec := do(http.MethodGet, "/volcanic-reports"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("during outage: expected 503, got %d", rec.Code)
+	}
+
+	if rec := do(http.MethodGet, "/health"); rec.Code != http.StatusOK {
+		t.Fatalf("health during outage: got %d", rec.Code)
+	}
+
+	do(http.MethodPost, "/admin/outage")
+
+	if rec := do(http.MethodGet, "/volcanic-reports"); rec.Code == http.StatusServiceUnavailable {
+		t.Fatal("outage should be cleared after second toggle")
+	}
+}
+
 func TestSchemaVersionToggle(t *testing.T) {
 	t.Parallel()
 
 	// Only test touching schemaExtended, so parallel is safe.
 	for _, want := range []string{"extended", "legacy"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/schema-version", nil)
+		req.Header.Set("X-Admin-Key", testAdminKey)
+
 		rec := httptest.NewRecorder()
 
-		newMux().ServeHTTP(rec, req)
+		newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("expected 200 with %q, got %d %s", want, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAdminKeyRequired(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"/admin/outage", "/admin/schema-version"} {
+		for key, want := range map[string]int{"": http.StatusUnauthorized, "wrong": http.StatusForbidden} {
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, nil)
+			if key != "" {
+				req.Header.Set("X-Admin-Key", key)
+			}
+
+			rec := httptest.NewRecorder()
+			newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
+
+			if rec.Code != want {
+				t.Fatalf("%s with key %q: expected %d, got %d", path, key, want, rec.Code)
+			}
 		}
 	}
 }

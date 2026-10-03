@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -22,15 +23,20 @@ func requireAPIKey(expectedKey string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-BMKG-Key")
 		if key == "" {
+			logFrom(r.Context()).Warn("api key rejected", "reason", "missing X-BMKG-Key")
 			w.WriteHeader(http.StatusUnauthorized)
+
 			return
 		}
 
 		if key != expectedKey {
+			logFrom(r.Context()).Warn("api key rejected", "reason", "invalid X-BMKG-Key")
 			w.WriteHeader(http.StatusForbidden)
+
 			return
 		}
 
+		logFrom(r.Context()).Info("api key accepted")
 		next(w, r)
 	}
 }
@@ -71,13 +77,13 @@ func sinceHandler[T any](get func(time.Time) []T) http.HandlerFunc {
 	}
 }
 
-func newMux(apiKey string, store *eventStore) *http.ServeMux {
+func newMux(apiKey string, store *eventStore, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /seismic-events", requireAPIKey(apiKey, sinceHandler(store.eventsSince)))
 	mux.HandleFunc("GET /tsunami-warnings", requireAPIKey(apiKey, sinceHandler(store.warningsSince)))
 
-	return mux
+	return withRequestLog(logger, mux)
 }
 
 // envPositiveInt reads a positive integer env var, falling back to def when unset.
@@ -110,6 +116,11 @@ func resolvePort(raw string) (string, error) {
 }
 
 func main() {
+	logger := newLogger(os.Stdout)
+	// Routes the stdlib log package (including log.Fatal) through the JSON
+	// handler too; "-" marks lines that aren't tied to a request.
+	slog.SetDefault(logger.With("correlation_id", "-"))
+
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
 		log.Fatal(err)
@@ -147,7 +158,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(apiKey, store),
+		Handler:           newMux(apiKey, store, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

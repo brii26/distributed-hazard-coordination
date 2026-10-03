@@ -5,6 +5,14 @@
 - `main` is protected: no direct pushes, every change lands via a pull request, and at least one other teammate must approve before merge. (Since nobody can approve their own PR, this always needs a second person.)
 - Branch names: `<issue-number>-<short-slug>` for work tied to a single issue, e.g. `12-auth-login-refresh-rpcs`. For work spanning several issues at once (see "Multiple issues in one branch" below), use a short topic name instead: `feat/<topic>`, e.g. `feat/aggregator-mapping`.
 
+## Commits
+
+Use semantic (Conventional Commits) subjects for new commits: `<type>(<scope>): <imperative summary>`, e.g. `feat(pvmbg-mock): add POST /admin/outage toggle`.
+
+- **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`.
+- **Scope:** the service or area touched (`pvmbg-mock`, `aggregator`, `compose`, ...). Optional for cross-cutting changes.
+- Existing history isn't rewritten. Not CI-enforced, same as the PR title convention.
+
 ## Pull requests
 
 **Title:** prefer `[#<issue-number>] <short description>` when the PR is driven by a tracked issue, e.g. `[#16] Independent single-in-flight pollers`. This is a convention, not a CI-enforced format — nothing blocks a merge if you don't follow it.

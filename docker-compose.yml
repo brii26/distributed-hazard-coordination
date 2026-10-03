@@ -27,6 +27,7 @@ services:
       OAUTH_CLIENT_ID: ${PVMBG_OAUTH_CLIENT_ID}
       OAUTH_CLIENT_SECRET: ${PVMBG_OAUTH_CLIENT_SECRET}
       PVMBG_ONE_TIME_CODE: ${PVMBG_ONE_TIME_CODE}
+      ADMIN_KEY: ${PVMBG_ADMIN_KEY}
       PVMBG_DELAY_MIN_MS: ${PVMBG_DELAY_MIN_MS:-500}
       PVMBG_DELAY_MAX_MS: ${PVMBG_DELAY_MAX_MS:-3000}
       SEED_COUNT: ${PVMBG_SEED_COUNT:-20}
@@ -45,6 +46,7 @@ services:
       POSTGRES_DB: ${CANONICAL_DB_NAME:-canonical_store}
     volumes:
       - canonical_store_data:/var/lib/postgresql/data
+      - ./services/aggregator/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${CANONICAL_DB_USER:-aggregator}"]
       interval: 5s
@@ -57,8 +59,13 @@ services:
       POSTGRES_USER: ${USER_DB_USER:-auth}
       POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
       POSTGRES_DB: ${USER_DB_NAME:-user_db}
+      # Read only by the init seed script.
+      SEED_OPERATOR_EMAIL: ${SEED_OPERATOR_EMAIL}
+      SEED_OPERATOR_PASSWORD: ${SEED_OPERATOR_PASSWORD}
+      SECRET_SALT: ${SECRET_SALT}
     volumes:
       - user_db_data:/var/lib/postgresql/data
+      - ./services/auth-service/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-auth}"]
       interval: 5s
@@ -71,6 +78,8 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./infra/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./infra/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-definitions.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s

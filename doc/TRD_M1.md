@@ -146,9 +146,11 @@ Access token dipakai sebagai `Authorization: Bearer <access_token>` untuk mengak
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/volcanic-reports` | `?since=<ISO8601>` | `VolcanicReport[]` |
-| POST | `/admin/schema-version` | — | toggle kemunculan `confidence_level`, tanpa restart mock maupun Aggregator |
-| POST | `/admin/outage` | — | toggle outage instan |
+| POST | `/admin/schema-version` | header `X-Admin-Key` | toggle kemunculan `confidence_level`, tanpa restart mock maupun Aggregator |
+| POST | `/admin/outage` | header `X-Admin-Key` | toggle outage instan |
 | GET | `/health` | — | `{"status":"ok"}` |
+
+Endpoint `/admin/*` dilindungi header `X-Admin-Key: <PVMBG_ADMIN_KEY>` (env, wajib diset): header tidak ada → `401`, salah → `403`. Pola yang sama dengan `X-BMKG-Key` pada BMKG mock; ditambahkan agar saklar demo tidak bisa dipicu oleh pihak lain.
 
 **VolcanicReport**
 ```
@@ -177,7 +179,7 @@ Urutan wajib yang bisa didemokan: sistem dinyalakan → gateway bekerja normal d
 
 **Logging:** setiap request masuk (delay yang disuntikkan, hasil validasi Bearer token termasuk penolakan), setiap pemanggilan `/oauth/token` (client_id, jenis grant, hasil), setiap toggle `/admin/outage`/`/admin/schema-version` (state sebelum/sesudah, timestamp), setiap report baru yang di-generate oleh background task (`report_id`, `alert_level`).
 
-**Konfigurasi:** `PORT=8082`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `PVMBG_ONE_TIME_CODE`, `PVMBG_DELAY_MIN_MS=500`, `PVMBG_DELAY_MAX_MS=3000`, `SEED_COUNT=20`, `EVENT_INTERVAL_S=10`.
+**Konfigurasi:** `PORT=8082`, `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `PVMBG_ONE_TIME_CODE`, `ADMIN_KEY`, `PVMBG_DELAY_MIN_MS=500`, `PVMBG_DELAY_MAX_MS=3000`, `SEED_COUNT=20`, `EVENT_INTERVAL_S=10`.
 
 ---
 
@@ -444,7 +446,7 @@ CREATE TABLE users (
     user_id       VARCHAR(255) PRIMARY KEY,
     email         VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
-    role          VARCHAR(32) NOT NULL   -- Media | Lapangan | Operator
+    role          VARCHAR(32) NOT NULL CHECK (role IN ('Media','Lapangan','Operator'))
 );
 
 CREATE TABLE refresh_tokens (

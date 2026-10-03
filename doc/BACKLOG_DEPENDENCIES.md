@@ -10,21 +10,19 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 
 - #1 BMKG mock: seed data and background event generator
 - #3 BMKG mock: X-BMKG-Key validation
-- #4 BMKG mock: structured logging and correlation ID
-- #5 PVMBG mock: seed data and background event generator
-- #6 PVMBG mock: OAuth token issuance (bootstrap + refresh rotation)
-- #8 PVMBG mock: POST /admin/outage toggle
-- #9 PVMBG mock: POST /admin/schema-version toggle (confidence_level)
-- #10 Canonical Store: hazard_events schema and indexes
-- #11 Auth Service: users and refresh_tokens schema
-- #14 RabbitMQ: fanout exchange and durable per-consumer queue setup
+- #7 PVMBG mock: GET /volcanic-reports with configurable delay
+- #15 Aggregator: PVMBG token bootstrap and rotation
+- #24 Client-Facing API: POST /auth/login proxy
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #34 Cross-cutting: correlation ID propagation across all services
 - #35 Cross-cutting: health check depth per service
+- #61 Cross-cutting: integration test layer (real Postgres/RabbitMQ in CI)
 
 Once #1 lands, #2 (BMKG endpoints) unblocks — the seed store #2 reads from needs to exist first, so #2 isn't in the "ready now" list even though it has no *other* dependents.
 
 ## Full graph
+
+Green = merged. Merged issues stay in the graph (edges kept) so progress is visible; only the "Ready now" list drops them.
 
 ```mermaid
 graph TD
@@ -54,6 +52,7 @@ graph TD
   11 --> 13["#13 auth register/createaccount rpcs"]
 
   12 --> 24["#24 cfa login proxy"]
+  12 --> 61["#61 integration test layer"]
   24 --> 25["#25 cfa jwt middleware"]
   25 --> 26["#26 cfa transparent refresh"]
   25 --> 13
@@ -75,8 +74,11 @@ graph TD
   31 --> 36
   32 --> 36
 
-  28 --> 37["#37 p2 load-test harness"]
+  28["#28 cfa rate limit + concurrency cap"] --> 37["#37 p2 load-test harness"]
   20 --> 37
+
+  classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+  class 5,6,10,11,12,14 done
 ```
 
 ## Notes on reading this
