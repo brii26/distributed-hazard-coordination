@@ -34,6 +34,7 @@ type poller struct {
 	name     string
 	interval time.Duration
 	fetch    func(ctx context.Context, since time.Time) (pollResult, error)
+	breaker  *breaker
 
 	// since is only touched by the run goroutine.
 	// ponytail: the cursor lives in memory, so a restart re-reads everything
@@ -66,9 +67,21 @@ func (p *poller) run(ctx context.Context) {
 // pollOnce makes one call and logs how it ended. Any error, including a
 // timeout, counts as a failed poll; the cursor only moves on success.
 func (p *poller) pollOnce(ctx context.Context) {
+	// While the breaker is OPEN the source is left alone; the loop keeps its
+	// rhythm and asks again next cycle.
+	if !p.breaker.allow() {
+		return
+	}
+
 	start := time.Now()
 	res, err := p.fetch(ctx, p.since)
 	elapsed := time.Since(start).Milliseconds()
+
+	if err != nil {
+		p.breaker.failure()
+	} else {
+		p.breaker.success()
+	}
 
 	switch {
 	case err == nil:
@@ -166,8 +179,14 @@ func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, er
 }
 
 // pvmbgFetch polls PVMBG's volcanic reports.
-func pvmbgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
+// A failing token bootstrap or rotation (tokenErr) is a failed poll too: without
+// a working token PVMBG cannot be polled, and the breaker has to see that.
+func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
+		if err := tokenErr(); err != nil {
+			return pollResult{}, fmt.Errorf("PVMBG token: %w", err)
+		}
+
 		reports, err := c.records(ctx, "/volcanic-reports", since)
 		if err != nil {
 			return pollResult{}, err
@@ -201,15 +220,26 @@ func pvmbgAuth(token func() string) func(*http.Request) error {
 	}
 }
 
-// newPollers builds the BMKG and PVMBG pollers from the shared interval/timeout.
-func newPollers(interval, timeout time.Duration, bmkgURL, bmkgKey, pvmbgURL string, token func() string) []*poller {
+// pollConfig is everything newPollers needs, so its call site stays readable.
+type pollConfig struct {
+	interval, timeout time.Duration
+	cbThreshold       int
+	cbOpenFor         time.Duration
+	bmkgURL, bmkgKey  string
+	pvmbgURL          string
+	token             func() string
+	tokenErr          func() error
+}
+
+// newPollers builds the BMKG and PVMBG pollers, each with its own circuit breaker.
+func newPollers(c pollConfig) []*poller {
 	client := &http.Client{}
 
-	bmkg := &sourceClient{baseURL: strings.TrimRight(bmkgURL, "/"), timeout: timeout, client: client, auth: bmkgAuth(bmkgKey)}
-	pvmbg := &sourceClient{baseURL: strings.TrimRight(pvmbgURL, "/"), timeout: timeout, client: client, auth: pvmbgAuth(token)}
+	bmkg := &sourceClient{baseURL: strings.TrimRight(c.bmkgURL, "/"), timeout: c.timeout, client: client, auth: bmkgAuth(c.bmkgKey)}
+	pvmbg := &sourceClient{baseURL: strings.TrimRight(c.pvmbgURL, "/"), timeout: c.timeout, client: client, auth: pvmbgAuth(c.token)}
 
 	return []*poller{
-		{name: "BMKG", interval: interval, fetch: bmkgFetch(bmkg)},
-		{name: "PVMBG", interval: interval, fetch: pvmbgFetch(pvmbg)},
+		{name: sourceBMKG, interval: c.interval, fetch: bmkgFetch(bmkg), breaker: newBreaker(sourceBMKG, c.cbThreshold, c.cbOpenFor)},
+		{name: sourcePVMBG, interval: c.interval, fetch: pvmbgFetch(pvmbg, c.tokenErr), breaker: newBreaker(sourcePVMBG, c.cbThreshold, c.cbOpenFor)},
 	}
 }
