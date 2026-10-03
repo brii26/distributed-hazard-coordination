@@ -8,17 +8,16 @@ Regenerate after adding/closing issues: `gh issue list --repo brii26/distributed
 
 These have zero dependencies and can be picked up immediately, by anyone, in any order:
 
-- #1 BMKG mock: seed data and background event generator
-- #3 BMKG mock: X-BMKG-Key validation
-- #7 PVMBG mock: GET /volcanic-reports with configurable delay
-- #15 Aggregator: PVMBG token bootstrap and rotation
-- #24 Client-Facing API: POST /auth/login proxy
+- #13 Auth Service: Register/CreateAccount RPCs
+- #16 Aggregator: independent single-in-flight pollers for BMKG and PVMBG
+- #24 Client-Facing API: POST /auth/login and /auth/logout proxy
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
-- #34 Cross-cutting: correlation ID propagation across all services
 - #35 Cross-cutting: health check depth per service
 - #61 Cross-cutting: integration test layer (real Postgres/RabbitMQ in CI)
-
-Once #1 lands, #2 (BMKG endpoints) unblocks — the seed store #2 reads from needs to exist first, so #2 isn't in the "ready now" list even though it has no *other* dependents.
+- #69 PVMBG mock: enforce access-token expiration
+- #71 BMKG mock: fixed 50-150 ms per-request delay
+- #72 Cross-cutting: structured JSON logging and outbound call latency for every service
+- #73 Infra: Docker network isolation for Canonical Store and User DB
 
 ## Full graph
 
@@ -31,6 +30,7 @@ graph TD
 
   6["#6 pvmbg oauth issuance"] --> 15["#15 agg pvmbg token bootstrap/rotation"]
   6 --> 7["#7 pvmbg endpoint+delay"]
+  7 --> 69["#69 pvmbg token expiry"]
 
   2 --> 16["#16 agg pollers"]
   7 --> 16
@@ -51,11 +51,10 @@ graph TD
   11["#11 auth userdb schema"] --> 12["#12 auth login/refresh/logout rpcs"]
   11 --> 13["#13 auth register/createaccount rpcs"]
 
-  12 --> 24["#24 cfa login proxy"]
+  12 --> 24["#24 cfa login/logout proxy"]
   12 --> 61["#61 integration test layer"]
   24 --> 25["#25 cfa jwt middleware"]
   25 --> 26["#26 cfa transparent refresh"]
-  25 --> 13
   25 --> 27["#27 cfa register/accounts"]
   13 --> 27
   25 --> 29["#29 cfa /hazards field auth"]
@@ -77,8 +76,13 @@ graph TD
   28["#28 cfa rate limit + concurrency cap"] --> 37["#37 p2 load-test harness"]
   20 --> 37
 
+  72["#72 structured json logging"] --> 34["#34 correlation id propagation"]
+  36 --> 74["#74 readme run guide + scenarios"]
+  71["#71 bmkg delay"]
+  73["#73 db network isolation"]
+
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 5,6,10,11,12,14 done
+  class 1,2,5,6,7,10,11,12,14,15 done
 ```
 
 ## Notes on reading this
@@ -86,5 +90,5 @@ graph TD
 - **BMKG/PVMBG cluster** (#1–#9) is almost entirely parallelizable — the mocks don't depend on each other or on anything downstream.
 - **Aggregator** (#15–#23) is the critical path: nothing in Client-Facing API's real data flow (#29 onward) or the consumers (#30–#32) can start until the Aggregator chain reaches #21 (upsert) and #22/#23 (the two things it feeds).
 - **Auth Service** (#11–#13) and **Client-Facing API's auth chain** (#24–#27) can run fully in parallel with the Aggregator chain — they don't share a blocker until #29, which needs *both* #25 (JWT middleware) and #22 (Aggregator's read API).
-- **#28** (rate limiting) and **#34/#35** (cross-cutting logging/health) are deliberately unblocked — they touch every service but don't require any other issue to land first; fold them into whichever issue you're already touching rather than treating them as a separate pass at the end.
-- **#36/#37** are integration-level checks — by design, the last things that can go green, since they need real pieces on both sides of the stack.
+- **#28** (rate limiting), **#35** (health checks), **#71** (BMKG delay), **#72** (structured logging) and **#73** (network isolation) are deliberately unblocked: they touch one or every service but need no other issue to land first. Fold them into whichever issue you are already touching rather than leaving them for a separate pass at the end. **#34** (correlation IDs) waits only on #72, so it reuses that logger instead of adding its own.
+- **#36/#37** are integration-level checks, by design the last things that can go green, since they need real pieces on both sides of the stack. **#74** (README run guide and scenario triggers) follows #36 because it documents the finished stack.
