@@ -12,6 +12,8 @@ services:
       BMKG_API_KEY: ${BMKG_API_KEY}
       SEED_COUNT: ${BMKG_SEED_COUNT:-20}
       EVENT_INTERVAL_S: ${BMKG_EVENT_INTERVAL_S:-10}
+      BMKG_DELAY_MIN_MS: ${BMKG_DELAY_MIN_MS:-50}
+      BMKG_DELAY_MAX_MS: ${BMKG_DELAY_MAX_MS:-150}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
       interval: 5s
