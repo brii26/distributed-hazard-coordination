@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"regexp"
@@ -15,7 +16,11 @@ import (
 	"time"
 )
 
-const defaultPort = "8081"
+const (
+	defaultPort       = "8081"
+	defaultDelayMinMS = 50
+	defaultDelayMaxMS = 150
+)
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
@@ -77,11 +82,35 @@ func sinceHandler[T any](get func(time.Time) []T) http.HandlerFunc {
 	}
 }
 
-func newMux(apiKey string, store *eventStore, logger *slog.Logger) http.Handler {
+// withDelay sleeps a random time in [minDelay, maxDelay] before next, so BMKG
+// answers with the low, consistent latency its contract promises. A client that
+// disconnects mid delay frees the handler immediately.
+func withDelay(minDelay, maxDelay time.Duration, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		delay := minDelay + time.Duration(rand.Int64N(int64(maxDelay-minDelay)+1)) //nolint:gosec // mock latency, not security-sensitive
+		logFrom(r.Context()).Info("delay injected", "delay_ms", delay.Milliseconds())
+
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(delay):
+		}
+
+		next(w, r)
+	}
+}
+
+// newMux wires the routes. Data endpoints check the API key first, so rejected
+// requests fail fast, and only served requests pay the delay. /health is not delayed.
+func newMux(apiKey string, store *eventStore, logger *slog.Logger, minDelay, maxDelay time.Duration) http.Handler {
+	data := func(h http.HandlerFunc) http.HandlerFunc {
+		return requireAPIKey(apiKey, withDelay(minDelay, maxDelay, h))
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("GET /seismic-events", requireAPIKey(apiKey, sinceHandler(store.eventsSince)))
-	mux.HandleFunc("GET /tsunami-warnings", requireAPIKey(apiKey, sinceHandler(store.warningsSince)))
+	mux.HandleFunc("GET /seismic-events", data(sinceHandler(store.eventsSince)))
+	mux.HandleFunc("GET /tsunami-warnings", data(sinceHandler(store.warningsSince)))
 
 	return withRequestLog(logger, mux)
 }
@@ -151,14 +180,29 @@ func main() {
 		log.Fatal(err)
 	}
 
+	delayMinMS, err := envPositiveInt("BMKG_DELAY_MIN_MS", defaultDelayMinMS)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	delayMaxMS, err := envPositiveInt("BMKG_DELAY_MAX_MS", defaultDelayMaxMS)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if delayMinMS > delayMaxMS {
+		log.Fatalf("BMKG_DELAY_MIN_MS (%d) must not exceed BMKG_DELAY_MAX_MS (%d)", delayMinMS, delayMaxMS)
+	}
+
 	interval := time.Duration(intervalS) * time.Second
 	store.seed(seedCount, interval, time.Now())
 
 	go store.run(context.Background(), interval)
 
 	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           newMux(apiKey, store, logger),
+		Addr: ":" + port,
+		Handler: newMux(apiKey, store, logger,
+			time.Duration(delayMinMS)*time.Millisecond, time.Duration(delayMaxMS)*time.Millisecond),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

@@ -18,7 +18,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey, &eventStore{}, discardLogger()).ServeHTTP(rec, req)
+	newMux(testAPIKey, &eventStore{}, discardLogger(), 0, 0).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -52,7 +52,7 @@ func TestUnauthorized(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/seismic-events", nil)
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey, &eventStore{}, discardLogger()).ServeHTTP(rec, req)
+	newMux(testAPIKey, &eventStore{}, discardLogger(), 0, 0).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401, got %d", rec.Code)
@@ -67,7 +67,7 @@ func TestForbidden(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey, &eventStore{}, discardLogger()).ServeHTTP(rec, req)
+	newMux(testAPIKey, &eventStore{}, discardLogger(), 0, 0).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected status 403, got %d", rec.Code)
@@ -82,7 +82,7 @@ func TestAuthorized(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 
-	newMux(testAPIKey, &eventStore{}, discardLogger()).ServeHTTP(rec, req)
+	newMux(testAPIKey, &eventStore{}, discardLogger(), 0, 0).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -96,7 +96,7 @@ func get(t *testing.T, store *eventStore, path string) *httptest.ResponseRecorde
 	req.Header.Set("X-BMKG-Key", testAPIKey)
 
 	rec := httptest.NewRecorder()
-	newMux(testAPIKey, store, discardLogger()).ServeHTTP(rec, req)
+	newMux(testAPIKey, store, discardLogger(), 0, 0).ServeHTTP(rec, req)
 
 	return rec
 }
@@ -178,5 +178,49 @@ func TestEmptyResultIsArray(t *testing.T) {
 
 	if body := get(t, &eventStore{}, "/tsunami-warnings").Body.String(); body != "[]\n" {
 		t.Fatalf("expected [], got %q", body)
+	}
+}
+
+func TestDelayWithinRange(t *testing.T) {
+	t.Parallel()
+
+	const lo, hi = 40 * time.Millisecond, 80 * time.Millisecond
+
+	mux := newMux(testAPIKey, &eventStore{}, discardLogger(), lo, hi)
+
+	for range 5 {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/seismic-events", nil)
+		req.Header.Set("X-BMKG-Key", testAPIKey)
+
+		rec := httptest.NewRecorder()
+		start := time.Now()
+
+		mux.ServeHTTP(rec, req)
+
+		// Upper bound has slack for scheduling; the lower bound is exact.
+		if d := time.Since(start); rec.Code != http.StatusOK || d < lo || d > hi+250*time.Millisecond {
+			t.Fatalf("status %d, latency %v outside [%v, %v]", rec.Code, d, lo, hi)
+		}
+	}
+}
+
+func TestRejectedAndHealthAreNotDelayed(t *testing.T) {
+	t.Parallel()
+
+	mux := newMux(testAPIKey, &eventStore{}, discardLogger(), time.Second, time.Second)
+
+	for path, key := range map[string]string{"/seismic-events": "", "/tsunami-warnings": "wrong-key", "/health": ""} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
+		if key != "" {
+			req.Header.Set("X-BMKG-Key", key)
+		}
+
+		start := time.Now()
+
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+
+		if d := time.Since(start); d > 500*time.Millisecond {
+			t.Fatalf("%s took %v, expected a fast response", path, d)
+		}
 	}
 }
