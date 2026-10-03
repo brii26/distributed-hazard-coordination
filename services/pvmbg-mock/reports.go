@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,6 +15,8 @@ import (
 const (
 	defaultSeedCount     = 20
 	defaultEventInterval = 10 * time.Second
+	defaultDelayMinMS    = 500
+	defaultDelayMaxMS    = 3000
 )
 
 // volcanoIDs is the fixed list new reports draw from.
@@ -114,4 +119,57 @@ func (s *reportStore) since(t time.Time) []VolcanicReport {
 	}
 
 	return out
+}
+
+// requireBearer guards a handler with the OAuth access token this mock issued.
+// Missing, malformed or superseded tokens are 401; the token itself is never logged.
+func requireBearer(tokens *tokenStore, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || !tokens.validAccess(token) {
+			log.Printf("volcanic-reports rejected: bearer token missing or invalid")
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// reportsHandler serves GET /volcanic-reports?since=<ISO8601>. Every served
+// request first sleeps a random time in [minDelay, maxDelay] (the slow legacy
+// system the Aggregator has to cope with); a client that gives up mid-delay
+// frees the handler immediately.
+func reportsHandler(s *reportStore, minDelay, maxDelay time.Duration) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var since time.Time
+
+		if raw := r.URL.Query().Get("since"); raw != "" {
+			var err error
+
+			since, err = time.Parse(time.RFC3339, raw)
+			if err != nil {
+				http.Error(w, "invalid since: want ISO8601 (RFC 3339)", http.StatusBadRequest)
+
+				return
+			}
+		}
+
+		delay := time.Duration(randInt(int(minDelay/time.Millisecond), int(maxDelay/time.Millisecond))) * time.Millisecond
+		log.Printf("volcanic-reports request delay_ms=%d", delay.Milliseconds())
+
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(delay):
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(s.since(since)); err != nil {
+			log.Printf("failed to write volcanic-reports response: %v", err)
+		}
+	}
 }

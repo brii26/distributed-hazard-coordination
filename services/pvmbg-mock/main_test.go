@@ -16,7 +16,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
+	newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -52,7 +52,7 @@ func TestOutageToggle(t *testing.T) {
 		req := httptest.NewRequestWithContext(context.Background(), method, path, nil)
 		req.Header.Set("X-Admin-Key", testAdminKey)
 
-		newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
+		newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 		return rec
 	}
@@ -86,7 +86,7 @@ func TestSchemaVersionToggle(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 
-		newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
+		newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("expected 200 with %q, got %d %s", want, rec.Code, rec.Body.String())
@@ -105,7 +105,7 @@ func TestAdminKeyRequired(t *testing.T) {
 			}
 
 			rec := httptest.NewRecorder()
-			newMux(newTestStore(), testAdminKey).ServeHTTP(rec, req)
+			newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 			if rec.Code != want {
 				t.Fatalf("%s with key %q: expected %d, got %d", path, key, want, rec.Code)

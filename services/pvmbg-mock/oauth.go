@@ -100,6 +100,19 @@ func (s *tokenStore) exchange(grant, code, refresh string) (tokenPair, string) {
 	return pair, ""
 }
 
+// validAccess reports whether token is the client's currently valid access
+// token. Rotation replaces the pair, so a superseded access token stops working.
+// ponytail: expires_in is advertised but not enforced; add an expiry timestamp
+// to tokenPair if the demo needs tokens to lapse on their own.
+func (s *tokenStore) validAccess(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cur, ok := s.tokens[s.clientID]
+
+	return ok && equal(token, cur.access)
+}
+
 // loggableGrant maps the client-supplied grant_type onto known constants so
 // arbitrary request input never reaches the log.
 func loggableGrant(grant string) string {
