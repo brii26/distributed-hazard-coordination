@@ -105,13 +105,14 @@ func requireAdminKey(adminKey string, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func newMux(store *tokenStore, adminKey string) http.Handler {
+func newMux(store *tokenStore, adminKey string, reports *reportStore, minDelay, maxDelay time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("POST /oauth/token", store.tokenHandler)
 	mux.HandleFunc("POST /admin/outage", requireAdminKey(adminKey, outageHandler))
 	mux.HandleFunc("POST /admin/schema-version", requireAdminKey(adminKey, schemaVersionHandler))
-	// TODO: implement the endpoints specified for pvmbg-mock in doc/TRD_M1.md
+	mux.HandleFunc("GET /volcanic-reports", requireBearer(store, reportsHandler(reports, minDelay, maxDelay)))
+
 	return withOutage(mux)
 }
 
@@ -178,14 +179,29 @@ func main() {
 		log.Fatal(err)
 	}
 
+	delayMinMS, err := envPositiveInt("PVMBG_DELAY_MIN_MS", defaultDelayMinMS)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	delayMaxMS, err := envPositiveInt("PVMBG_DELAY_MAX_MS", defaultDelayMaxMS)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if delayMinMS > delayMaxMS {
+		log.Fatalf("PVMBG_DELAY_MIN_MS (%d) must not exceed PVMBG_DELAY_MAX_MS (%d)", delayMinMS, delayMaxMS)
+	}
+
 	interval := time.Duration(intervalS) * time.Second
 	store.seed(seedCount, interval, time.Now(), schemaExtended.Load())
 
 	go store.run(context.Background(), interval, schemaExtended.Load)
 
 	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           newMux(newTokenStore(clientID, clientSecret, oneTimeCode), adminKey),
+		Addr: ":" + port,
+		Handler: newMux(newTokenStore(clientID, clientSecret, oneTimeCode), adminKey, store,
+			time.Duration(delayMinMS)*time.Millisecond, time.Duration(delayMaxMS)*time.Millisecond),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

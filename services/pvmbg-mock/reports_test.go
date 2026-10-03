@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +94,108 @@ func TestSinceFilters(t *testing.T) {
 
 	if n := len(s.since(base.Add(-5*time.Minute - time.Second))); n != 5 {
 		t.Fatalf("expected the 5 newest reports, got %d", n)
+	}
+}
+
+func getReports(t *testing.T, tokens *tokenStore, reports *reportStore, minD, maxD time.Duration, auth, query string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/volcanic-reports"+query, nil)
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	rec := httptest.NewRecorder()
+	// Bypasses newMux so the package-global outage flag, which other parallel
+	// tests toggle, cannot turn these into 503s.
+	requireBearer(tokens, reportsHandler(reports, minD, maxD)).ServeHTTP(rec, req)
+
+	return rec
+}
+
+func TestReportsRequireCurrentBearerToken(t *testing.T) {
+	t.Parallel()
+
+	tokens := newTestStore()
+
+	first, errCode := tokens.exchange(grantAuthCode, testCode, "")
+	if errCode != "" {
+		t.Fatal(errCode)
+	}
+
+	for _, auth := range []string{"", "Bearer", "Bearer wrong", "Basic " + first.access, first.access} {
+		if rec := getReports(t, tokens, &reportStore{}, 0, 0, auth, ""); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("auth %q: expected 401, got %d", auth, rec.Code)
+		}
+	}
+
+	if rec := getReports(t, tokens, &reportStore{}, 0, 0, "Bearer "+first.access, ""); rec.Code != http.StatusOK {
+		t.Fatalf("valid token: expected 200, got %d", rec.Code)
+	}
+
+	// Rotation supersedes the old access token: one valid token per client.
+	if _, errCode := tokens.exchange(grantRefreshToken, "", first.refresh); errCode != "" {
+		t.Fatal(errCode)
+	}
+
+	if rec := getReports(t, tokens, &reportStore{}, 0, 0, "Bearer "+first.access, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("superseded token: expected 401, got %d", rec.Code)
+	}
+}
+
+func TestReportsSinceAndShape(t *testing.T) {
+	t.Parallel()
+
+	tokens := newTestStore()
+	pair, _ := tokens.exchange(grantAuthCode, testCode, "")
+	auth := "Bearer " + pair.access
+
+	reports := &reportStore{}
+	base := time.Now().UTC()
+	reports.seed(10, time.Minute, base, true) // oldest 10 min ago, newest 1 min ago
+
+	since := url.QueryEscape(base.Add(-5*time.Minute - time.Second).Format(time.RFC3339Nano))
+
+	var got []map[string]any
+	if err := json.Unmarshal(getReports(t, tokens, reports, 0, 0, auth, "?since="+since).Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 5 {
+		t.Fatalf("expected the 5 newest reports, got %d", len(got))
+	}
+
+	for _, f := range []string{"report_id", "volcano_id", "alert_level", "eruption_count_24h", "ash_column_height_m", "reported_at", "confidence_level"} {
+		if _, ok := got[0][f]; !ok {
+			t.Fatalf("missing field %q in %v", f, got[0])
+		}
+	}
+
+	if rec := getReports(t, tokens, reports, 0, 0, auth, "?since=yesterday"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad since: expected 400, got %d", rec.Code)
+	}
+
+	if body := getReports(t, tokens, &reportStore{}, 0, 0, auth, "").Body.String(); body != "[]\n" {
+		t.Fatalf("empty result should be [], got %q", body)
+	}
+}
+
+func TestReportsDelayWithinRange(t *testing.T) {
+	t.Parallel()
+
+	tokens := newTestStore()
+	pair, _ := tokens.exchange(grantAuthCode, testCode, "")
+
+	const lo, hi = 40 * time.Millisecond, 80 * time.Millisecond
+
+	for range 5 {
+		start := time.Now()
+
+		getReports(t, tokens, &reportStore{}, lo, hi, "Bearer "+pair.access, "")
+
+		// Upper bound has slack for scheduling; the lower bound is exact.
+		if d := time.Since(start); d < lo || d > hi+250*time.Millisecond {
+			t.Fatalf("latency %v outside [%v, %v]", d, lo, hi)
+		}
 	}
 }
