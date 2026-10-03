@@ -53,19 +53,16 @@ Waits on health checks before dependent services start (e.g. Aggregator waits on
 
 Each database sits on an internal network shared only with its owner: `canonical-net` (Aggregator and `canonical-store`) and `userdb-net` (Auth Service and `user-db`). Neither database publishes a host port; to look inside one, use `docker compose exec canonical-store psql -U aggregator`.
 
-With the stack running (and no other compose project up), probe each database from a throwaway container on each network:
+With the stack running, probe both databases from every service:
 
 ```bash
-net() { docker network ls --filter "label=com.docker.compose.network=$1" --format '{{.Name}}' | head -1; }
-probe() { docker run --rm --network "$(net "$1")" busybox:1.36 sh -c "nc -zw2 $2 5432 >/dev/null 2>&1 && echo reachable || echo unreachable"; }
-
-probe default canonical-store      # unreachable: any other service
-probe default user-db              # unreachable
-probe canonical-net canonical-store  # reachable: the Aggregator side
-probe userdb-net user-db           # reachable: the Auth Service side
-probe canonical-net user-db        # unreachable: each network reaches only its own database
-docker network inspect "$(net canonical-net)" --format '{{range .Containers}}{{.Name}} {{end}}'  # canonical-store and aggregator only
+for s in aggregator auth-service bmkg-mock pvmbg-mock rabbitmq client-facing-api dashboard-updater notifier audit-logger; do
+  echo "$s  canonical-store: $(docker compose exec -T $s sh -c 'nc -zw2 canonical-store 5432 >/dev/null 2>&1 && echo reachable || echo unreachable')" \
+          " user-db: $(docker compose exec -T $s sh -c 'nc -zw2 user-db 5432 >/dev/null 2>&1 && echo reachable || echo unreachable')"
+done
 ```
+
+Only `aggregator` reaches `canonical-store` and only `auth-service` reaches `user-db`; everything else says `unreachable`.
 
 ## Running a single service locally (without Docker)
 
