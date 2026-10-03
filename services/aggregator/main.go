@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -62,6 +63,48 @@ func envPositiveInt(name string, def int) (int, error) {
 	return n, nil
 }
 
+// loadPollConfig reads the polling and circuit breaker settings from the
+// environment and takes the PVMBG credentials from the token manager.
+func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
+	var firstErr error
+
+	// ms reads a positive millisecond env var as a Duration, remembering the first error.
+	ms := func(name string, def time.Duration) time.Duration {
+		n, err := envPositiveInt(name, int(def/time.Millisecond))
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+
+		return time.Duration(n) * time.Millisecond
+	}
+
+	c := pollConfig{
+		interval:  ms("POLL_INTERVAL_MS", defaultPollInterval),
+		timeout:   ms("POLL_TIMEOUT_MS", defaultPollTimeout),
+		cbOpenFor: ms("CB_OPEN_DURATION_MS", defaultCBOpenDuration),
+		bmkgURL:   os.Getenv("BMKG_BASE_URL"),
+		bmkgKey:   os.Getenv("BMKG_API_KEY"),
+		pvmbgURL:  tokens.baseURL,
+		token:     tokens.Token,
+		tokenErr:  tokens.LastError,
+	}
+
+	var err error
+	if c.cbThreshold, err = envPositiveInt("CB_FAILURE_THRESHOLD", defaultCBFailureThreshold); err != nil {
+		return pollConfig{}, err
+	}
+
+	if firstErr != nil {
+		return pollConfig{}, firstErr
+	}
+
+	if c.bmkgURL == "" || c.bmkgKey == "" {
+		return pollConfig{}, errors.New("BMKG_BASE_URL and BMKG_API_KEY must be set")
+	}
+
+	return c, nil
+}
+
 func main() {
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
@@ -95,26 +138,13 @@ func main() {
 
 	go tokens.run(ctx)
 
-	intervalMS, err := envPositiveInt("POLL_INTERVAL_MS", int(defaultPollInterval/time.Millisecond))
+	pc, err := loadPollConfig(tokens)
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	timeoutMS, err := envPositiveInt("POLL_TIMEOUT_MS", int(defaultPollTimeout/time.Millisecond))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	bmkgURL, bmkgKey := os.Getenv("BMKG_BASE_URL"), os.Getenv("BMKG_API_KEY")
-	if bmkgURL == "" || bmkgKey == "" {
-		log.Fatal("BMKG_BASE_URL and BMKG_API_KEY must be set")
 	}
 
 	// One goroutine per source: a slow PVMBG poll never delays the BMKG loop.
-	for _, p := range newPollers(
-		time.Duration(intervalMS)*time.Millisecond, time.Duration(timeoutMS)*time.Millisecond,
-		bmkgURL, bmkgKey, tokens.baseURL, tokens.Token,
-	) {
+	for _, p := range newPollers(pc) {
 		go p.run(ctx)
 	}
 
