@@ -199,3 +199,78 @@ func TestReportsDelayWithinRange(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessTokenExpires(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Now()
+	tokens := newTestStore()
+	tokens.now = func() time.Time { return clock }
+
+	pair, errCode := tokens.exchange(grantAuthCode, testCode, "")
+	if errCode != "" {
+		t.Fatal(errCode)
+	}
+
+	auth := "Bearer " + pair.access
+	status := func() int { return getReports(t, tokens, &reportStore{}, 0, 0, auth, "").Code }
+
+	if got := status(); got != http.StatusOK {
+		t.Fatalf("fresh token: expected 200, got %d", got)
+	}
+
+	clock = clock.Add(tokenTTLSeconds*time.Second - time.Nanosecond)
+
+	if got := status(); got != http.StatusOK {
+		t.Fatalf("just before expiry: expected 200, got %d", got)
+	}
+
+	clock = clock.Add(time.Nanosecond)
+
+	if got := status(); got != http.StatusUnauthorized {
+		t.Fatalf("at expiry: expected 401, got %d", got)
+	}
+}
+
+func TestRefreshAfterExpiryGivesFreshLifetime(t *testing.T) {
+	t.Parallel()
+
+	clock := time.Now()
+	tokens := newTestStore()
+	tokens.now = func() time.Time { return clock }
+
+	first, _ := tokens.exchange(grantAuthCode, testCode, "")
+
+	// The access token is long expired, but the refresh token still rotates.
+	clock = clock.Add(10 * time.Minute)
+
+	second, errCode := tokens.exchange(grantRefreshToken, "", first.refresh)
+	if errCode != "" {
+		t.Fatalf("refresh after access expiry should work, got %q", errCode)
+	}
+
+	if !tokens.validAccess(second.access) {
+		t.Fatal("new access token should be valid right after refresh")
+	}
+
+	clock = clock.Add(tokenTTLSeconds*time.Second - time.Nanosecond)
+
+	if !tokens.validAccess(second.access) {
+		t.Fatal("new access token should live the full advertised lifetime")
+	}
+
+	clock = clock.Add(time.Nanosecond)
+
+	if tokens.validAccess(second.access) {
+		t.Fatal("new access token should expire after its lifetime")
+	}
+
+	// Superseded tokens stay invalid.
+	if tokens.validAccess(first.access) {
+		t.Fatal("superseded access token must stay invalid")
+	}
+
+	if _, errCode := tokens.exchange(grantRefreshToken, "", first.refresh); errCode == "" {
+		t.Fatal("superseded refresh token must stay invalid")
+	}
+}
