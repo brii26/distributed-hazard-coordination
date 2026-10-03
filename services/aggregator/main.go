@@ -10,8 +10,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -105,17 +108,36 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 	return c, nil
 }
 
-func main() {
+const defaultDBPoolSize = 20
+
+// loadStore opens the Canonical Store from DATABASE_URL with DB_POOL_SIZE connections.
+// An unreachable database stops the service at start; compose waits for it to be healthy.
+func loadStore() (*store, error) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		return nil, errors.New("DATABASE_URL must be set")
+	}
+
+	poolSize, err := envPositiveInt("DB_POOL_SIZE", defaultDBPoolSize)
+	if err != nil {
+		return nil, err
+	}
+
+	return openStore(url, poolSize)
+}
+
+// run starts the Aggregator and returns when it has stopped or failed to start.
+func run() error {
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Reparsed as an int purely so the log line below carries a numeric
 	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	tokens := newTokenManager(
@@ -127,25 +149,37 @@ func main() {
 	)
 
 	if tokens.baseURL == "" || tokens.clientID == "" || tokens.clientSecret == "" || tokens.path == "" {
-		log.Fatal("PVMBG_BASE_URL, PVMBG_OAUTH_CLIENT_ID, PVMBG_OAUTH_CLIENT_SECRET and PVMBG_TOKEN_VOLUME_PATH must be set")
+		return errors.New("PVMBG_BASE_URL, PVMBG_OAUTH_CLIENT_ID, PVMBG_OAUTH_CLIENT_SECRET and PVMBG_TOKEN_VOLUME_PATH must be set")
 	}
 
 	// A failed bootstrap must not stop the service (BMKG still works): run()
 	// keeps retrying and the failure shows up through LastError().
 	_ = tokens.load()
 
-	ctx := context.Background()
+	// On SIGINT or SIGTERM the pollers stop and ingest writes what it holds.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	go tokens.run(ctx)
 
 	pc, err := loadPollConfig(tokens)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	// One goroutine per source: a slow PVMBG poll never delays the BMKG loop.
-	for _, p := range newPollers(pc) {
-		go p.run(ctx)
+	db, err := loadStore()
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = db.close() }()
+
+	// One poller and one ingest goroutine per source; both share the one pool.
+	var wg sync.WaitGroup
+
+	// publish is a no-op until the RabbitMQ publisher (#23) is plugged in here.
+	for _, p := range newPipelines(pc, db.upsert, func(HazardEvent) {}) {
+		wg.Go(func() { p.run(ctx) })
 	}
 
 	srv := &http.Server{
@@ -157,9 +191,29 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	go func() {
+		<-ctx.Done()
+
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_ = srv.Shutdown(shutdown)
+	}()
+
 	log.Printf("aggregator listening on :%d", portNum)
 
-	if err := srv.ListenAndServe(); err != nil {
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+
+	wg.Wait() // the pipelines have drained
+	log.Print("aggregator stopped")
+
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
 		log.Fatal(err)
 	}
 }

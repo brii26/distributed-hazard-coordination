@@ -58,6 +58,11 @@ func (s *starts) gaps() []time.Duration {
 	return out
 }
 
+// sink is a channel big enough that a test poller never waits on it.
+func sink() chan pollResult {
+	return make(chan pollResult, 256)
+}
+
 // testBreaker is a breaker that never trips, for tests about something else.
 func testBreaker() *breaker {
 	return newBreaker("test", 1000, time.Hour)
@@ -92,7 +97,7 @@ func TestSlowCallFiresNextImmediatelyWithoutOverlap(t *testing.T) {
 
 	// Each call (150 ms) outlasts the interval (100 ms): the next one must start
 	// right after it, not after another full interval (which would be 250 ms).
-	runFor(&poller{name: "slow", interval: 100 * time.Millisecond, fetch: s.fetch(150 * time.Millisecond), breaker: testBreaker()}, 800*time.Millisecond)
+	runFor(&poller{name: "slow", interval: 100 * time.Millisecond, fetch: s.fetch(150 * time.Millisecond), breaker: testBreaker(), out: sink()}, 800*time.Millisecond)
 
 	if s.maxSeen.Load() != 1 {
 		t.Fatalf("saw %d calls in flight at once, want 1", s.maxSeen.Load())
@@ -116,7 +121,7 @@ func TestWaitIsIntervalMinusCallDuration(t *testing.T) {
 	var s starts
 
 	// A 30 ms call in a 100 ms interval: starts stay about 100 ms apart.
-	runFor(&poller{name: "ok", interval: 100 * time.Millisecond, fetch: s.fetch(30 * time.Millisecond), breaker: testBreaker()}, 600*time.Millisecond)
+	runFor(&poller{name: "ok", interval: 100 * time.Millisecond, fetch: s.fetch(30 * time.Millisecond), breaker: testBreaker(), out: sink()}, 600*time.Millisecond)
 
 	gaps := s.gaps()
 	if len(gaps) < 3 {
@@ -138,8 +143,8 @@ func TestSlowSourceDoesNotDelayTheOther(t *testing.T) {
 	var wg sync.WaitGroup
 
 	for _, p := range []*poller{
-		{name: sourceBMKG, interval: 50 * time.Millisecond, fetch: fast.fetch(time.Millisecond), breaker: testBreaker()},
-		{name: sourcePVMBG, interval: 50 * time.Millisecond, fetch: slow.fetch(400 * time.Millisecond), breaker: testBreaker()},
+		{name: sourceBMKG, interval: 50 * time.Millisecond, fetch: fast.fetch(time.Millisecond), breaker: testBreaker(), out: sink()},
+		{name: sourcePVMBG, interval: 50 * time.Millisecond, fetch: slow.fetch(400 * time.Millisecond), breaker: testBreaker(), out: sink()},
 	} {
 		wg.Go(func() { runFor(p, 700*time.Millisecond) })
 	}
@@ -217,7 +222,7 @@ func TestBMKGSendsKeyAndAdvancesSince(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := &sourceClient{baseURL: srv.URL, timeout: time.Second, client: &http.Client{}, auth: bmkgAuth("secret")}
-	p := &poller{name: sourceBMKG, fetch: bmkgFetch(c), breaker: testBreaker()}
+	p := &poller{name: sourceBMKG, fetch: bmkgFetch(c), breaker: testBreaker(), out: sink()}
 
 	p.pollOnce(context.Background())
 	p.pollOnce(context.Background())
@@ -271,7 +276,7 @@ func TestPVMBGBearerTokenAndFailures(t *testing.T) {
 
 	token := ""
 	c := &sourceClient{baseURL: srv.URL, timeout: time.Second, client: &http.Client{}, auth: pvmbgAuth(func() string { return token })}
-	p := &poller{name: sourcePVMBG, fetch: pvmbgFetch(c, func() error { return nil }), breaker: testBreaker()}
+	p := &poller{name: sourcePVMBG, fetch: pvmbgFetch(c, func() error { return nil }), breaker: testBreaker(), out: sink()}
 
 	// No token yet: no request is sent and the cursor stays put.
 	p.pollOnce(context.Background())
