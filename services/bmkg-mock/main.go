@@ -43,21 +43,39 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-func seismicEventHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+// parseSince reads the optional ?since=<ISO8601> filter; absent means all records.
+func parseSince(r *http.Request) (time.Time, error) {
+	raw := r.URL.Query().Get("since")
+	if raw == "" {
+		return time.Time{}, nil
+	}
 
-	if err := json.NewEncoder(w).Encode(map[string]string{"test": "test"}); err != nil {
-		log.Printf("failed to write response: %v", err)
+	return time.Parse(time.RFC3339, raw)
+}
+
+// sinceHandler serves the records get returns for the request's since filter.
+func sinceHandler[T any](get func(time.Time) []T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		since, err := parseSince(r)
+		if err != nil {
+			http.Error(w, "invalid since: want ISO8601 (RFC 3339)", http.StatusBadRequest)
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(get(since)); err != nil {
+			log.Printf("failed to write response: %v", err)
+		}
 	}
 }
 
-func newMux(apiKey string) *http.ServeMux {
+func newMux(apiKey string, store *eventStore) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
-	// TODO: implement the endpoints specified for bmkg-mock in doc/TRD_M1.md
-
-	// Future endpoints must be wrapped with requireAPIKey
-	mux.HandleFunc("GET /seismic-events", requireAPIKey(apiKey, seismicEventHandler))
+	mux.HandleFunc("GET /seismic-events", requireAPIKey(apiKey, sinceHandler(store.eventsSince)))
+	mux.HandleFunc("GET /tsunami-warnings", requireAPIKey(apiKey, sinceHandler(store.warningsSince)))
 
 	return mux
 }
@@ -110,6 +128,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	store := &eventStore{}
+
 	seedCount, err := envPositiveInt("SEED_COUNT", defaultSeedCount)
 	if err != nil {
 		log.Fatal(err)
@@ -121,14 +141,13 @@ func main() {
 	}
 
 	interval := time.Duration(intervalS) * time.Second
-	store := &eventStore{}
 	store.seed(seedCount, interval, time.Now())
 
 	go store.run(context.Background(), interval)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(apiKey),
+		Handler:           newMux(apiKey, store),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
