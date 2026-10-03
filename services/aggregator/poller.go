@@ -1,0 +1,215 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+const (
+	defaultPollInterval = 3 * time.Second
+	defaultPollTimeout  = 4 * time.Second
+	maxPollBody         = 8 << 20
+)
+
+// pollResult is what one poll cycle brings back from a source.
+type pollResult struct {
+	records int
+	// cursor is the newest record timestamp seen, used as the next ?since=.
+	// Zero means the poll carried nothing to advance it with.
+	cursor time.Time
+}
+
+// poller runs one source's polling loop. The loop is a single goroutine that
+// does one call at a time, so there can never be two calls in flight for the
+// same source, and a slow source can only slow its own loop (doc/TRD_M1.md 3.1).
+type poller struct {
+	name     string
+	interval time.Duration
+	fetch    func(ctx context.Context, since time.Time) (pollResult, error)
+
+	// since is only touched by the run goroutine.
+	// ponytail: the cursor lives in memory, so a restart re-reads everything
+	// once; the upsert dedup (#21) makes that harmless. It also assumes the
+	// source's timestamps never go backwards.
+	since time.Time
+}
+
+// nextWait is how long to sleep after a call that took elapsed: the rest of the
+// interval, or nothing when the call already used it up (no pile-up, no extra wait).
+func nextWait(interval, elapsed time.Duration) time.Duration {
+	return max(interval-elapsed, 0)
+}
+
+// run polls until ctx is done.
+func (p *poller) run(ctx context.Context) {
+	for {
+		start := time.Now()
+
+		p.pollOnce(ctx)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(nextWait(p.interval, time.Since(start))):
+		}
+	}
+}
+
+// pollOnce makes one call and logs how it ended. Any error, including a
+// timeout, counts as a failed poll; the cursor only moves on success.
+func (p *poller) pollOnce(ctx context.Context) {
+	start := time.Now()
+	res, err := p.fetch(ctx, p.since)
+	elapsed := time.Since(start).Milliseconds()
+
+	switch {
+	case err == nil:
+		if res.cursor.After(p.since) {
+			p.since = res.cursor
+		}
+
+		log.Printf("poll source=%s result=success duration_ms=%d records=%d", p.name, elapsed, res.records)
+	case errors.Is(err, context.DeadlineExceeded):
+		log.Printf("poll source=%s result=timeout duration_ms=%d err=%q", p.name, elapsed, err)
+	default:
+		log.Printf("poll source=%s result=failure duration_ms=%d err=%q", p.name, elapsed, err)
+	}
+}
+
+// sourceClient makes the authenticated GETs for one source. Every call gets its
+// own explicit timeout and is cancelled when it expires.
+type sourceClient struct {
+	baseURL string
+	timeout time.Duration
+	client  *http.Client
+	// auth adds the source's own credential, or fails when it has none yet.
+	auth func(*http.Request) error
+}
+
+// records GETs path (with ?since when set) and decodes a JSON array of objects.
+func (c *sourceClient) records(ctx context.Context, path string, since time.Time) ([]map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	u := c.baseURL + path
+	if !since.IsZero() {
+		u += "?since=" + url.QueryEscape(since.UTC().Format(time.RFC3339Nano))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.auth(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s returned status %d", path, resp.StatusCode)
+	}
+
+	var out []map[string]any
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPollBody)).Decode(&out); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
+	return out, nil
+}
+
+// newest returns the latest RFC 3339 timestamp stored under key, or zero.
+func newest(recs []map[string]any, key string) time.Time {
+	var latest time.Time
+
+	for _, r := range recs {
+		s, _ := r[key].(string)
+		if t, err := time.Parse(time.RFC3339, s); err == nil && t.After(latest) {
+			latest = t
+		}
+	}
+
+	return latest
+}
+
+// bmkgFetch polls BMKG: seismic events and tsunami warnings are separate
+// endpoints, correlated later by the mapper (#17), so one poll reads both. The
+// cursor follows the seismic events, which the warnings are filtered by.
+func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
+	return func(ctx context.Context, since time.Time) (pollResult, error) {
+		events, err := c.records(ctx, "/seismic-events", since)
+		if err != nil {
+			return pollResult{}, err
+		}
+
+		warnings, err := c.records(ctx, "/tsunami-warnings", since)
+		if err != nil {
+			return pollResult{}, err
+		}
+
+		return pollResult{records: len(events) + len(warnings), cursor: newest(events, "occurred_at")}, nil
+	}
+}
+
+// pvmbgFetch polls PVMBG's volcanic reports.
+func pvmbgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
+	return func(ctx context.Context, since time.Time) (pollResult, error) {
+		reports, err := c.records(ctx, "/volcanic-reports", since)
+		if err != nil {
+			return pollResult{}, err
+		}
+
+		return pollResult{records: len(reports), cursor: newest(reports, "reported_at")}, nil
+	}
+}
+
+// bmkgAuth sends BMKG's static API key.
+func bmkgAuth(key string) func(*http.Request) error {
+	return func(r *http.Request) error {
+		r.Header.Set("X-BMKG-Key", key)
+
+		return nil
+	}
+}
+
+// pvmbgAuth sends the current OAuth access token. With no token yet the call is
+// not made at all and counts as a failed poll.
+func pvmbgAuth(token func() string) func(*http.Request) error {
+	return func(r *http.Request) error {
+		t := token()
+		if t == "" {
+			return errors.New("no PVMBG access token yet")
+		}
+
+		r.Header.Set("Authorization", "Bearer "+t)
+
+		return nil
+	}
+}
+
+// newPollers builds the BMKG and PVMBG pollers from the shared interval/timeout.
+func newPollers(interval, timeout time.Duration, bmkgURL, bmkgKey, pvmbgURL string, token func() string) []*poller {
+	client := &http.Client{}
+
+	bmkg := &sourceClient{baseURL: strings.TrimRight(bmkgURL, "/"), timeout: timeout, client: client, auth: bmkgAuth(bmkgKey)}
+	pvmbg := &sourceClient{baseURL: strings.TrimRight(pvmbgURL, "/"), timeout: timeout, client: client, auth: pvmbgAuth(token)}
+
+	return []*poller{
+		{name: "BMKG", interval: interval, fetch: bmkgFetch(bmkg)},
+		{name: "PVMBG", interval: interval, fetch: pvmbgFetch(pvmbg)},
+	}
+}

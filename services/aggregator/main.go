@@ -47,6 +47,21 @@ func resolvePort(raw string) (string, error) {
 	return raw, nil
 }
 
+// envPositiveInt reads a positive integer env var, falling back to def when unset.
+func envPositiveInt(name string, def int) (int, error) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid %s value: %q", name, raw)
+	}
+
+	return n, nil
+}
+
 func main() {
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
@@ -76,7 +91,32 @@ func main() {
 	// keeps retrying and the failure shows up through LastError().
 	_ = tokens.load()
 
-	go tokens.run(context.Background())
+	ctx := context.Background()
+
+	go tokens.run(ctx)
+
+	intervalMS, err := envPositiveInt("POLL_INTERVAL_MS", int(defaultPollInterval/time.Millisecond))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	timeoutMS, err := envPositiveInt("POLL_TIMEOUT_MS", int(defaultPollTimeout/time.Millisecond))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bmkgURL, bmkgKey := os.Getenv("BMKG_BASE_URL"), os.Getenv("BMKG_API_KEY")
+	if bmkgURL == "" || bmkgKey == "" {
+		log.Fatal("BMKG_BASE_URL and BMKG_API_KEY must be set")
+	}
+
+	// One goroutine per source: a slow PVMBG poll never delays the BMKG loop.
+	for _, p := range newPollers(
+		time.Duration(intervalMS)*time.Millisecond, time.Duration(timeoutMS)*time.Millisecond,
+		bmkgURL, bmkgKey, tokens.baseURL, tokens.Token,
+	) {
+		go p.run(ctx)
+	}
 
 	srv := &http.Server{
 		Addr:              ":" + port,
