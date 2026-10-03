@@ -42,6 +42,8 @@ services:
 
   canonical-store:
     image: postgres:16-alpine
+    networks:
+      - canonical-net
     environment:
       POSTGRES_USER: ${CANONICAL_DB_USER:-aggregator}
       POSTGRES_PASSWORD: ${CANONICAL_DB_PASSWORD}
@@ -57,6 +59,8 @@ services:
 
   user-db:
     image: postgres:16-alpine
+    networks:
+      - userdb-net
     environment:
       POSTGRES_USER: ${USER_DB_USER:-auth}
       POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
@@ -90,6 +94,9 @@ services:
 
   aggregator:
     build: ./services/aggregator
+    networks:
+      - default
+      - canonical-net
     depends_on:
       canonical-store:
         condition: service_healthy
@@ -128,6 +135,9 @@ services:
 
   auth-service:
     build: ./services/auth-service
+    networks:
+      - default
+      - userdb-net
     depends_on:
       user-db:
         condition: service_healthy
@@ -208,6 +218,16 @@ services:
       DEDUP_STORE_PATH: /var/lib/audit-logger/dedup.log
     volumes:
       - audit_logger_dedup_data:/var/lib/audit-logger
+
+# Storage is owned by one service each (doc/TRD_M1.md 0, 5, 6). The two database
+# networks are internal and have exactly one client, so no other container can
+# reach a database. Services without a networks key stay on the default network.
+networks:
+  default:
+  canonical-net:
+    internal: true
+  userdb-net:
+    internal: true
 
 volumes:
   canonical_store_data:

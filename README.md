@@ -49,6 +49,24 @@ docker compose up --build
 
 Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`; BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
 
+### Checking that the databases are isolated
+
+Each database sits on an internal network shared only with its owner: `canonical-net` (Aggregator and `canonical-store`) and `userdb-net` (Auth Service and `user-db`). Neither database publishes a host port; to look inside one, use `docker compose exec canonical-store psql -U aggregator`.
+
+With the stack running (and no other compose project up), probe each database from a throwaway container on each network:
+
+```bash
+net() { docker network ls --filter "label=com.docker.compose.network=$1" --format '{{.Name}}' | head -1; }
+probe() { docker run --rm --network "$(net "$1")" busybox:1.36 sh -c "nc -zw2 $2 5432 >/dev/null 2>&1 && echo reachable || echo unreachable"; }
+
+probe default canonical-store      # unreachable: any other service
+probe default user-db              # unreachable
+probe canonical-net canonical-store  # reachable: the Aggregator side
+probe userdb-net user-db           # reachable: the Auth Service side
+probe canonical-net user-db        # unreachable: each network reaches only its own database
+docker network inspect "$(net canonical-net)" --format '{{range .Containers}}{{.Name}} {{end}}'  # canonical-store and aggregator only
+```
+
 ## Running a single service locally (without Docker)
 
 ```bash
