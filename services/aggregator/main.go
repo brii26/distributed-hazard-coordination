@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -58,6 +59,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	tokens := newTokenManager(
+		os.Getenv("PVMBG_BASE_URL"),
+		os.Getenv("PVMBG_OAUTH_CLIENT_ID"),
+		os.Getenv("PVMBG_OAUTH_CLIENT_SECRET"),
+		os.Getenv("PVMBG_ONE_TIME_CODE"),
+		os.Getenv("PVMBG_TOKEN_VOLUME_PATH"),
+	)
+
+	if tokens.baseURL == "" || tokens.clientID == "" || tokens.clientSecret == "" || tokens.path == "" {
+		log.Fatal("PVMBG_BASE_URL, PVMBG_OAUTH_CLIENT_ID, PVMBG_OAUTH_CLIENT_SECRET and PVMBG_TOKEN_VOLUME_PATH must be set")
+	}
+
+	// A failed bootstrap must not stop the service (BMKG still works): run()
+	// keeps retrying and the failure shows up through LastError().
+	_ = tokens.load()
+
+	go tokens.run(context.Background())
 
 	srv := &http.Server{
 		Addr:              ":" + port,
