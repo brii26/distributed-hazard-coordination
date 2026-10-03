@@ -6,7 +6,7 @@ Full technical spec: [`doc/TRD_M1.md`](doc/TRD_M1.md). Assignment spec: [`doc/IF
 
 ## Prerequisites
 
-- Go 1.23+
+- Go 1.26+
 - Docker + Docker Compose (only needed for `docker compose up` — not required to build/test an individual service)
 - `git`
 

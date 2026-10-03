@@ -1,6 +1,6 @@
 module github.com/brii26/distributed-hazard-coordination/services/auth-service
 
-go 1.23
+go 1.26
 
 require (
 	github.com/jackc/pgx/v5 v5.7.2
