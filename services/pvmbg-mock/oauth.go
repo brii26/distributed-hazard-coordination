@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 type tokenPair struct {
 	access  string
 	refresh string
+	expires time.Time // absolute end of the access token's advertised lifetime
 }
 
 // tokenStore is the mock's OAuth state: one registered client, a one-time
@@ -31,6 +33,10 @@ type tokenStore struct {
 	clientSecret string
 	oneTimeCode  string
 
+	// now is the clock used to stamp and check expiry; tests replace it so
+	// expiry never needs a real wait.
+	now func() time.Time
+
 	mu       sync.Mutex
 	codeUsed bool
 	tokens   map[string]tokenPair
@@ -41,6 +47,7 @@ func newTokenStore(clientID, clientSecret, oneTimeCode string) *tokenStore {
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		oneTimeCode:  oneTimeCode,
+		now:          time.Now,
 		tokens:       map[string]tokenPair{},
 	}
 }
@@ -94,23 +101,23 @@ func (s *tokenStore) exchange(grant, code, refresh string) (tokenPair, string) {
 		s.codeUsed = true
 	}
 
-	pair := tokenPair{access: access, refresh: newRefresh}
+	pair := tokenPair{access: access, refresh: newRefresh, expires: s.now().Add(tokenTTLSeconds * time.Second)}
 	s.tokens[s.clientID] = pair
 
 	return pair, ""
 }
 
 // validAccess reports whether token is the client's currently valid access
-// token. Rotation replaces the pair, so a superseded access token stops working.
-// ponytail: expires_in is advertised but not enforced; add an expiry timestamp
-// to tokenPair if the demo needs tokens to lapse on their own.
+// token and still inside its advertised lifetime. Rotation replaces the pair, so
+// a superseded access token stops working; the refresh token is not affected by
+// access-token expiry, so an expired client can still rotate.
 func (s *tokenStore) validAccess(token string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	cur, ok := s.tokens[s.clientID]
 
-	return ok && equal(token, cur.access)
+	return ok && equal(token, cur.access) && s.now().Before(cur.expires)
 }
 
 // loggableGrant maps the client-supplied grant_type onto known constants so
