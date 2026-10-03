@@ -56,9 +56,19 @@ func num(r map[string]any, k string) (float64, bool) {
 	return f, ok
 }
 
+// Field policy (doc/TRD_M1.md 3.2, #19), applied generically so a new field never
+// needs a code change: a source field that feeds a canonical field is consumed and
+// not repeated in attributes; every other field goes to attributes under its own
+// key; a canonical field the record lacks stays null. That covers a field added
+// (it lands in attributes), removed (null), renamed (old name null, new name in
+// attributes) and retyped (the value cannot feed the canonical field, so it stays
+// in attributes under the same key). The one exception is a record without a
+// usable id or time, which cannot be stored and is rejected.
+
 // base fills what every source shares. A record with no id or no usable time
-// cannot be stored (both are NOT NULL), so it is rejected.
-func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKey string) (HazardEvent, error) {
+// cannot be stored (both are NOT NULL), so it is rejected. The two fields it
+// reads are marked in used.
+func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKey string, used map[string]bool) (HazardEvent, error) {
 	id, ok := str(r, idKey)
 	if !ok {
 		return HazardEvent{}, fmt.Errorf("%s record without %s", source, idKey)
@@ -70,6 +80,8 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	if err != nil {
 		return HazardEvent{}, fmt.Errorf("%s record %s: bad %s: %w", source, id, timeKey, err)
 	}
+
+	used[idKey], used[timeKey] = true, true
 
 	return HazardEvent{
 		HazardID:    m.newID(),
@@ -121,27 +133,23 @@ func (m *mapper) mapSeismic(events, warnings []map[string]any) ([]HazardEvent, e
 }
 
 func (m *mapper) seismic(r map[string]any, warnings map[string][]map[string]any) (HazardEvent, error) {
-	h, err := m.base(sourceBMKG, typeSeismic, r, "event_id", "occurred_at")
+	used := map[string]bool{}
+
+	h, err := m.base(sourceBMKG, typeSeismic, r, "event_id", "occurred_at", used)
 	if err != nil {
 		return HazardEvent{}, err
 	}
 
 	if s, ok := str(r, "region_name"); ok {
-		h.AreaName = &s
+		h.AreaName, used["region_name"] = &s, true
 	}
 
 	if v, ok := num(r, "epicenter_lat"); ok {
-		h.Latitude = &v
+		h.Latitude, used["epicenter_lat"] = &v, true
 	}
 
 	if v, ok := num(r, "epicenter_lon"); ok {
-		h.Longitude = &v
-	}
-
-	for _, k := range []string{"magnitude", "depth_km", "potential_tsunami"} {
-		if v, ok := r[k]; ok {
-			h.Attributes[k] = v
-		}
+		h.Longitude, used["epicenter_lon"] = &v, true
 	}
 
 	top, sev := topWarning(warnings[h.SourceRefID])
@@ -154,6 +162,10 @@ func (m *mapper) seismic(r map[string]any, warnings map[string][]map[string]any)
 	} else {
 		h.Severity = magnitudeSeverity(r)
 	}
+
+	// magnitude, depth_km and potential_tsunami are not consumed: they feed no
+	// canonical field except through the severity, so they stay in attributes.
+	h.addLeftovers(r, used)
 
 	return h, nil
 }
@@ -207,31 +219,36 @@ func (m *mapper) mapVolcanic(reports []map[string]any) ([]HazardEvent, error) {
 }
 
 func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
-	h, err := m.base(sourcePVMBG, typeVolcanic, r, "report_id", "reported_at")
+	used := map[string]bool{}
+
+	h, err := m.base(sourcePVMBG, typeVolcanic, r, "report_id", "reported_at", used)
 	if err != nil {
 		return HazardEvent{}, err
 	}
 
-	// A field with no canonical counterpart goes to attributes instead of being lost.
+	// A volcano_id or alert_level the tables do not know stays in attributes.
 	id, _ := str(r, "volcano_id")
 	if v, ok := volcanoRef[id]; ok {
 		h.AreaName, h.Latitude, h.Longitude = &v.name, &v.lat, &v.lon
-	} else if raw, ok := r["volcano_id"]; ok {
-		h.Attributes["volcano_id"] = raw
+		used["volcano_id"] = true
 	}
 
 	level, _ := str(r, "alert_level")
 	if s, ok := alertSeverity[level]; ok {
 		h.Severity = &s
-	} else if raw, ok := r["alert_level"]; ok {
-		h.Attributes["alert_level"] = raw
+		used["alert_level"] = true
 	}
 
-	for _, k := range []string{"eruption_count_24h", "ash_column_height_m", "confidence_level"} {
-		if v, ok := r[k]; ok {
+	h.addLeftovers(r, used)
+
+	return h, nil
+}
+
+// addLeftovers puts every field of r that was not consumed into attributes.
+func (h *HazardEvent) addLeftovers(r map[string]any, used map[string]bool) {
+	for k, v := range r {
+		if !used[k] {
 			h.Attributes[k] = v
 		}
 	}
-
-	return h, nil
 }

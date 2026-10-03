@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const areaJawaTimur = "Jawa Timur"
+
 var fixedNow = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 
 func testMapper() *mapper {
@@ -27,7 +29,7 @@ func testMapper() *mapper {
 func quake(id string, mag float64) map[string]any {
 	return map[string]any{
 		"event_id": id, "magnitude": mag, "depth_km": 12.5,
-		"epicenter_lat": -8.5, "epicenter_lon": 112.5, "region_name": "Jawa Timur",
+		"epicenter_lat": -8.5, "epicenter_lon": 112.5, "region_name": areaJawaTimur,
 		"occurred_at": "2026-10-04T10:00:00Z", "potential_tsunami": true,
 	}
 }
@@ -35,7 +37,7 @@ func quake(id string, mag float64) map[string]any {
 func warning(eventID, level string) map[string]any {
 	return map[string]any{
 		"warning_id": "TSU-" + eventID, "related_event_id": eventID, "threat_level": level,
-		"affected_zones": []any{"Jawa Timur"}, "estimated_arrival": "2026-10-04T10:30:00Z",
+		"affected_zones": []any{areaJawaTimur}, "estimated_arrival": "2026-10-04T10:30:00Z",
 	}
 }
 
@@ -94,7 +96,7 @@ func TestSeismicFieldsMapped(t *testing.T) {
 		t.Fatalf("identity fields wrong: %+v", h)
 	}
 
-	if h.AreaName == nil || *h.AreaName != "Jawa Timur" || *h.Latitude != -8.5 || *h.Longitude != 112.5 {
+	if h.AreaName == nil || *h.AreaName != areaJawaTimur || *h.Latitude != -8.5 || *h.Longitude != 112.5 {
 		t.Fatalf("area or coordinates wrong: %+v", h)
 	}
 
@@ -260,5 +262,140 @@ func TestDefaultMapperUsesRealClockAndUUIDs(t *testing.T) {
 
 	if got[0].IngestedAt.Before(before) || strings.Count(got[0].HazardID, "-") != 4 {
 		t.Fatalf("default clock or id generator not used: %+v", got[0])
+	}
+}
+
+func TestNewFieldGoesToAttributesWithoutCodeChange(t *testing.T) {
+	t.Parallel()
+
+	q := quake("E1", 5.5)
+	q["wave_height_m"] = 2.5
+	q["new_object"] = map[string]any{"a": 1.0}
+
+	r := report("R1", "MERAPI", "Siaga")
+	r["confidence_level"] = 0.9
+	r["sensor_count"] = 7.0
+
+	m := testMapper()
+
+	seismic, err := m.mapSeismic([]map[string]any{q}, nil)
+	if err != nil || len(seismic) != 1 {
+		t.Fatalf("seismic: %+v err=%v", seismic, err)
+	}
+
+	volcanic, err := m.mapVolcanic([]map[string]any{r})
+	if err != nil || len(volcanic) != 1 {
+		t.Fatalf("volcanic: %+v err=%v", volcanic, err)
+	}
+
+	if seismic[0].Attributes["wave_height_m"] != 2.5 || seismic[0].Attributes["new_object"] == nil {
+		t.Fatalf("unknown BMKG fields lost: %v", seismic[0].Attributes)
+	}
+
+	if volcanic[0].Attributes["confidence_level"] != 0.9 || volcanic[0].Attributes["sensor_count"] != 7.0 {
+		t.Fatalf("unknown PVMBG fields lost: %v", volcanic[0].Attributes)
+	}
+}
+
+func TestMissingCanonicalFieldIsNullNotAnError(t *testing.T) {
+	t.Parallel()
+
+	q := quake("E1", 5.5)
+	delete(q, "epicenter_lat")
+	delete(q, "region_name")
+
+	got, err := testMapper().mapSeismic([]map[string]any{q}, nil)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+
+	if got[0].Latitude != nil || got[0].AreaName != nil || got[0].Longitude == nil {
+		t.Fatalf("only the missing fields may be null: %+v", got[0])
+	}
+}
+
+func TestRenamedFieldIsOldNullPlusNewInAttributes(t *testing.T) {
+	t.Parallel()
+
+	q := quake("E1", 5.5)
+	q["region"] = q["region_name"] // the source renamed region_name to region
+
+	delete(q, "region_name")
+
+	got, err := testMapper().mapSeismic([]map[string]any{q}, nil)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+
+	if got[0].AreaName != nil || got[0].Attributes["region"] != areaJawaTimur {
+		t.Fatalf("old name must be null and the new one kept in attributes: %+v", got[0])
+	}
+
+	if _, dup := got[0].Attributes["region_name"]; dup {
+		t.Fatal("the old name must not reappear")
+	}
+}
+
+func TestRetypedFieldStaysInAttributesUnderTheSameKey(t *testing.T) {
+	t.Parallel()
+
+	q := quake("E1", 0)
+	q["magnitude"] = "6.8"       // was a number
+	q["epicenter_lat"] = "-8.5"  // was a number
+	q["potential_tsunami"] = "1" // was a bool
+
+	got, err := testMapper().mapSeismic([]map[string]any{q}, nil)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("a retyped field must not fail the record: %+v err=%v", got, err)
+	}
+
+	h := got[0]
+	if h.Latitude != nil || h.Severity != nil {
+		t.Fatalf("values that cannot be read as numbers must leave their canonical fields null: %+v", h)
+	}
+
+	if h.Attributes["magnitude"] != "6.8" || h.Attributes["epicenter_lat"] != "-8.5" || h.Attributes["potential_tsunami"] != "1" {
+		t.Fatalf("retyped values must be kept under the same keys: %v", h.Attributes)
+	}
+}
+
+func TestSchemaToggleDoesNotNeedACodeChange(t *testing.T) {
+	t.Parallel()
+
+	legacy := report("R1", "BROMO", "Awas")
+	extended := report("R2", "BROMO", "Awas")
+	extended["confidence_level"] = 0.75
+
+	got, err := testMapper().mapVolcanic([]map[string]any{legacy, extended})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("got %+v err=%v", got, err)
+	}
+
+	for _, h := range got {
+		if h.Source != sourcePVMBG || *h.Severity != severityAwas || *h.AreaName != "Gunung Bromo" {
+			t.Fatalf("event invalid before or after the toggle: %+v", h)
+		}
+	}
+
+	if _, ok := got[0].Attributes["confidence_level"]; ok || got[1].Attributes["confidence_level"] != 0.75 {
+		t.Fatalf("confidence_level only after the toggle: %v / %v", got[0].Attributes, got[1].Attributes)
+	}
+}
+
+// No source field may disappear: every key is either consumed by a canonical
+// field or present in attributes.
+func TestNoSourceFieldIsDropped(t *testing.T) {
+	t.Parallel()
+
+	canonical := map[string]bool{"event_id": true, "occurred_at": true, "region_name": true, "epicenter_lat": true, "epicenter_lon": true}
+
+	q := quake("E1", 6.0)
+	q["extra"] = "x"
+
+	got, _ := testMapper().mapSeismic([]map[string]any{q}, nil)
+	for k := range q {
+		if _, ok := got[0].Attributes[k]; !ok && !canonical[k] {
+			t.Fatalf("field %q was dropped: %v", k, got[0].Attributes)
+		}
 	}
 }
