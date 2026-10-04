@@ -31,12 +31,17 @@ func sessionCookie(name, value string) *http.Cookie {
 type fakeAuth struct {
 	authpb.AuthClient
 
-	login  func(*authpb.LoginRequest) (*authpb.TokenResponse, error)
-	logout func(*authpb.LogoutRequest) error
+	login   func(*authpb.LoginRequest) (*authpb.TokenResponse, error)
+	logout  func(*authpb.LogoutRequest) error
+	refresh func(*authpb.RefreshRequest) (*authpb.TokenResponse, error)
 }
 
 func (f fakeAuth) Login(_ context.Context, in *authpb.LoginRequest, _ ...grpc.CallOption) (*authpb.TokenResponse, error) {
 	return f.login(in)
+}
+
+func (f fakeAuth) Refresh(_ context.Context, in *authpb.RefreshRequest, _ ...grpc.CallOption) (*authpb.TokenResponse, error) {
+	return f.refresh(in)
 }
 
 func (f fakeAuth) Logout(_ context.Context, in *authpb.LogoutRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
