@@ -6,6 +6,6 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/auth-service .
 
-FROM gcr.io/distroless/static-debian12
+FROM alpine:3.22
 COPY --from=builder /out/auth-service /auth-service
 ENTRYPOINT ["/auth-service"]
