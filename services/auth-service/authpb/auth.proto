@@ -18,6 +18,10 @@ service Auth {
   rpc Login(LoginRequest) returns (TokenResponse);
   rpc Refresh(RefreshRequest) returns (TokenResponse);
   rpc Logout(LogoutRequest) returns (google.protobuf.Empty);
+  // Register always creates a Media account. CreateAccount creates any role;
+  // who may call it is checked by the Client-Facing API, not here.
+  rpc Register(RegisterRequest) returns (google.protobuf.Empty);
+  rpc CreateAccount(CreateAccountRequest) returns (google.protobuf.Empty);
 }
 
 message LoginRequest {
@@ -31,6 +35,17 @@ message RefreshRequest {
 
 message LogoutRequest {
   string refresh_token = 1;
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message CreateAccountRequest {
+  string email = 1;
+  string password = 2;
+  string role = 3; // Media, Lapangan or Operator
 }
 
 message TokenResponse {

@@ -4,9 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-var errNotFound = errors.New("not found")
+var (
+	errNotFound = errors.New("not found")
+	errExists   = errors.New("already exists")
+)
 
 type user struct {
 	ID           string
@@ -19,6 +24,8 @@ type user struct {
 type userStore interface {
 	// UserByEmail returns errNotFound for an unknown email.
 	UserByEmail(ctx context.Context, email string) (user, error)
+	// CreateUser inserts u; an email that is already taken returns errExists.
+	CreateUser(ctx context.Context, u user) error
 	// AddRefreshToken stores a new refresh token row for userID.
 	AddRefreshToken(ctx context.Context, token, userID string) error
 	// RotateRefreshToken atomically replaces oldToken with newToken and returns
@@ -44,6 +51,19 @@ func (s pgStore) UserByEmail(ctx context.Context, email string) (user, error) {
 	}
 
 	return u, err
+}
+
+func (s pgStore) CreateUser(ctx context.Context, u user) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO users (user_id, email, password_hash, role) VALUES ($1, $2, $3, $4)`,
+		u.ID, u.Email, u.PasswordHash, u.Role)
+
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" { // unique_violation: the email is taken
+		return errExists
+	}
+
+	return err
 }
 
 func (s pgStore) AddRefreshToken(ctx context.Context, token, userID string) error {

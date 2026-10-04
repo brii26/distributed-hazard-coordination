@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -17,7 +18,15 @@ import (
 	"github.com/brii26/distributed-hazard-coordination/services/auth-service/authpb"
 )
 
-const roleLapangan = "Lapangan"
+const (
+	roleMedia    = "Media"
+	roleLapangan = "Lapangan"
+	roleOperator = "Operator"
+
+	maxEmailLen = 255 // users.email is VARCHAR(255)
+)
+
+var validRoles = map[string]bool{roleMedia: true, roleLapangan: true, roleOperator: true}
 
 // otherRolesTTL applies to Media and Operator. The TRD only fixes Tim
 // Lapangan's short TTL (ACCESS_TOKEN_TTL_S); keeping it short is what makes the
@@ -152,6 +161,72 @@ func (s *authServer) Logout(ctx context.Context, req *authpb.LogoutRequest) (*em
 	}
 
 	log.Print("logout: done")
+
+	return &emptypb.Empty{}, nil
+}
+
+// newUserID returns a random (version 4) UUID.
+func newUserID() (string, error) {
+	var b [16]byte
+
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
+}
+
+// create validates the input and inserts the account; Register and CreateAccount
+// both go through it, so a duplicate email is rejected the same way on either path.
+func (s *authServer) create(ctx context.Context, email, password, role string) error {
+	if email == "" || len(email) > maxEmailLen || password == "" {
+		return status.Error(codes.InvalidArgument, "email and password are required")
+	}
+
+	if !validRoles[role] {
+		return status.Error(codes.InvalidArgument, "invalid role")
+	}
+
+	id, err := newUserID()
+	if err != nil {
+		return status.Error(codes.Internal, "internal error")
+	}
+
+	err = s.store.CreateUser(ctx, user{ID: id, Email: email, PasswordHash: hashPassword(password, s.salt), Role: role})
+
+	switch {
+	case errors.Is(err, errExists):
+		return status.Error(codes.AlreadyExists, "email already registered")
+	case err != nil:
+		log.Printf("create account: store error: %v", err)
+
+		return status.Error(codes.Internal, "internal error")
+	}
+
+	log.Printf("account created: user_id=%s role=%s", id, role)
+
+	return nil
+}
+
+// Register creates a Media account. The request has no role, so there is nothing
+// to escalate.
+func (s *authServer) Register(ctx context.Context, req *authpb.RegisterRequest) (*emptypb.Empty, error) {
+	if err := s.create(ctx, req.GetEmail(), req.GetPassword(), roleMedia); err != nil {
+		return nil, err
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+// CreateAccount creates an account with the requested role. It trusts its caller:
+// the Operator check happens in the Client-Facing API (doc/TRD_M1.md section 5).
+func (s *authServer) CreateAccount(ctx context.Context, req *authpb.CreateAccountRequest) (*emptypb.Empty, error) {
+	if err := s.create(ctx, req.GetEmail(), req.GetPassword(), req.GetRole()); err != nil {
+		return nil, err
+	}
 
 	return &emptypb.Empty{}, nil
 }

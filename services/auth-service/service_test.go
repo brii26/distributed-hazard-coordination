@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,19 @@ func (f *fakeStore) UserByEmail(_ context.Context, email string) (user, error) {
 	}
 
 	return user{}, errNotFound
+}
+
+func (f *fakeStore) CreateUser(_ context.Context, u user) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.users[u.Email]; ok {
+		return errExists
+	}
+
+	f.users[u.Email] = u
+
+	return nil
 }
 
 func (f *fakeStore) AddRefreshToken(_ context.Context, token, userID string) error {
@@ -88,7 +102,7 @@ func newTestServer() *authServer {
 
 	return &authServer{
 		store: &fakeStore{
-			users:  map[string]user{lapEmail: mk("lap", "Lapangan"), "op@x.example": mk("op", "Operator")},
+			users:  map[string]user{lapEmail: mk("lap", roleLapangan), "op@x.example": mk("op", roleOperator)},
 			tokens: map[string]string{},
 		},
 		salt:        testSalt,
@@ -143,7 +157,7 @@ func TestLoginIssuesVerifiableJWT(t *testing.T) {
 	}
 
 	c := claimsOf(t, lap.GetJwt())
-	if c.Role != "Lapangan" || c.Email != lapEmail || c.Exp-c.Iat != 60 || lap.GetExpiresIn() != 60 || len(lap.GetRefreshToken()) != 64 {
+	if c.Role != roleLapangan || c.Email != lapEmail || c.Exp-c.Iat != 60 || lap.GetExpiresIn() != 60 || len(lap.GetRefreshToken()) != 64 {
 		t.Fatalf("unexpected Lapangan claims/response: %+v %v", c, lap)
 	}
 
@@ -152,7 +166,7 @@ func TestLoginIssuesVerifiableJWT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if c := claimsOf(t, op.GetJwt()); c.Role != "Operator" || c.Exp-c.Iat != int64(otherRolesTTL.Seconds()) {
+	if c := claimsOf(t, op.GetJwt()); c.Role != roleOperator || c.Exp-c.Iat != int64(otherRolesTTL.Seconds()) {
 		t.Fatalf("unexpected Operator claims: %+v", c)
 	}
 }
@@ -182,7 +196,7 @@ func TestRefreshRotatesAndOldTokenFails(t *testing.T) {
 	}
 
 	second, err := s.Refresh(ctx, &authpb.RefreshRequest{RefreshToken: first.GetRefreshToken()})
-	if err != nil || second.GetRefreshToken() == first.GetRefreshToken() || claimsOf(t, second.GetJwt()).Role != "Lapangan" {
+	if err != nil || second.GetRefreshToken() == first.GetRefreshToken() || claimsOf(t, second.GetJwt()).Role != roleLapangan {
 		t.Fatalf("refresh should rotate and issue a valid jwt: %v %v", second, err)
 	}
 
@@ -214,5 +228,107 @@ func TestLogoutDeletesRefreshToken(t *testing.T) {
 
 	if _, err := s.Refresh(ctx, &authpb.RefreshRequest{RefreshToken: resp.GetRefreshToken()}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("refresh after logout must fail, got %v", err)
+	}
+}
+
+// loginRole logs in with the given credentials and returns the role in the JWT.
+func loginRole(t *testing.T, s *authServer, email, password string) string {
+	t.Helper()
+
+	resp, err := s.Login(context.Background(), &authpb.LoginRequest{Email: email, Password: password})
+	if err != nil {
+		t.Fatalf("login as %s: %v", email, err)
+	}
+
+	return claimsOf(t, resp.GetJwt()).Role
+}
+
+func TestRegisterAlwaysCreatesMedia(t *testing.T) {
+	t.Parallel()
+
+	s := newTestServer()
+
+	if _, err := s.Register(context.Background(), &authpb.RegisterRequest{Email: "new@x.example", Password: "pw"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := loginRole(t, s, "new@x.example", "pw"); got != roleMedia {
+		t.Fatalf("Register must create a Media account, got %q", got)
+	}
+}
+
+func TestCreateAccountCanCreateEveryRole(t *testing.T) {
+	t.Parallel()
+
+	s := newTestServer()
+
+	for _, role := range []string{roleMedia, roleLapangan, roleOperator} {
+		email := role + "@x.example"
+
+		if _, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: email, Password: "pw", Role: role}); err != nil {
+			t.Fatalf("create %s: %v", role, err)
+		}
+
+		if got := loginRole(t, s, email, "pw"); got != role {
+			t.Fatalf("created %s but logged in as %q", role, got)
+		}
+	}
+}
+
+func TestCreateAccountRejectsUnknownRole(t *testing.T) {
+	t.Parallel()
+
+	s := newTestServer()
+
+	for _, role := range []string{"", "admin", "operator"} { // roles are case-sensitive
+		_, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: "r@x.example", Password: "pw", Role: role})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("role %q: expected InvalidArgument, got %v", role, err)
+		}
+	}
+
+	if _, err := s.store.UserByEmail(context.Background(), "r@x.example"); !errors.Is(err, errNotFound) {
+		t.Fatal("a rejected role must not leave an account behind")
+	}
+}
+
+func TestDuplicateEmailIsRejectedOnBothPaths(t *testing.T) {
+	t.Parallel()
+
+	s := newTestServer()
+	ctx := context.Background()
+
+	// lapEmail is seeded by newTestServer.
+	_, errRegister := s.Register(ctx, &authpb.RegisterRequest{Email: lapEmail, Password: "other"})
+	_, errCreate := s.CreateAccount(ctx, &authpb.CreateAccountRequest{Email: lapEmail, Password: "other", Role: roleOperator})
+
+	for _, err := range []error{errRegister, errCreate} {
+		if status.Code(err) != codes.AlreadyExists {
+			t.Fatalf("expected AlreadyExists, got %v", err)
+		}
+	}
+
+	// The existing account is untouched: the old password still works, the new one does not.
+	if got := loginRole(t, s, lapEmail, "pw-lap"); got != roleLapangan {
+		t.Fatalf("existing account changed: role %q", got)
+	}
+
+	if _, err := s.Login(ctx, &authpb.LoginRequest{Email: lapEmail, Password: "other"}); err == nil {
+		t.Fatal("a rejected duplicate must not overwrite the password")
+	}
+}
+
+func TestCreateRejectsEmptyOrOversizedInput(t *testing.T) {
+	t.Parallel()
+
+	s := newTestServer()
+
+	for _, c := range []struct{ email, password string }{
+		{"", "pw"}, {"a@x.example", ""}, {strings.Repeat("a", maxEmailLen) + "@x.example", "pw"},
+	} {
+		_, err := s.Register(context.Background(), &authpb.RegisterRequest{Email: c.email, Password: c.password})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("email %.12q password %q: expected InvalidArgument, got %v", c.email, c.password, err)
+		}
 	}
 }
