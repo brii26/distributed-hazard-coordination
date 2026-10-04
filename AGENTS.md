@@ -35,9 +35,9 @@ Not lazy about: understanding the problem (read it fully and trace the real flow
 
 ## Project-specific: this repo
 
-- `gh` (GitHub CLI) is available and authenticated in this environment. Prefer it over asking the user to do things in the browser: create issues/PRs, check CI status, read issue bodies, link issues to PRs (`Closes #N`), and set/inspect native issue dependencies (`gh issue edit --add-blocked-by`) directly from here. Humans working on this repo don't need `gh` — the web UI covers everything for them — but for an agent it avoids a lot of round-trips.
+- `gh` (GitHub CLI) is available and authenticated in this environment. Prefer it over asking the user to do things in the browser: create issues/PRs, read issue bodies, link issues to PRs (`Closes #N`), and set/inspect native issue dependencies (`gh issue edit --add-blocked-by`) directly from here. Humans working on this repo don't need `gh` — the web UI covers everything for them — but for an agent it avoids a lot of round-trips.
 - Branch protection on `main` isn't active yet (pending repo-owner admin action), but treat it as if it is: never push directly to `main`, always branch + PR, per `CONTRIBUTING.md`.
-- Before starting work, read `CONTRIBUTING.md` (branch names, PR title/body format, commit message format, stacked PRs) and the "Before you push" checks in `README.md` (the exact `gofmt`/`go vet`/`go build`/`go test -race`/`golangci-lint` CI runs). Run them before every push.
+- Before starting work, read `CONTRIBUTING.md` (branch names, PR title/body format, commit message format, stacked PRs) and the "Before you push" checks in `README.md` (the exact `gofmt`/`go vet`/`go build`/`go test -race`/`golangci-lint`; there is no CI, so these are the gate). Run them before every push.
 - Backlog and dependencies: `doc/BACKLOG_DEPENDENCIES.md` before picking up work — it lists which issues have no open blockers.
 
 ### Owning the dependency graph
