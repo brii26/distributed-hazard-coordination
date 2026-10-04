@@ -417,7 +417,7 @@ Refresh token bersifat stateful, disimpan di tabel `refresh_tokens` milik Auth S
 | Processing | Request asli ditahan di memory. Client-Facing API memanggil RPC `Refresh(refresh_token)` ke Auth Service. Auth Service mencari `refresh_token` di tabel `refresh_tokens` (join `users`); ditemukan → baris dirotasi (refresh token lama diganti baru), JWT baru diterbitkan. Client-Facing API meng-inject JWT baru ke request yang ditahan, meneruskan ke Aggregator. |
 | Response (sukses) | Response dari Aggregator diteruskan ke client, disertai `Set-Cookie` JWT dan refresh token baru |
 | Response (refresh token tidak ditemukan/invalid) | `401`, cookie JWT dan refresh token dihapus |
-| Batasan diketahui | Permintaan paralel dengan refresh token sama dapat saling bertabrakan — hanya satu yang berhasil merotasi; perilaku permintaan yang kalah wajib didokumentasikan |
+| Batasan diketahui | Permintaan paralel dengan refresh token sama dapat saling bertabrakan — hanya satu yang berhasil merotasi; permintaan yang kalah menerima `401` dan cookie JWT/refresh token dihapus (client login ulang, atau mengulang dengan cookie baru bila cookie dari pemenang sudah diterima). Single-flight per refresh token dapat menghindarinya, tetapi belum dibangun di M1 |
 
 ### 4.3 Pembatasan konkurensi
 
