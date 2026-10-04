@@ -1,0 +1,41 @@
+// Copy of services/auth-service/authpb/auth.proto, kept per service so each Docker
+// build context stays self-contained. Keep it in sync with the Auth Service's.
+//
+// Regenerate (from services/client-facing-api):
+//   protoc --proto_path=authpb \
+//     --go_out=authpb --go_opt=paths=source_relative \
+//     --go-grpc_out=authpb --go-grpc_opt=paths=source_relative authpb/auth.proto
+// Needs protoc, protoc-gen-go and protoc-gen-go-grpc, e.g.
+//   nix shell nixpkgs#protobuf nixpkgs#protoc-gen-go nixpkgs#protoc-gen-go-grpc
+syntax = "proto3";
+
+package auth.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/brii26/distributed-hazard-coordination/services/client-facing-api/authpb";
+
+service Auth {
+  rpc Login(LoginRequest) returns (TokenResponse);
+  rpc Refresh(RefreshRequest) returns (TokenResponse);
+  rpc Logout(LogoutRequest) returns (google.protobuf.Empty);
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message TokenResponse {
+  string jwt = 1;
+  string refresh_token = 2;
+  int64 expires_in = 3; // seconds until the JWT's exp
+}

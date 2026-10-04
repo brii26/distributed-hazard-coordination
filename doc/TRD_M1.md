@@ -429,7 +429,7 @@ Refresh token bersifat stateful, disimpan di tabel `refresh_tokens` milik Auth S
 
 **Logging:** correlation ID dibangkitkan untuk setiap request client masuk dan diteruskan ke semua panggilan keluar; setiap request (role, endpoint, field yang diminta, hasil authorize); setiap kejadian rate-limit/429 (client_id, sisa kapasitas); setiap transparent refresh yang terpicu (client_id, hasil rotasi); durasi tiap panggilan ke Aggregator/Auth Service.
 
-**Konfigurasi:** `PORT=8080` (REST publik), `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`, `JWT_SIGNING_SECRET` (shared dengan Auth Service, internal only), `MAX_INFLIGHT_REQUESTS=100`, `RATE_LIMIT_RPS=50`, `UPSTREAM_TIMEOUT_MS=1000`, `ACCESS_TOKEN_TTL_S=60`.
+**Konfigurasi:** `PORT=8080` (REST publik), `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`, `JWT_SIGNING_SECRET` (shared dengan Auth Service, internal only), `MAX_INFLIGHT_REQUESTS=100`, `RATE_LIMIT_RPS=50`, `UPSTREAM_TIMEOUT_MS=1000`, `ACCESS_TOKEN_TTL_S=60`, `COOKIE_SECURE=true` (cookie `jwt`/`refresh_token` diberi atribut Secure).
 
 ---
 
