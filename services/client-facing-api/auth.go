@@ -27,11 +27,20 @@ type authAPI struct {
 	auth    authpb.AuthClient
 	timeout time.Duration // UPSTREAM_TIMEOUT_MS, applied to every Auth Service call
 	secure  bool          // COOKIE_SECURE: mark the cookies Secure (HTTPS only)
+
+	// verifier protects the routes that need a logged-in caller. When nil those
+	// routes are not registered.
+	verifier *jwtVerifier
 }
 
 func (a *authAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/login", a.login)
 	mux.HandleFunc("POST /auth/logout", a.logout)
+	mux.HandleFunc("POST /auth/register", a.signup)
+
+	if a.verifier != nil {
+		mux.Handle("POST /accounts", a.verifier.require(http.HandlerFunc(a.createAccount)))
+	}
 }
 
 // setCookie sets a cookie that scripts can't read (HttpOnly). With maxAge 0 it is
