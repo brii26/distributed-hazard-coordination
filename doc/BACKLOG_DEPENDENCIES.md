@@ -8,9 +8,7 @@ Regenerate after adding/closing issues: `gh issue list --repo brii26/distributed
 
 These have zero dependencies and can be picked up immediately, by anyone, in any order:
 
-- #13 Auth Service: Register/CreateAccount RPCs
 - #19 Aggregator: unknown/changed-field policy enforcement
-- #24 Client-Facing API: POST /auth/login and /auth/logout proxy
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #35 Cross-cutting: health check depth per service
 - #61 Cross-cutting: integration tests for a service and its own database or broker
@@ -83,7 +81,7 @@ graph TD
   94["#94 integration tests: service to service"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 1,2,5,6,7,10,11,12,14,15,16,17,18,20,69,71 done
+  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,20,24,25,26,27,69,71 done
 ```
 
 ## Notes on reading this

@@ -80,12 +80,20 @@ func newAuthAPI() (*authAPI, error) {
 		}
 	}
 
+	secret := os.Getenv("JWT_SIGNING_SECRET")
+	if secret == "" {
+		return nil, errors.New("JWT_SIGNING_SECRET must be set")
+	}
+
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
 	}
 
-	return &authAPI{auth: authpb.NewAuthClient(conn), timeout: time.Duration(timeoutMS) * time.Millisecond, secure: secure}, nil
+	api := &authAPI{auth: authpb.NewAuthClient(conn), timeout: time.Duration(timeoutMS) * time.Millisecond, secure: secure}
+	api.verifier = newJWTVerifier([]byte(secret)).withRefresh(api)
+
+	return api, nil
 }
 
 // resolvePort validates a raw port value (as read from the PORT env var),
