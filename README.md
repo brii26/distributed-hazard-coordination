@@ -32,14 +32,13 @@ infra/<name>/        config for third-party components (no Go code), e.g. infra/
 frontend/             CSR web frontend (not Go — scaffolded separately, see issue #33)
 doc/                  spec, assignment docs, backlog dependency graph
 .claude/skills/       vendored Go skills (also symlinked at .agents/skills for Codex)
-.github/workflows/    CI
 docker-compose.yml    full local stack
 go.work               ties all service modules together for cross-module tooling
 ```
 
 Each service directory is its **own Go module** (`go.work` lists them all). This means `go build ./...`/`go test ./...` from the repo root won't work as a single command — the repo root isn't itself a module. Run per-service commands from inside `services/<name>/`, or use the loop shown below.
 
-CI treats every directory under `services/` as a Go module (`gofmt`, `go vet`, `golangci-lint`, `docker build`). Config-only components such as the broker go in `infra/` so they aren't picked up.
+Every directory under `services/` is a Go module that the local checks below loop over. Config-only components such as the broker go in `infra/` so they aren't treated as one.
 
 ## Running the full stack
 
@@ -73,15 +72,15 @@ go run .
 
 Reads config from env vars (see that service's section in `doc/TRD_M1.md` for the full list, or `.env.example` at the repo root for every variable across all services).
 
-## Before you push — the exact checks CI runs
+## Before you push — the checks to run locally
 
-CI (`.github/workflows/ci.yml`) runs these per service on every push/PR. Run them yourself first so you're not waiting on a red CI run to find out:
+There is no CI (the GitHub Actions workflow was removed), so these checks are the gate. Run them for every service you changed before pushing:
 
 ```bash
 for d in services/*/; do
   echo "== $d =="
   (cd "$d" &&
-    gofmt -l . &&                    # must print nothing — unformatted files fail CI
+    gofmt -l . &&                    # must print nothing — unformatted files fail the check
     go vet ./... &&
     go build ./... &&
     go test -race -v ./... &&
@@ -93,7 +92,7 @@ done
 
 Any non-empty `gofmt -l` output means run `gofmt -w .` in that service directory before committing. `golangci-lint` uses the repo-root `.golangci.yml` (vendored from the `golang-lint` skill) — it's strict on purpose (unchecked errors, missing timeouts on HTTP servers, etc.); fix the underlying issue rather than reaching for a `//nolint` comment unless you can justify it in the comment itself.
 
-CI also does a `docker build` per service — if you've changed a `Dockerfile` or added new dependencies, worth a local `docker build services/<name>` before pushing too.
+If you've changed a `Dockerfile` or added new dependencies, also run `docker build services/<name>` before pushing.
 
 ## Go workspace notes
 
@@ -107,4 +106,4 @@ CI also does a `docker build` per service — if you've changed a `Dockerfile` o
 
 Feature/task backlog lives in [GitHub Issues](https://github.com/brii26/distributed-hazard-coordination/issues), labeled by `service:*` and `problem:P1`–`P5` (traceable back to `doc/TRD_M1.md` §11). Dependencies between issues are set as native GitHub relationships (`blocked-by`/`blocking`) — see `doc/BACKLOG_DEPENDENCIES.md` for the whole-graph view and what's unblocked right now.
 
-`gh` (GitHub CLI) is entirely optional for a human contributor — the web UI does everything `gh` does. It's called out here because it's genuinely convenient for an AI coding agent working in this repo: creating issues/PRs, checking CI status, and reading issue bodies from the terminal without a browser round-trip. See `AGENTS.md` for that recommendation; nothing in this repo requires it.
+`gh` (GitHub CLI) is entirely optional for a human contributor — the web UI does everything `gh` does. It's called out here because it's genuinely convenient for an AI coding agent working in this repo: creating issues/PRs and reading issue bodies from the terminal without a browser round-trip. See `AGENTS.md` for that recommendation; nothing in this repo requires it.

@@ -11,11 +11,11 @@ Use semantic (Conventional Commits) subjects for new commits: `<type>(<scope>): 
 
 - **Types:** `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `ci`.
 - **Scope:** the service or area touched (`pvmbg-mock`, `aggregator`, `compose`, ...). Optional for cross-cutting changes.
-- Existing history isn't rewritten. Not CI-enforced, same as the PR title convention.
+- Existing history isn't rewritten. Not enforced by tooling, same as the PR title convention.
 
 ## Pull requests
 
-**Title:** prefer `[#<issue-number>] <short description>` when the PR is driven by a tracked issue, e.g. `[#16] Independent single-in-flight pollers`. This is a convention, not a CI-enforced format — nothing blocks a merge if you don't follow it.
+**Title:** prefer `[#<issue-number>] <short description>` when the PR is driven by a tracked issue, e.g. `[#16] Independent single-in-flight pollers`. This is a convention, not a tool-enforced format — nothing blocks a merge if you don't follow it.
 
 Free-form titles are fine and expected for anything that doesn't map to a tracked issue: hotfixes, emergency patches, small cleanups you noticed in passing. Use `[hotfix]` as a prefix for anything urgent enough to want jumping the normal backlog order, e.g. `[hotfix] Fix panic in aggregator poller on empty response`.
 
@@ -34,7 +34,7 @@ Closes #17
 Closes #18
 ```
 
-**Reviews:** every PR needs ≥1 approval before merge (branch protection enforces this). CI (`gofmt`, `go vet`, `go test`, `golangci-lint`, Docker build — see `.github/workflows/ci.yml`) must also pass; these are required status checks, not optional.
+**Reviews:** every PR needs ≥1 approval before merge (branch protection enforces this). There is no CI: run the "Before you push" checks from `README.md` (`gofmt`, `go vet`, `go build`, `go test -race`, `golangci-lint`, plus `docker build` when a Dockerfile or dependencies change) before pushing; reviewers can re-run them.
 
 ## Dependency order
 
