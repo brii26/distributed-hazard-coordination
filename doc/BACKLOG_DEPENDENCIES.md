@@ -13,7 +13,8 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 - #24 Client-Facing API: POST /auth/login and /auth/logout proxy
 - #28 Client-Facing API: concurrency cap and per-client rate limiting
 - #35 Cross-cutting: health check depth per service
-- #61 Cross-cutting: integration test layer (real Postgres/RabbitMQ in CI)
+- #61 Cross-cutting: integration tests for a service and its own database or broker
+- #94 Cross-cutting: integration tests between our services (service to service)
 - #72 Cross-cutting: structured JSON logging and outbound call latency for every service
 - #73 Infra: Docker network isolation for Canonical Store and User DB
 
@@ -51,7 +52,7 @@ graph TD
   11 --> 13["#13 auth register/createaccount rpcs"]
 
   12 --> 24["#24 cfa login/logout proxy"]
-  12 --> 61["#61 integration test layer"]
+  12 --> 61["#61 integration tests: service + own storage"]
   24 --> 25["#25 cfa jwt middleware"]
   25 --> 26["#26 cfa transparent refresh"]
   25 --> 27["#27 cfa register/accounts"]
@@ -79,6 +80,7 @@ graph TD
   36 --> 74["#74 readme run guide + scenarios"]
   71["#71 bmkg delay"]
   73["#73 db network isolation"]
+  94["#94 integration tests: service to service"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
   class 1,2,5,6,7,10,11,12,14,15,16,17,18,20,69,71 done
