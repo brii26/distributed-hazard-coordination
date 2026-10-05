@@ -27,6 +27,9 @@ type pollResult struct {
 	// cursor is the newest record timestamp seen, used as the next ?since=.
 	// Zero means the poll carried nothing to advance it with.
 	cursor time.Time
+	// correlationID names the poll cycle (doc/TRD_M1.md 0.1); it follows the
+	// records into ingest and out on the broker message.
+	correlationID string
 }
 
 // poller runs one source's polling loop. The loop is a single goroutine that
@@ -84,6 +87,7 @@ func (p *poller) pollOnce(ctx context.Context) {
 	start := time.Now()
 	res, err := p.fetch(ctx, p.since)
 	elapsed := time.Since(start).Milliseconds()
+	res.correlationID = newHazardID() // a random UUID is as good a correlation ID as any
 
 	if err != nil {
 		p.breaker.failure()
@@ -93,12 +97,12 @@ func (p *poller) pollOnce(ctx context.Context) {
 
 	switch {
 	case err == nil:
-		log.Printf("poll source=%s result=success duration_ms=%d records=%d", p.name, elapsed, len(res.records)+len(res.warnings))
+		log.Printf("poll source=%s correlation_id=%s result=success duration_ms=%d records=%d", p.name, res.correlationID, elapsed, len(res.records)+len(res.warnings))
 		p.handoff(ctx, res)
 	case errors.Is(err, context.DeadlineExceeded):
-		log.Printf("poll source=%s result=timeout duration_ms=%d err=%q", p.name, elapsed, err)
+		log.Printf("poll source=%s correlation_id=%s result=timeout duration_ms=%d err=%q", p.name, res.correlationID, elapsed, err)
 	default:
-		log.Printf("poll source=%s result=failure duration_ms=%d err=%q", p.name, elapsed, err)
+		log.Printf("poll source=%s correlation_id=%s result=failure duration_ms=%d err=%q", p.name, res.correlationID, elapsed, err)
 	}
 }
 

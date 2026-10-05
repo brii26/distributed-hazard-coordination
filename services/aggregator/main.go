@@ -134,7 +134,7 @@ func loadStore() (*store, error) {
 
 // startReadAPI binds the gRPC read API on GRPC_PORT, so a taken port stops the
 // service at start. MAX_INFLIGHT_REQUESTS caps its concurrent requests.
-func startReadAPI(db *store, breakers map[string]*breaker) (*grpc.Server, net.Listener, error) {
+func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*grpc.Server, net.Listener, error) {
 	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
 	if err != nil {
 		return nil, nil, err
@@ -152,7 +152,15 @@ func startReadAPI(db *store, breakers map[string]*breaker) (*grpc.Server, net.Li
 
 	log.Printf("aggregator read api listening on :%s", port)
 
-	return newGRPCServer(newReadAPI(db, os.Getenv("RABBITMQ_URL"), breakers, maxInflight)), lis, nil
+	rabbitUp := func(context.Context) error {
+		if !pub.connected() {
+			return errors.New("rabbitmq not connected")
+		}
+
+		return nil
+	}
+
+	return newGRPCServer(newReadAPI(db, rabbitUp, breakers, maxInflight)), lis, nil
 }
 
 // run starts the Aggregator and returns when it has stopped or failed to start.
@@ -196,6 +204,16 @@ func run() error {
 		return err
 	}
 
+	rabbitURL := os.Getenv("RABBITMQ_URL")
+	if rabbitURL == "" {
+		return errors.New("RABBITMQ_URL must be set")
+	}
+
+	exchange := os.Getenv("RABBITMQ_EXCHANGE")
+	if exchange == "" {
+		exchange = defaultExchange
+	}
+
 	db, err := loadStore()
 	if err != nil {
 		return err
@@ -208,14 +226,24 @@ func run() error {
 
 	breakers := map[string]*breaker{}
 
-	// publish is a no-op until the RabbitMQ publisher (#23) is plugged in here.
-	for _, p := range newPipelines(pc, db.upsert, func(HazardEvent) {}) {
+	// The publisher outlives the pipelines, so events they hand over while draining
+	// at shutdown still get their flush attempt.
+	pubCtx, stopPub := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopPub()
+
+	pub := newPublisher(dialAMQP(rabbitURL, exchange), defaultPublishBuffer)
+
+	var pubWG sync.WaitGroup
+
+	pubWG.Go(func() { pub.run(pubCtx) })
+
+	for _, p := range newPipelines(pc, db.upsert, pub.publish) {
 		breakers[p.poller.name] = p.poller.breaker
 
 		wg.Go(func() { p.run(ctx) })
 	}
 
-	grpcSrv, grpcLis, err := startReadAPI(db, breakers)
+	grpcSrv, grpcLis, err := startReadAPI(db, pub, breakers)
 	if err != nil {
 		return err
 	}
@@ -254,6 +282,8 @@ func run() error {
 	}
 
 	wg.Wait() // the pipelines have drained
+	stopPub()
+	pubWG.Wait() // the publisher has flushed what it could
 	log.Print("aggregator stopped")
 
 	return nil

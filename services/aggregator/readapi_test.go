@@ -280,30 +280,3 @@ func TestHealthReportsConnectivityFlags(t *testing.T) {
 		t.Fatalf("expected database up and rabbitmq down, got %v %v", h, err)
 	}
 }
-
-func TestDialCheck(t *testing.T) {
-	t.Parallel()
-
-	lc := net.ListenConfig{}
-
-	lis, err := lc.Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	url := "amqp://guest:guest@" + lis.Addr().String() + "/"
-
-	if err := dialCheck(url)(context.Background()); err != nil {
-		t.Fatalf("a listening broker must pass, got %v", err)
-	}
-
-	_ = lis.Close()
-
-	if err := dialCheck(url)(context.Background()); err == nil {
-		t.Fatal("a closed port must fail")
-	}
-
-	if err := dialCheck("")(context.Background()); err == nil {
-		t.Fatal("an unset RABBITMQ_URL must fail")
-	}
-}
