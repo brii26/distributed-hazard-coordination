@@ -285,7 +285,7 @@ func TestHealthReportsConnectivityFlags(t *testing.T) {
 }
 
 // getHealth calls the REST /health the way compose's healthcheck does.
-func getHealth(t *testing.T, api *readAPI) (int, healthReport) {
+func getHealth(t *testing.T, api *readAPI) (int, restHealth) {
 	t.Helper()
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
@@ -293,7 +293,7 @@ func getHealth(t *testing.T, api *readAPI) (int, healthReport) {
 
 	newMux(api).ServeHTTP(rec, req)
 
-	var rep healthReport
+	var rep restHealth
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatalf("health body is not the report JSON: %v: %s", err, rec.Body)
 	}
@@ -339,10 +339,10 @@ func TestRESTHealthBreaksDownEachSource(t *testing.T) {
 
 	_, rep := getHealth(t, api)
 
-	if len(rep.Sources) != 2 || rep.Sources[0].Source != sourceBMKG || rep.Sources[0].Status != statusUp ||
-		rep.Sources[1].Source != sourcePVMBG || rep.Sources[1].Status != statusDown ||
+	if len(rep.Sources) != 2 || rep.Sources[0].Source != sourceBMKG || rep.Sources[0].Status != "up" ||
+		rep.Sources[1].Source != sourcePVMBG || rep.Sources[1].Status != "down" ||
 		rep.Sources[1].LastSuccessAt == nil || rep.Sources[1].StaleSince == nil {
-		t.Fatalf("expected BMKG UP and PVMBG DOWN with last_success_at and stale_since, got %+v", rep.Sources)
+		t.Fatalf("expected BMKG up and PVMBG down with last_success_at and stale_since, got %+v", rep.Sources)
 	}
 
 	if rep.Database != connected || rep.RabbitMQ != connected {

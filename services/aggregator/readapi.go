@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -160,10 +162,39 @@ const (
 // healthReport is the Aggregator's health (doc/TRD_M1.md 0.2, 3.5), shared by the
 // gRPC GetHealth and the REST /health.
 type healthReport struct {
-	Status   string         `json:"status"` // ok | degraded | down
-	Sources  []sourceStatus `json:"sources"`
-	Database string         `json:"database"`
-	RabbitMQ string         `json:"rabbitmq"`
+	Status   string `json:"status"` // ok | degraded | down
+	Database string `json:"database"`
+	RabbitMQ string `json:"rabbitmq"`
+
+	Sources []sourceStatus `json:"-"`
+}
+
+// sourceHealth is one source in the REST body, with the lowercase up/degraded/down
+// of doc/TRD_M1.md 3.5 (the read API's meta keeps 3.3's uppercase).
+type sourceHealth struct {
+	Source        string     `json:"source"`
+	Status        string     `json:"status"`
+	LastSuccessAt *time.Time `json:"last_success_at"`
+	StaleSince    *time.Time `json:"stale_since"`
+}
+
+// restHealth is healthReport as /health serves it.
+type restHealth struct {
+	healthReport
+
+	Sources []sourceHealth `json:"sources"`
+}
+
+func (r healthReport) rest() restHealth {
+	out := restHealth{healthReport: r}
+
+	for _, s := range r.Sources {
+		out.Sources = append(out.Sources, sourceHealth{
+			Source: s.Source, Status: strings.ToLower(s.Status), LastSuccessAt: s.LastSuccessAt, StaleSince: s.StaleSince,
+		})
+	}
+
+	return out
 }
 
 // health checks the Canonical Store and RabbitMQ and reads each source's state.
@@ -212,7 +243,7 @@ func (a *readAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 
-	if err := json.NewEncoder(w).Encode(rep); err != nil {
+	if err := json.NewEncoder(w).Encode(rep.rest()); err != nil {
 		log.Printf("failed to write health response: %v", err)
 	}
 }
