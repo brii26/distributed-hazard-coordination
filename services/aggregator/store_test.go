@@ -331,3 +331,57 @@ func TestOpenStoreFailsFastOnAnUnreachableDatabase(t *testing.T) {
 		t.Fatalf("want a quick error for an unreachable database, got %v after %v", err, time.Since(start))
 	}
 }
+
+func TestListByTypeReturnsOnlyThatTypeWithNullsKept(t *testing.T) {
+	t.Parallel()
+
+	s := testStore(t, 5)
+	volcanic, seismic := ref(t, s), ref(t, s)
+
+	full := hazard(sourcePVMBG, volcanic)
+
+	bare := hazard(sourceBMKG, seismic)
+	bare.HazardType, bare.Severity, bare.AreaName, bare.Latitude, bare.Longitude, bare.Attributes = typeSeismic, nil, nil, nil, nil, nil
+
+	for _, h := range []HazardEvent{full, bare} {
+		if _, err := s.upsert(context.Background(), h); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.listByType(context.Background(), typeSeismic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var found *HazardEvent
+
+	for i, h := range got {
+		if h.HazardType != typeSeismic {
+			t.Fatalf("a SEISMIC list returned a %s event", h.HazardType)
+		}
+
+		if h.SourceRefID == seismic {
+			found = &got[i]
+		}
+
+		if h.SourceRefID == volcanic {
+			t.Fatal("the volcanic event leaked into the SEISMIC list")
+		}
+	}
+
+	if found == nil || found.Severity != nil || found.AreaName != nil || found.Latitude != nil || found.Longitude != nil || len(found.Attributes) != 0 {
+		t.Fatalf("expected the bare event with its nulls kept, got %+v", found)
+	}
+
+	vol, err := s.listByType(context.Background(), typeVolcanic)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, h := range vol {
+		if h.SourceRefID == volcanic && (h.Severity == nil || *h.Severity != severityWaspada || h.Attributes["eruption_count_24h"] != 4.0) {
+			t.Fatalf("full event came back wrong: %+v", h)
+		}
+	}
+}

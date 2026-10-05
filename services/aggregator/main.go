@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,9 +17,14 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"google.golang.org/grpc"
 )
 
-const defaultPort = "8091"
+const (
+	defaultPort     = "8091"
+	defaultGRPCPort = "9091"
+)
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
@@ -37,15 +43,15 @@ func newMux() *http.ServeMux {
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the PORT env var),
-// falling back to defaultPort when raw is empty.
-func resolvePort(raw string) (string, error) {
+// resolvePort validates a raw port value (as read from the PORT or GRPC_PORT env
+// var), falling back to def when raw is empty.
+func resolvePort(raw, def string) (string, error) {
 	if raw == "" {
-		raw = defaultPort
+		raw = def
 	}
 
 	if !portPattern.MatchString(raw) {
-		return "", fmt.Errorf("invalid PORT value: %q", raw)
+		return "", fmt.Errorf("invalid port value: %q", raw)
 	}
 
 	return raw, nil
@@ -126,9 +132,32 @@ func loadStore() (*store, error) {
 	return openStore(url, poolSize)
 }
 
+// startReadAPI binds the gRPC read API on GRPC_PORT, so a taken port stops the
+// service at start. MAX_INFLIGHT_REQUESTS caps its concurrent requests.
+func startReadAPI(db *store, breakers map[string]*breaker) (*grpc.Server, net.Listener, error) {
+	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	maxInflight, err := envPositiveInt("MAX_INFLIGHT_REQUESTS", defaultMaxInflight)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	lis, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	log.Printf("aggregator read api listening on :%s", port)
+
+	return newGRPCServer(newReadAPI(db, os.Getenv("RABBITMQ_URL"), breakers, maxInflight)), lis, nil
+}
+
 // run starts the Aggregator and returns when it has stopped or failed to start.
 func run() error {
-	port, err := resolvePort(os.Getenv("PORT"))
+	port, err := resolvePort(os.Getenv("PORT"), defaultPort)
 	if err != nil {
 		return err
 	}
@@ -177,10 +206,26 @@ func run() error {
 	// One poller and one ingest goroutine per source; both share the one pool.
 	var wg sync.WaitGroup
 
+	breakers := map[string]*breaker{}
+
 	// publish is a no-op until the RabbitMQ publisher (#23) is plugged in here.
 	for _, p := range newPipelines(pc, db.upsert, func(HazardEvent) {}) {
+		breakers[p.poller.name] = p.poller.breaker
+
 		wg.Go(func() { p.run(ctx) })
 	}
+
+	grpcSrv, grpcLis, err := startReadAPI(db, breakers)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		if err := grpcSrv.Serve(grpcLis); err != nil {
+			log.Printf("read api stopped: %v", err)
+			stop()
+		}
+	}()
 
 	srv := &http.Server{
 		Addr:              ":" + port,
@@ -198,6 +243,8 @@ func run() error {
 		defer cancel()
 
 		_ = srv.Shutdown(shutdown)
+
+		grpcSrv.GracefulStop()
 	}()
 
 	log.Printf("aggregator listening on :%d", portNum)

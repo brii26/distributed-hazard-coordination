@@ -117,3 +117,72 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 
 	return changed, tx.Commit()
 }
+
+// listByType returns every stored event of one hazard type, newest first.
+// ponytail: no pagination, the whole type is returned in one response; fine for
+// the mock-sized data set. Add a limit or paging before real volumes.
+func (s *store) listByType(ctx context.Context, hazardType string) ([]HazardEvent, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+	defer cancel()
+
+	rows, err := s.db.QueryContext(ctx, `
+SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+       latitude, longitude, occurred_at, ingested_at, attributes
+FROM hazard_events WHERE hazard_type = $1 ORDER BY occurred_at DESC`, hazardType)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	var out []HazardEvent
+
+	for rows.Next() {
+		var (
+			h        HazardEvent
+			severity sql.NullString
+			area     sql.NullString
+			lat, lon sql.NullFloat64
+			attrs    []byte
+		)
+
+		if err := rows.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &severity, &area,
+			&lat, &lon, &h.OccurredAt, &h.IngestedAt, &attrs); err != nil {
+			return nil, err
+		}
+
+		if severity.Valid {
+			h.Severity = &severity.String
+		}
+
+		if area.Valid {
+			h.AreaName = &area.String
+		}
+
+		if lat.Valid {
+			h.Latitude = &lat.Float64
+		}
+
+		if lon.Valid {
+			h.Longitude = &lon.Float64
+		}
+
+		if len(attrs) > 0 {
+			if err := json.Unmarshal(attrs, &h.Attributes); err != nil {
+				return nil, err
+			}
+		}
+
+		out = append(out, h)
+	}
+
+	return out, rows.Err()
+}
+
+// ping reports whether the Canonical Store answers, for the health check.
+func (s *store) ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+	defer cancel()
+
+	return s.db.PingContext(ctx)
+}
