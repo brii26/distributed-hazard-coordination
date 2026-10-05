@@ -34,7 +34,7 @@ docker run -d --name $prefix-canonical -p 127.0.0.1:$canonical_port:5432 \
   -e POSTGRES_USER="$CANONICAL_DB_USER" -e POSTGRES_PASSWORD="$CANONICAL_DB_PASSWORD" -e POSTGRES_DB="$CANONICAL_DB_NAME" \
   -v "$root/services/aggregator/migrations:/docker-entrypoint-initdb.d:ro" postgres:16-alpine >/dev/null
 
-docker run -d --name $prefix-rabbitmq -p 127.0.0.1:$rabbit_port:5672 rabbitmq:3.13-alpine >/dev/null
+docker run -d --name $prefix-rabbitmq -p 127.0.0.1:$rabbit_port:5672 rabbitmq:3.13-management-alpine >/dev/null
 
 # Postgres only listens on TCP once its init scripts (the migrations) are done.
 wait_for() {
