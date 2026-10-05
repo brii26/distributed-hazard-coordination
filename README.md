@@ -94,6 +94,19 @@ Any non-empty `gofmt -l` output means run `gofmt -w .` in that service directory
 
 If you've changed a `Dockerfile` or added new dependencies, also run `docker build services/<name>` before pushing.
 
+## Service-to-service integration tests
+
+Each suite starts only the two services of one pair (plus the storage or broker they need) in a separate compose project, `hazard-it`, drives the real network path, and tears everything down afterwards. It uses `.env.example`, so no `.env` is needed, and its host ports (18080-18082, 15432, 19091) stay clear of a normal `docker compose up`.
+
+```bash
+tests/integration/run.sh cfa-auth    # Client-Facing API + Auth Service (login, logout, local JWT check, transparent refresh, register, /accounts)
+tests/integration/run.sh agg-bmkg    # Aggregator + BMKG mock (API key, since cursor, events and tsunami warnings mapped and stored)
+tests/integration/run.sh agg-pvmbg   # Aggregator + PVMBG mock (OAuth bootstrap and rotation, outage, schema change: Problems 1-3)
+tests/integration/run.sh all         # all three, one after the other
+```
+
+Needs Docker Compose and Go. The tests live next to the code they exercise (`integration_test.go` in `services/client-facing-api` and `services/aggregator`) and skip unless `run.sh` sets their environment, so a plain `go test ./...` stays offline.
+
 ## Go workspace notes
 
 - Adding a new service: create `services/<new-name>/`, add its `go.mod`, then `go work use ./services/<new-name>` from the repo root so it joins the workspace.
