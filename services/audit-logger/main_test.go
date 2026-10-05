@@ -2,21 +2,41 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestHealthHandler(t *testing.T) {
+func TestHealth(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-	rec := httptest.NewRecorder()
+	tests := []struct {
+		name               string
+		readable, conn     bool
+		wantCode           int
+		wantStatus, wantMQ string
+		wantStore          string
+	}{
+		{"all good", true, true, http.StatusOK, "ok", "connected", "readable"},
+		{"broker lost", true, false, http.StatusOK, "degraded", "disconnected", "readable"},
+		{"dedup store unreadable", false, false, http.StatusServiceUnavailable, "down", "disconnected", "unreadable"},
+	}
 
-	newMux().ServeHTTP(rec, req)
+	for _, tt := range tests {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
+		rec := httptest.NewRecorder()
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
+		newMux(tt.readable, func() bool { return tt.conn }).ServeHTTP(rec, req)
+
+		var body map[string]string
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+
+		if rec.Code != tt.wantCode || body["status"] != tt.wantStatus || body["rabbitmq"] != tt.wantMQ || body["dedup_store"] != tt.wantStore {
+			t.Fatalf("%s: got %d %v", tt.name, rec.Code, body)
+		}
 	}
 }
 
@@ -24,12 +44,8 @@ func TestResolvePortDefault(t *testing.T) {
 	t.Parallel()
 
 	port, err := resolvePort("")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if port != defaultPort {
-		t.Fatalf("expected default port %s, got %s", defaultPort, port)
+	if err != nil || port != defaultPort {
+		t.Fatalf("expected default port %s, got %s %v", defaultPort, port, err)
 	}
 }
 
