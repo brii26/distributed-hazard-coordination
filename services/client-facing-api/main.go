@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -26,17 +25,10 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("failed to write health response: %v", err)
-	}
-}
-
+// newMux has the API routes; /health is added by main, since it needs the
+// dependency addresses.
 func newMux(auth *authAPI) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler)
 	auth.register(mux)
 	// TODO: implement the remaining endpoints specified for client-facing-api in doc/TRD_M1.md
 	return mux
@@ -110,6 +102,21 @@ func resolvePort(raw string) (string, error) {
 	return raw, nil
 }
 
+// newHealthAPI reads the addresses of the two services /health probes.
+func newHealthAPI() (healthAPI, error) {
+	agg := os.Getenv("AGGREGATOR_GRPC_ADDR")
+	if agg == "" {
+		return healthAPI{}, errors.New("AGGREGATOR_GRPC_ADDR must be set")
+	}
+
+	timeoutMS, err := envPositiveInt("UPSTREAM_TIMEOUT_MS", defaultUpstreamTimeoutMS)
+	if err != nil {
+		return healthAPI{}, err
+	}
+
+	return healthAPI{aggregatorAddr: agg, authAddr: os.Getenv("AUTH_SERVICE_GRPC_ADDR"), timeout: time.Duration(timeoutMS) * time.Millisecond}, nil
+}
+
 func main() {
 	port, err := resolvePort(os.Getenv("PORT"))
 	if err != nil {
@@ -121,6 +128,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	health, err := newHealthAPI()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	mux := newMux(auth)
+	mux.Handle("GET /health", health)
+
 	// Reparsed as an int purely so the log line below carries a numeric
 	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
@@ -130,7 +145,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(auth),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
