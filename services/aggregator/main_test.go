@@ -23,7 +23,7 @@ func TestHealthHandler(t *testing.T) {
 func TestResolvePortDefault(t *testing.T) {
 	t.Parallel()
 
-	port, err := resolvePort("")
+	port, err := resolvePort("", defaultPort)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestResolvePortDefault(t *testing.T) {
 func TestResolvePortInvalid(t *testing.T) {
 	t.Parallel()
 
-	if _, err := resolvePort("not-a-port"); err == nil {
+	if _, err := resolvePort("not-a-port", defaultPort); err == nil {
 		t.Fatal("expected error for invalid port, got nil")
 	}
 }
