@@ -82,7 +82,10 @@ func (s *store) close() error {
 // (true) or an identical repeat that wrote nothing (false). Two goroutines may
 // upsert the same record at once: ON CONFLICT is atomic in Postgres, and BMKG and
 // PVMBG never share a (source, source_ref_id).
-func (s *store) upsert(ctx context.Context, h HazardEvent) (bool, error) {
+func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
+	start := time.Now()
+	defer func() { logCall(ctx, "canonical-store upsert", start, err) }()
+
 	attrs := h.Attributes
 	if attrs == nil {
 		attrs = map[string]any{}
@@ -121,7 +124,10 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 // listByType returns every stored event of one hazard type, newest first.
 // ponytail: no pagination, the whole type is returned in one response; fine for
 // the mock-sized data set. Add a limit or paging before real volumes.
-func (s *store) listByType(ctx context.Context, hazardType string) ([]HazardEvent, error) {
+func (s *store) listByType(ctx context.Context, hazardType string) (_ []HazardEvent, err error) {
+	start := time.Now()
+	defer func() { logCall(ctx, "canonical-store list "+hazardType, start, err) }()
+
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
@@ -180,7 +186,10 @@ FROM hazard_events WHERE hazard_type = $1 ORDER BY occurred_at DESC`, hazardType
 }
 
 // ping reports whether the Canonical Store answers, for the health check.
-func (s *store) ping(ctx context.Context) error {
+func (s *store) ping(ctx context.Context) (err error) {
+	start := time.Now()
+	defer func() { logCall(ctx, "canonical-store ping", start, err) }()
+
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 

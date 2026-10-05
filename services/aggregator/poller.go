@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,10 +83,13 @@ func (p *poller) pollOnce(ctx context.Context) {
 		return
 	}
 
+	id := newHazardID() // a random UUID is as good a correlation ID as any
+	l := withID(id)
+
 	start := time.Now()
-	res, err := p.fetch(ctx, p.since)
+	res, err := p.fetch(withCorrelation(ctx, id), p.since)
 	elapsed := time.Since(start).Milliseconds()
-	res.correlationID = newHazardID() // a random UUID is as good a correlation ID as any
+	res.correlationID = id
 
 	if err != nil {
 		p.breaker.failure()
@@ -97,12 +99,12 @@ func (p *poller) pollOnce(ctx context.Context) {
 
 	switch {
 	case err == nil:
-		log.Printf("poll source=%s correlation_id=%s result=success duration_ms=%d records=%d", p.name, res.correlationID, elapsed, len(res.records)+len(res.warnings))
+		l.Info("poll", "source", p.name, "result", "success", "duration_ms", elapsed, "records", len(res.records)+len(res.warnings))
 		p.handoff(ctx, res)
 	case errors.Is(err, context.DeadlineExceeded):
-		log.Printf("poll source=%s correlation_id=%s result=timeout duration_ms=%d err=%q", p.name, res.correlationID, elapsed, err)
+		l.Warn("poll", "source", p.name, "result", "timeout", "duration_ms", elapsed, "error", err.Error())
 	default:
-		log.Printf("poll source=%s correlation_id=%s result=failure duration_ms=%d err=%q", p.name, res.correlationID, elapsed, err)
+		l.Warn("poll", "source", p.name, "result", "failure", "duration_ms", elapsed, "error", err.Error())
 	}
 }
 
@@ -134,7 +136,10 @@ type sourceClient struct {
 }
 
 // records GETs path (with ?since when set) and decodes a JSON array of objects.
-func (c *sourceClient) records(ctx context.Context, path string, since time.Time) ([]map[string]any, error) {
+func (c *sourceClient) records(ctx context.Context, path string, since time.Time) (_ []map[string]any, err error) {
+	start := time.Now()
+	defer func() { logCall(ctx, "GET "+c.baseURL+path, start, err) }()
+
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 

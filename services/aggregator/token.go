@@ -141,8 +141,11 @@ func (m *tokenManager) obtain(grant string, form url.Values) error {
 	return err
 }
 
-func (m *tokenManager) exchange(grant string, form url.Values) error {
+func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	form.Set("grant_type", grant)
+
+	start := time.Now()
+	defer func() { logCall(context.Background(), "POST "+m.baseURL+"/oauth/token grant_type="+grant, start, err) }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), m.client.Timeout)
 	defer cancel()

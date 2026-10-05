@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -41,10 +40,12 @@ func (i *ingest) run(ctx context.Context) {
 // handle maps one poll's records and writes them in order; a rejected record is skipped.
 func (i *ingest) handle(ctx context.Context, res pollResult) {
 	start := time.Now()
+	ctx = withCorrelation(ctx, res.correlationID)
+	l := withID(res.correlationID)
 
 	events, err := i.mapBatch(res)
 	if err != nil {
-		log.Printf("ingest source=%s rejected records: %v", i.name, err)
+		l.Warn("ingest rejected records", "source", i.name, "error", err.Error())
 	}
 
 	changed := 0
@@ -52,7 +53,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	for _, h := range events {
 		c, err := i.write(ctx, h)
 		if err != nil {
-			log.Printf("ingest source=%s upsert failed record=%s: %v", i.name, h.SourceRefID, err)
+			l.Warn("ingest upsert failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
 
 			if ctx.Err() != nil {
 				break // shutting down with the database unreachable: give up the rest
@@ -68,8 +69,8 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		}
 	}
 
-	log.Printf("ingest source=%s correlation_id=%s records=%d mapped=%d rejected=%d changed=%d duration_ms=%d",
-		i.name, res.correlationID, len(res.records), len(events), len(res.records)-len(events), changed, time.Since(start).Milliseconds())
+	l.Info("ingest", "source", i.name, "records", len(res.records), "mapped", len(events),
+		"rejected", len(res.records)-len(events), "changed", changed, "duration_ms", time.Since(start).Milliseconds())
 }
 
 // write upserts h. An outage is retried with a growing delay, which holds the batch:
@@ -83,7 +84,7 @@ func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 			return changed, err
 		}
 
-		log.Printf("ingest source=%s record=%s: %v, retrying", i.name, h.SourceRefID, err)
+		withID(correlationOf(ctx)).Warn("ingest upsert retrying", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
 
 		select {
 		case <-ctx.Done():
