@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -28,22 +27,16 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("failed to write health response: %v", err)
-	}
-}
-
-func newMux() *http.ServeMux {
+// newMux is the REST side, on its own port apart from gRPC (doc/TRD_M1.md 0.0), so
+// compose's wget healthcheck works and the gRPC concurrency cap never starves it.
+func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler)
-	// TODO: implement the endpoints specified for aggregator in doc/TRD_M1.md
+	mux.HandleFunc("GET /health", api.healthHandler)
+
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the PORT or GRPC_PORT env
+// resolvePort validates a raw port value (as read from the HEALTH_PORT or GRPC_PORT env
 // var), falling back to def when raw is empty.
 func resolvePort(raw, def string) (string, error) {
 	if raw == "" {
@@ -134,20 +127,20 @@ func loadStore() (*store, error) {
 
 // startReadAPI binds the gRPC read API on GRPC_PORT, so a taken port stops the
 // service at start. MAX_INFLIGHT_REQUESTS caps its concurrent requests.
-func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*grpc.Server, net.Listener, error) {
+func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*readAPI, *grpc.Server, net.Listener, error) {
 	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	maxInflight, err := envPositiveInt("MAX_INFLIGHT_REQUESTS", defaultMaxInflight)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	log.Printf("aggregator read api listening on :%s", port)
@@ -160,12 +153,14 @@ func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*grp
 		return nil
 	}
 
-	return newGRPCServer(newReadAPI(db, rabbitUp, breakers, maxInflight)), lis, nil
+	api := newReadAPI(db, rabbitUp, breakers, maxInflight)
+
+	return api, newGRPCServer(api), lis, nil
 }
 
 // run starts the Aggregator and returns when it has stopped or failed to start.
 func run() error {
-	port, err := resolvePort(os.Getenv("PORT"), defaultPort)
+	port, err := resolvePort(os.Getenv("HEALTH_PORT"), defaultPort)
 	if err != nil {
 		return err
 	}
@@ -243,7 +238,7 @@ func run() error {
 		wg.Go(func() { p.run(ctx) })
 	}
 
-	grpcSrv, grpcLis, err := startReadAPI(db, pub, breakers)
+	api, grpcSrv, grpcLis, err := startReadAPI(db, pub, breakers)
 	if err != nil {
 		return err
 	}
@@ -257,7 +252,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(),
+		Handler:           newMux(api),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

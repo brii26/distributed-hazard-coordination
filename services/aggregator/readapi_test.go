@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -278,5 +281,82 @@ func TestHealthReportsConnectivityFlags(t *testing.T) {
 	h, err := c.GetHealth(context.Background(), &emptypb.Empty{})
 	if err != nil || !h.GetDatabaseConnected() || h.GetRabbitmqConnected() {
 		t.Fatalf("expected database up and rabbitmq down, got %v %v", h, err)
+	}
+}
+
+// getHealth calls the REST /health the way compose's healthcheck does.
+func getHealth(t *testing.T, api *readAPI) (int, healthReport) {
+	t.Helper()
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	newMux(api).ServeHTTP(rec, req)
+
+	var rep healthReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
+		t.Fatalf("health body is not the report JSON: %v: %s", err, rec.Body)
+	}
+
+	return rec.Code, rep
+}
+
+func TestRESTHealthStatusAndCode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		mutate   func(*readAPI)
+		want     string
+		wantCode int
+	}{
+		{"all up", func(*readAPI) {}, "ok", http.StatusOK},
+		{"PVMBG down is still reachable", func(a *readAPI) { trip(a, sourcePVMBG) }, "degraded", http.StatusOK},
+		{"rabbitmq down is degraded", func(a *readAPI) { a.rabbitUp = func(context.Context) error { return errBoom } }, "degraded", http.StatusOK},
+		{"canonical store down", func(a *readAPI) { a.ping = func(context.Context) error { return errBoom } }, "down", http.StatusServiceUnavailable},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			api, _ := testAPI(t, nil, 10)
+			tt.mutate(api)
+
+			code, rep := getHealth(t, api)
+			if code != tt.wantCode || rep.Status != tt.want {
+				t.Fatalf("expected %d %q, got %d %q", tt.wantCode, tt.want, code, rep.Status)
+			}
+		})
+	}
+}
+
+func TestRESTHealthBreaksDownEachSource(t *testing.T) {
+	t.Parallel()
+
+	api, _ := testAPI(t, nil, 10)
+	trip(api, sourcePVMBG)
+
+	_, rep := getHealth(t, api)
+
+	if len(rep.Sources) != 2 || rep.Sources[0].Source != sourceBMKG || rep.Sources[0].Status != statusUp ||
+		rep.Sources[1].Source != sourcePVMBG || rep.Sources[1].Status != statusDown ||
+		rep.Sources[1].LastSuccessAt == nil || rep.Sources[1].StaleSince == nil {
+		t.Fatalf("expected BMKG UP and PVMBG DOWN with last_success_at and stale_since, got %+v", rep.Sources)
+	}
+
+	if rep.Database != connected || rep.RabbitMQ != connected {
+		t.Fatalf("expected both dependencies connected, got %+v", rep)
+	}
+}
+
+func TestRESTHealthIsNotHeldUpByTheGRPCCap(t *testing.T) {
+	t.Parallel()
+
+	api, _ := testAPI(t, nil, 1)
+	api.sem <- struct{}{} // the gRPC cap is full
+
+	if code, _ := getHealth(t, api); code != http.StatusOK {
+		t.Fatalf("health must answer while the read API is saturated, got %d", code)
 	}
 }
