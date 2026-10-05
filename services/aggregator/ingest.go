@@ -26,8 +26,8 @@ type ingest struct {
 	in       <-chan pollResult
 	mapBatch func(pollResult) ([]HazardEvent, error)
 	upsert   func(context.Context, HazardEvent) (bool, error)
-	// publish is a no-op until the RabbitMQ publisher (#23) is plugged in.
-	publish             func(HazardEvent)
+	// publish hands a new or changed event, with its poll cycle's correlation ID, to the broker publisher.
+	publish             func(h HazardEvent, correlationID string)
 	retryBase, retryMax time.Duration
 }
 
@@ -64,12 +64,12 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		if c {
 			changed++
 
-			i.publish(h)
+			i.publish(h, res.correlationID)
 		}
 	}
 
-	log.Printf("ingest source=%s records=%d mapped=%d rejected=%d changed=%d duration_ms=%d",
-		i.name, len(res.records), len(events), len(res.records)-len(events), changed, time.Since(start).Milliseconds())
+	log.Printf("ingest source=%s correlation_id=%s records=%d mapped=%d rejected=%d changed=%d duration_ms=%d",
+		i.name, res.correlationID, len(res.records), len(events), len(res.records)-len(events), changed, time.Since(start).Milliseconds())
 }
 
 // write upserts h. An outage is retried with a growing delay, which holds the batch:
@@ -117,7 +117,7 @@ func (p pipeline) run(ctx context.Context) {
 }
 
 // newPipelines builds one pipeline per source; all share the one upsert (the store's pool).
-func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(HazardEvent)) []pipeline {
+func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(HazardEvent, string)) []pipeline {
 	m := newMapper()
 	mappers := map[string]func(pollResult) ([]HazardEvent, error){
 		sourceBMKG:  func(r pollResult) ([]HazardEvent, error) { return m.mapSeismic(r.records, r.warnings) },

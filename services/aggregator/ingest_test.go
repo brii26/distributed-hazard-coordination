@@ -32,7 +32,7 @@ func (r *recorder) upsert(changed func(string) bool) func(context.Context, Hazar
 	}
 }
 
-func (r *recorder) publish(h HazardEvent) {
+func (r *recorder) publish(h HazardEvent, _ string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -49,7 +49,7 @@ func (r *recorder) snapshot() (upserts, published []string) {
 func always(string) bool { return true }
 
 // volcanicIngest is an ingest over real mapping with the given upsert.
-func volcanicIngest(upsert func(context.Context, HazardEvent) (bool, error), publish func(HazardEvent)) (*ingest, chan pollResult) {
+func volcanicIngest(upsert func(context.Context, HazardEvent) (bool, error), publish func(HazardEvent, string)) (*ingest, chan pollResult) {
 	ch := make(chan pollResult, 8)
 	m := testMapper()
 
@@ -117,7 +117,7 @@ func TestSlowSourceDoesNotHoldUpTheOtherIngest(t *testing.T) {
 		time.Sleep(300 * time.Millisecond)
 
 		return true, nil
-	}, func(HazardEvent) {})
+	}, func(HazardEvent, string) {})
 	fastIn, fastCh := volcanicIngest(fastRec.upsert(always), fastRec.publish)
 
 	slowCh <- reports("S1", "S2", "S3")
@@ -285,7 +285,7 @@ func TestADataErrorIsNotRetried(t *testing.T) {
 		}
 
 		return true, nil
-	}, func(HazardEvent) {})
+	}, func(HazardEvent, string) {})
 
 	ch <- reports("R1", "R2")
 
@@ -332,7 +332,7 @@ func TestShutdownDuringAnOutageDoesNotHang(t *testing.T) {
 
 	in, ch := volcanicIngest(func(context.Context, HazardEvent) (bool, error) {
 		return false, errors.New("connection refused")
-	}, func(HazardEvent) {})
+	}, func(HazardEvent, string) {})
 	in.retryBase, in.retryMax = time.Hour, time.Hour // a retry would wait forever
 
 	ch <- reports("R1", "R2")
@@ -404,7 +404,7 @@ func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	for _, p := range newPipelines(cfg, s.upsert, func(h HazardEvent) {
+	for _, p := range newPipelines(cfg, s.upsert, func(h HazardEvent, _ string) {
 		mu.Lock()
 		defer mu.Unlock()
 

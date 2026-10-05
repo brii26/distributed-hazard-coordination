@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"net"
-	"net/url"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -20,7 +17,6 @@ import (
 
 const (
 	defaultMaxInflight = 100
-	rabbitDialTimeout  = 2 * time.Second
 
 	metaCorrelationID = "x-correlation-id"
 	metaClientRole    = "x-client-role"
@@ -46,11 +42,11 @@ type readAPI struct {
 	sem chan struct{}
 }
 
-func newReadAPI(db *store, rabbitURL string, breakers map[string]*breaker, maxInflight int) *readAPI {
+func newReadAPI(db *store, rabbitUp func(context.Context) error, breakers map[string]*breaker, maxInflight int) *readAPI {
 	return &readAPI{
 		list:     db.listByType,
 		ping:     db.ping,
-		rabbitUp: dialCheck(rabbitURL),
+		rabbitUp: rabbitUp,
 		breakers: breakers,
 		sem:      make(chan struct{}, maxInflight),
 	}
@@ -198,31 +194,4 @@ func toProto(e HazardEvent) (*aggregatorpb.HazardEvent, error) {
 		IngestedAt:  timestamppb.New(e.IngestedAt),
 		Attributes:  attrs,
 	}, nil
-}
-
-// dialCheck reports RabbitMQ connectivity by opening a TCP connection to the
-// broker in rawURL.
-// ponytail: only proves the port answers; report the publisher's own connection
-// state instead once it exists (#23).
-func dialCheck(rawURL string) func(context.Context) error {
-	return func(ctx context.Context) error {
-		u, err := url.Parse(rawURL)
-		if err != nil {
-			return err
-		}
-
-		host := u.Host
-		if u.Port() == "" {
-			host = net.JoinHostPort(u.Hostname(), "5672")
-		}
-
-		d := net.Dialer{Timeout: rabbitDialTimeout}
-
-		conn, err := d.DialContext(ctx, "tcp", host)
-		if err != nil {
-			return err
-		}
-
-		return conn.Close()
-	}
 }
