@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"net/http"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -136,29 +140,112 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 // store being unreachable is "down"; a down source or broker is "degraded",
 // since reads still work (doc/TRD_M1.md 0.2, 3.5).
 func (a *readAPI) GetHealth(ctx context.Context, _ *emptypb.Empty) (*aggregatorpb.HealthStatus, error) {
+	r := a.health(ctx)
 	h := &aggregatorpb.HealthStatus{
-		DatabaseConnected: a.ping(ctx) == nil,
-		RabbitmqConnected: a.rabbitUp(ctx) == nil,
-		Status:            "ok",
+		Status:            r.Status,
+		DatabaseConnected: r.Database == connected,
+		RabbitmqConnected: r.RabbitMQ == connected,
+	}
+
+	for _, s := range r.Sources {
+		h.Sources = append(h.Sources, metaOf(s))
+	}
+
+	return h, nil
+}
+
+const (
+	connected    = "connected"
+	disconnected = "disconnected"
+)
+
+// healthReport is the Aggregator's health (doc/TRD_M1.md 0.2, 3.5), shared by the
+// gRPC GetHealth and the REST /health.
+type healthReport struct {
+	Status   string `json:"status"` // ok | degraded | down
+	Database string `json:"database"`
+	RabbitMQ string `json:"rabbitmq"`
+
+	Sources []sourceStatus `json:"-"`
+}
+
+// sourceHealth is one source in the REST body, with the lowercase up/degraded/down
+// of doc/TRD_M1.md 3.5 (the read API's meta keeps 3.3's uppercase).
+type sourceHealth struct {
+	Source        string     `json:"source"`
+	Status        string     `json:"status"`
+	LastSuccessAt *time.Time `json:"last_success_at"`
+	StaleSince    *time.Time `json:"stale_since"`
+}
+
+// restHealth is healthReport as /health serves it.
+type restHealth struct {
+	healthReport
+
+	Sources []sourceHealth `json:"sources"`
+}
+
+func (r healthReport) rest() restHealth {
+	out := restHealth{healthReport: r}
+
+	for _, s := range r.Sources {
+		out.Sources = append(out.Sources, sourceHealth{
+			Source: s.Source, Status: strings.ToLower(s.Status), LastSuccessAt: s.LastSuccessAt, StaleSince: s.StaleSince,
+		})
+	}
+
+	return out
+}
+
+// health checks the Canonical Store and RabbitMQ and reads each source's state.
+// Only the store being unreachable is "down"; a down source or broker is
+// "degraded", since reads still work.
+func (a *readAPI) health(ctx context.Context) healthReport {
+	r := healthReport{Status: "ok", Database: connected, RabbitMQ: connected}
+
+	if a.ping(ctx) != nil {
+		r.Database = disconnected
+	}
+
+	if a.rabbitUp(ctx) != nil {
+		r.RabbitMQ = disconnected
 	}
 
 	for _, name := range healthSources {
 		s := a.breakers[name].snapshot()
-		h.Sources = append(h.Sources, metaOf(s))
+		r.Sources = append(r.Sources, s)
 
 		if s.Status == statusDown {
-			h.Status = "degraded"
+			r.Status = "degraded"
 		}
 	}
 
 	switch {
-	case !h.GetDatabaseConnected():
-		h.Status = "down"
-	case !h.GetRabbitmqConnected():
-		h.Status = "degraded"
+	case r.Database == disconnected:
+		r.Status = "down"
+	case r.RabbitMQ == disconnected:
+		r.Status = "degraded"
 	}
 
-	return h, nil
+	return r
+}
+
+// healthHandler serves GET /health. Only "down" is a 503: "degraded" still serves
+// and stays 200, so compose and callers can tell "limping" from "gone".
+func (a *readAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
+	rep := a.health(r.Context())
+
+	code := http.StatusOK
+	if rep.Status == "down" {
+		code = http.StatusServiceUnavailable
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+
+	if err := json.NewEncoder(w).Encode(rep.rest()); err != nil {
+		log.Printf("failed to write health response: %v", err)
+	}
 }
 
 func metaOf(s sourceStatus) *aggregatorpb.ResponseMeta {
