@@ -2,21 +2,44 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestHealthHandler(t *testing.T) {
+func TestHealthReflectsTheUserDB(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
-	rec := httptest.NewRecorder()
+	tests := []struct {
+		name     string
+		ping     error
+		want     string
+		wantCode int
+	}{
+		{"database up", nil, "ok", http.StatusOK},
+		{"database down", errors.New("connection refused"), "down", http.StatusServiceUnavailable},
+	}
 
-	newMux().ServeHTTP(rec, req)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
+			rec := httptest.NewRecorder()
+
+			newMux(func(context.Context) error { return tt.ping }).ServeHTTP(rec, req)
+
+			var body map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("health body is not JSON: %v", err)
+			}
+
+			if rec.Code != tt.wantCode || body["status"] != tt.want {
+				t.Fatalf("expected %d %q, got %d %q", tt.wantCode, tt.want, rec.Code, body["status"])
+			}
+		})
 	}
 }
 

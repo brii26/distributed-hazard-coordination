@@ -37,6 +37,7 @@ type authServer struct {
 	authpb.UnimplementedAuthServer
 
 	store       userStore
+	ping        func(context.Context) error // User DB reachability, for /health
 	salt        string
 	secret      []byte
 	lapanganTTL time.Duration

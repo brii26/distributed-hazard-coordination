@@ -30,22 +30,36 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+const dbPingTimeout = 2 * time.Second
 
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-		log.Printf("failed to write health response: %v", err)
+// healthHandler serves GET /health: liveness plus User DB connectivity. The service
+// can do nothing without its DB, so an unreachable one is "down" and a 503
+// (doc/TRD_M1.md 5).
+func healthHandler(ping func(context.Context) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		status, db, code := "ok", "connected", http.StatusOK
+
+		if err := ping(r.Context()); err != nil {
+			status, db, code = "down", "disconnected", http.StatusServiceUnavailable
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": status, "database": db}); err != nil {
+			log.Printf("failed to write health response: %v", err)
+		}
 	}
 }
 
-func newMux() *http.ServeMux {
+func newMux(ping func(context.Context) error) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", healthHandler)
-	// TODO: implement the endpoints specified for auth-service in doc/TRD_M1.md
+	mux.HandleFunc("GET /health", healthHandler(ping))
+
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the PORT env var),
+// resolvePort validates a raw port value (as read from the HEALTH_PORT or GRPC_PORT env var),
 // falling back to fallback when raw is empty.
 func resolvePort(raw, fallback string) (string, error) {
 	if raw == "" {
@@ -102,7 +116,15 @@ func newAuthServer() (*authServer, error) {
 		return nil, err
 	}
 
+	ping := func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, dbPingTimeout)
+		defer cancel()
+
+		return db.PingContext(ctx)
+	}
+
 	return &authServer{
+		ping:        ping,
 		store:       pgStore{db: db},
 		salt:        salt,
 		secret:      []byte(secret),
@@ -126,7 +148,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	port, err := resolvePort(os.Getenv("PORT"), defaultPort)
+	port, err := resolvePort(os.Getenv("HEALTH_PORT"), defaultPort)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -140,7 +162,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(),
+		Handler:           newMux(auth.ping),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
