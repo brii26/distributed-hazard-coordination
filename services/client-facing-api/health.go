@@ -41,7 +41,10 @@ func (h healthAPI) aggregatorUp(ctx context.Context) bool {
 func (h healthAPI) reachable(ctx context.Context, addr string) bool {
 	d := net.Dialer{Timeout: h.timeout}
 
+	start := time.Now()
 	conn, err := d.DialContext(ctx, "tcp", addr)
+	logCall(ctx, "tcp "+addr, start, err)
+
 	if err != nil {
 		return false
 	}
