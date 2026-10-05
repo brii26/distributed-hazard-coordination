@@ -1,0 +1,69 @@
+// Internal-only gRPC read API of the Aggregator (doc/TRD_M1.md section 3.4).
+// The Client-Facing API will keep its own copy of this file (each Docker build
+// context stays self-contained), so keep the two in sync.
+//
+// Identity/role and the correlation ID travel as gRPC metadata (x-client-role,
+// x-correlation-id), never as message fields.
+//
+// Regenerate (from services/aggregator):
+//   protoc --proto_path=aggregatorpb \
+//     --go_out=aggregatorpb --go_opt=paths=source_relative \
+//     --go-grpc_out=aggregatorpb --go-grpc_opt=paths=source_relative aggregatorpb/aggregator.proto
+// Needs protoc, protoc-gen-go and protoc-gen-go-grpc, e.g.
+//   nix shell nixpkgs#protobuf nixpkgs#protoc-gen-go nixpkgs#protoc-gen-go-grpc
+syntax = "proto3";
+
+package aggregator.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/brii26/distributed-hazard-coordination/services/aggregator/aggregatorpb";
+
+service Aggregator {
+  // OK with meta.stale_since set for stale data, UNAVAILABLE when the source is
+  // down and nothing is stored, RESOURCE_EXHAUSTED past MAX_INFLIGHT_REQUESTS.
+  rpc GetHazards(GetHazardsRequest) returns (GetHazardsResponse);
+  rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
+}
+
+message GetHazardsRequest {
+  string hazard_type = 1; // SEISMIC | VOLCANIC
+}
+
+message GetHazardsResponse {
+  repeated HazardEvent data = 1;
+  ResponseMeta meta = 2;
+}
+
+// HazardEvent is the canonical record (TRD 3.2). Fields a source may not give are
+// optional, so "missing" (null) stays distinct from an empty or zero value.
+message HazardEvent {
+  string hazard_id = 1;
+  string source = 2;
+  string source_ref_id = 3;
+  string hazard_type = 4;
+  optional string severity = 5;
+  optional string area_name = 6;
+  optional double latitude = 7;
+  optional double longitude = 8;
+  google.protobuf.Timestamp occurred_at = 9;
+  google.protobuf.Timestamp ingested_at = 10;
+  google.protobuf.Struct attributes = 11;
+}
+
+// ResponseMeta is the state of the source behind the requested hazard type.
+message ResponseMeta {
+  string source = 1;
+  string source_status = 2; // UP | DEGRADED | DOWN
+  google.protobuf.Timestamp last_success_at = 3; // unset until the first good poll
+  google.protobuf.Timestamp stale_since = 4;     // unset while the source is UP
+}
+
+message HealthStatus {
+  string status = 1; // ok | degraded | down
+  repeated ResponseMeta sources = 2;
+  bool database_connected = 3;
+  bool rabbitmq_connected = 4;
+}
