@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpb"
 	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/authpb"
 )
 
@@ -102,7 +103,7 @@ func resolvePort(raw string) (string, error) {
 	return raw, nil
 }
 
-// newHealthAPI reads the addresses of the two services /health probes.
+// newHealthAPI sets up the two checks behind /health.
 func newHealthAPI() (healthAPI, error) {
 	agg := os.Getenv("AGGREGATOR_GRPC_ADDR")
 	if agg == "" {
@@ -114,7 +115,17 @@ func newHealthAPI() (healthAPI, error) {
 		return healthAPI{}, err
 	}
 
-	return healthAPI{aggregatorAddr: agg, authAddr: os.Getenv("AUTH_SERVICE_GRPC_ADDR"), timeout: time.Duration(timeoutMS) * time.Millisecond}, nil
+	// Lazy like the Auth Service connection: the service starts while the Aggregator is still coming up.
+	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return healthAPI{}, err
+	}
+
+	return healthAPI{
+		aggregator: aggregatorpb.NewAggregatorClient(conn),
+		authAddr:   os.Getenv("AUTH_SERVICE_GRPC_ADDR"),
+		timeout:    time.Duration(timeoutMS) * time.Millisecond,
+	}, nil
 }
 
 func main() {

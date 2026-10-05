@@ -3,14 +3,32 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
+
+	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpb"
 )
 
-// listener opens a local TCP port and returns its address, so a dependency can be "up".
+// fakeAggregator answers GetHealth with a fixed status, or an error as when it is unreachable.
+type fakeAggregator struct {
+	aggregatorpb.AggregatorClient
+
+	status string
+	err    error
+}
+
+func (f fakeAggregator) GetHealth(context.Context, *emptypb.Empty, ...grpc.CallOption) (*aggregatorpb.HealthStatus, error) {
+	return &aggregatorpb.HealthStatus{Status: f.status}, f.err
+}
+
+// listener opens a local TCP port and returns its address, so the Auth Service can be "up".
 func listener(t *testing.T) string {
 	t.Helper()
 
@@ -43,17 +61,21 @@ func TestHealthReflectsTheDependencies(t *testing.T) {
 	t.Parallel()
 
 	up, down := listener(t), closedAddr(t)
+	unreachable := errors.New("connection refused")
 
 	tests := []struct {
 		name              string
-		agg, auth         string
+		agg               fakeAggregator
+		auth              string
 		wantStatus        string
 		wantAgg, wantAuth string
 	}{
-		{"both up", up, up, "ok", "connected", "connected"},
-		{"aggregator down", down, up, "degraded", "disconnected", "connected"},
-		{"auth service down", up, down, "degraded", "connected", "disconnected"},
-		{"both down is still degraded, never down", down, down, "degraded", "disconnected", "disconnected"},
+		{"both up", fakeAggregator{status: "ok"}, up, "ok", "connected", "connected"},
+		{"aggregator limping on a dead source is still usable", fakeAggregator{status: "degraded"}, up, "ok", "connected", "connected"},
+		{"aggregator unreachable", fakeAggregator{err: unreachable}, up, "degraded", "disconnected", "connected"},
+		{"aggregator up but its Canonical Store is gone", fakeAggregator{status: "down"}, up, "degraded", "disconnected", "connected"},
+		{"auth service down", fakeAggregator{status: "ok"}, down, "degraded", "connected", "disconnected"},
+		{"both down is still degraded, never down", fakeAggregator{err: unreachable}, down, "degraded", "disconnected", "disconnected"},
 	}
 
 	for _, tt := range tests {
@@ -63,7 +85,7 @@ func TestHealthReflectsTheDependencies(t *testing.T) {
 			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 			rec := httptest.NewRecorder()
 
-			healthAPI{aggregatorAddr: tt.agg, authAddr: tt.auth, timeout: time.Second}.ServeHTTP(rec, req)
+			healthAPI{aggregator: tt.agg, authAddr: tt.auth, timeout: time.Second}.ServeHTTP(rec, req)
 
 			var body map[string]string
 			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
