@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,7 +51,7 @@ func (f *fakePVMBG) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.codeCalls++
 
 		if f.codeUsed || r.PostFormValue("code") != "the-code" {
-			w.WriteHeader(http.StatusBadRequest)
+			invalidGrant(w)
 
 			return
 		}
@@ -58,7 +59,7 @@ func (f *fakePVMBG) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.codeUsed = true
 	case grantRefreshToken:
 		if f.reject || r.PostFormValue("refresh_token") != f.refresh {
-			w.WriteHeader(http.StatusBadRequest)
+			invalidGrant(w)
 
 			return
 		}
@@ -76,6 +77,22 @@ func (f *fakePVMBG) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"refresh_token": f.refresh,
 		"expires_in":    f.ttl,
 	})
+}
+
+// invalidGrant answers like the real mock's writeOAuthError.
+func invalidGrant(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+}
+
+// restart forgets every issued token and that the code was used, as the real
+// mock does when its process restarts.
+func (f *fakePVMBG) restart() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.codeUsed, f.refresh = false, ""
 }
 
 func newTestManager(t *testing.T, ttl int) (*tokenManager, *fakePVMBG) {
@@ -231,5 +248,63 @@ func TestBootstrapFailureDoesNotCrashAndRetries(t *testing.T) {
 
 	if m.Token() == "" || fake.codeCalls < 2 {
 		t.Fatalf("bootstrap should be retried (token=%q, code calls=%d)", m.Token(), fake.codeCalls)
+	}
+}
+
+func TestRotationAfterAPVMBGRestartFallsBackToBootstrap(t *testing.T) {
+	t.Parallel()
+
+	m, fake := newTestManager(t, 60)
+	if err := m.load(); err != nil {
+		t.Fatal(err)
+	}
+
+	fake.restart() // the stored refresh token is now unknown to PVMBG
+
+	if err := m.rotate(); err != nil {
+		t.Fatalf("rotation must recover through a fresh bootstrap, got %v", err)
+	}
+
+	if m.LastError() != nil || m.Token() != "access-2" {
+		t.Fatalf("expected the new pair in use, got token=%q last=%v", m.Token(), m.LastError())
+	}
+
+	if got := readTokenFile(t, m.path); got.AccessToken != "access-2" || got.RefreshToken != "refresh-2" {
+		t.Fatalf("the new pair must be persisted, got %+v", got)
+	}
+
+	fake.mu.Lock()
+	calls := fake.codeCalls
+	fake.mu.Unlock()
+
+	if calls != 2 {
+		t.Fatalf("expected the one-time code once at start and once in the fallback, got %d", calls)
+	}
+
+	// The normal path is back: the next rotation uses the new refresh token, no code.
+	if err := m.rotate(); err != nil || m.Token() != "access-3" {
+		t.Fatalf("expected a normal rotation afterwards, got token=%q err=%v", m.Token(), err)
+	}
+}
+
+func TestAFailedFallbackKeepsTheStoredToken(t *testing.T) {
+	t.Parallel()
+
+	m, fake := newTestManager(t, 60)
+	if err := m.load(); err != nil {
+		t.Fatal(err)
+	}
+
+	// PVMBG did not restart: it rejects the refresh token and still remembers the code.
+	fake.mu.Lock()
+	fake.reject = true
+	fake.mu.Unlock()
+
+	if err := m.rotate(); !errors.Is(err, errInvalidGrant) {
+		t.Fatalf("expected the fallback to fail with invalid_grant, got %v", err)
+	}
+
+	if m.Token() != firstAccess || readTokenFile(t, m.path).RefreshToken != firstRefresh {
+		t.Fatal("a failed fallback must leave the stored pair untouched")
 	}
 }

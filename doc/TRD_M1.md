@@ -205,7 +205,7 @@ Urutan wajib yang bisa didemokan: sistem dinyalakan → gateway bekerja normal d
 | Kondisi pemicu | `PVMBG_TOKEN_VOLUME_PATH` kosong/belum ada saat Aggregator start (belum pernah bootstrap sebelumnya) |
 | Processing | Aggregator memanggil `POST /oauth/token` PVMBG dengan `grant_type=authorization_code`, `code=PVMBG_ONE_TIME_CODE` (nilai tetap dari env, §2), header `Authorization: Basic base64(client_id:client_secret)` |
 | Hasil | `access_token`, `refresh_token`, `expires_in` diterima, ditulis ke `PVMBG_TOKEN_VOLUME_PATH` (lihat field yang dipersist di bawah) |
-| Setelah bootstrap | `PVMBG_ONE_TIME_CODE` tidak dipakai lagi selama volume token tidak dihapus — seluruh perolehan token berikutnya lewat rotasi refresh token |
+| Setelah bootstrap | `PVMBG_ONE_TIME_CODE` tidak dipakai lagi selama volume token tidak dihapus — seluruh perolehan token berikutnya lewat rotasi refresh token, kecuali pada pemulihan di bawah |
 
 **Rotasi (setiap kali access token mendekati kedaluwarsa):**
 
@@ -215,6 +215,7 @@ Urutan wajib yang bisa didemokan: sistem dinyalakan → gateway bekerja normal d
 | Processing | Aggregator memanggil `POST /oauth/token` PVMBG dengan `grant_type=refresh_token` dan `refresh_token` yang tersimpan saat ini, header `Authorization: Basic base64(client_id:client_secret)` |
 | Hasil | Access token dan refresh token baru diterima, menggantikan token lama di `PVMBG_TOKEN_VOLUME_PATH` sebelum dipakai untuk polling berikutnya |
 | Kegagalan rotasi | Refresh token ditolak PVMBG (mis. kedaluwarsa/dicabut) → poller PVMBG mencatat kegagalan, masuk hitungan `consecutive_fail` circuit breaker (§3.3) seperti kegagalan polling biasa |
+| Pemulihan (`invalid_grant`) | PVMBG menolak refresh token dengan `invalid_grant` (refresh token tidak dikenalnya lagi, mis. PVMBG restart dan kehilangan token store in-memory beserta catatan bahwa kode sudah dipakai) → Aggregator melakukan bootstrap ulang dengan `PVMBG_ONE_TIME_CODE`, dicatat sebagai event `token bootstrap fallback`. File token lama baru diganti setelah pasangan token baru diterima. Bila bootstrap ulang juga ditolak, kegagalannya diperlakukan seperti kegagalan rotasi di atas dan dicoba lagi pada siklus berikutnya |
 
 **Field yang dipersist di `PVMBG_TOKEN_VOLUME_PATH`:** `access_token`, `refresh_token`, `expires_at` (timestamp absolut, dihitung dari waktu terima + `expires_in` — bukan `expires_in` mentah, agar tidak perlu melacak waktu terima terpisah). Ketiganya ditulis bersamaan setiap kali token diterbitkan/dirotasi, dan dibaca kembali oleh Aggregator setelah restart tanpa mengulang bootstrap.
 
