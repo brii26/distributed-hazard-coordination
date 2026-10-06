@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hazard Coordination</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Hazard Coordination</h1>
+    <button id="logout" hidden>Log out</button>
+  </header>
+  <p id="message" role="status"></p>
+
+  <main>
+    <section id="view-login" hidden>
+      <h2>Log in</h2>
+      <form id="login-form">
+        <label>Email <input name="email" type="email" required autocomplete="username"></label>
+        <label>Password <input name="password" type="password" required autocomplete="current-password"></label>
+        <button>Log in</button>
+      </form>
+      <p>No account? <a href="#register">Register</a></p>
+    </section>
+
+    <section id="view-register" hidden>
+      <h2>Register</h2>
+      <p>Self-service accounts are always Media.</p>
+      <form id="register-form">
+        <label>Email <input name="email" type="email" required autocomplete="username"></label>
+        <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
+        <button>Register</button>
+      </form>
+      <p>Have an account? <a href="#login">Log in</a></p>
+    </section>
+
+    <section id="view-hazards" hidden>
+      <h2>Hazards</h2>
+      <nav>
+        <button data-type="SEISMIC" class="tab">Seismic</button>
+        <button data-type="VOLCANIC" class="tab">Volcanic</button>
+        <span id="source-status"></span>
+      </nav>
+      <div class="table-wrap"><table id="hazards"><thead></thead><tbody></tbody></table></div>
+
+      <details>
+        <summary>Create an account (Operator only)</summary>
+        <form id="account-form">
+          <label>Email <input name="email" type="email" required autocomplete="off"></label>
+          <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
+          <label>Role
+            <select name="role"><option>Lapangan</option><option>Operator</option><option>Media</option></select>
+          </label>
+          <button>Create account</button>
+        </form>
+      </details>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

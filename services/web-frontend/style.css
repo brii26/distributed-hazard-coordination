@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0 auto; max-width: 70rem; padding: 0 1rem 2rem; }
+header { display: flex; justify-content: space-between; align-items: center; }
+form { display: grid; gap: .6rem; max-width: 22rem; margin: 1rem 0; }
+label { display: grid; gap: .2rem; }
+input, select, button { font: inherit; padding: .4rem .6rem; }
+nav { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+.tab[aria-pressed="true"] { font-weight: bold; text-decoration: underline; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid #8884; padding: .3rem .5rem; text-align: left; font-size: .9rem; }
+#message { min-height: 1.4rem; }
+#message.error { color: #c0392b; }

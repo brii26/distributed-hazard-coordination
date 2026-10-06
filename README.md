@@ -46,7 +46,7 @@ Every directory under `services/` is a Go module that the local checks below loo
 docker compose up --build
 ```
 
-Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`; BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
+Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`, the web frontend on `:3000` (see "Web frontend" below); BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
 
 ### Checking that the databases are isolated
 
@@ -55,7 +55,7 @@ Each database sits on an internal network shared only with its owner: `canonical
 With the stack running, probe both databases from every service:
 
 ```bash
-for s in aggregator auth-service bmkg-mock pvmbg-mock rabbitmq client-facing-api dashboard-updater notifier audit-logger; do
+for s in aggregator auth-service bmkg-mock pvmbg-mock rabbitmq client-facing-api web-frontend dashboard-updater notifier audit-logger; do
   echo "$s  canonical-store: $(docker compose exec -T $s sh -c 'nc -zw2 canonical-store 5432 >/dev/null 2>&1 && echo reachable || echo unreachable')" \
           " user-db: $(docker compose exec -T $s sh -c 'nc -zw2 user-db 5432 >/dev/null 2>&1 && echo reachable || echo unreachable')"
 done
@@ -93,6 +93,16 @@ done
 Any non-empty `gofmt -l` output means run `gofmt -w .` in that service directory before committing. `golangci-lint` uses the repo-root `.golangci.yml` (vendored from the `golang-lint` skill) — it's strict on purpose (unchecked errors, missing timeouts on HTTP servers, etc.); fix the underlying issue rather than reaching for a `//nolint` comment unless you can justify it in the comment itself.
 
 If you've changed a `Dockerfile` or added new dependencies, also run `docker build services/<name>` before pushing.
+
+## Web frontend
+
+A static client-side-rendered dashboard (plain HTML/JS/CSS, no build step, no backend of its own) in `services/web-frontend`, served by nginx. After `docker compose up` open <http://localhost:3000>:
+
+- **Log in / Register** (Register always creates a Media account), **Logout**.
+- **Hazards**: Seismic and Volcanic tabs, refreshed by polling every `FRONTEND_POLL_INTERVAL_MS` (default 5000). The raw columns (latitude, longitude, attributes) are drawn only when the API sent them, so a Media session never shows them.
+- **Create an account** (Operator only): the form is always shown because the HttpOnly cookies hide the role from the page; a non-Operator gets a 403 message.
+
+**How the cookies reach the API:** the page and the API share one origin. The frontend's nginx proxies `/auth/*`, `/accounts` and `/hazards` to the Client-Facing API, so the browser attaches the HttpOnly `jwt` and `refresh_token` cookies itself (`credentials: "include"`) and no CORS is needed. `CLIENT_FACING_API_BASE_URL` (baked into `config.js` at image build time, empty by default) only needs setting to call an API on a different origin, which would also need CORS with credentials added to the Client-Facing API. The cookies are `Secure` by default (`COOKIE_SECURE=true`); browsers still accept them on `http://localhost`, but set `COOKIE_SECURE=false` to use another host over plain HTTP. Changing either frontend setting needs `docker compose build web-frontend`.
 
 ## Service-to-service integration tests
 
