@@ -29,11 +29,16 @@ type fakeHazards struct {
 
 	calls *int
 	role  *string
+	got   **aggregatorpb.GetHazardsRequest
 }
 
-func (f fakeHazards) GetHazards(ctx context.Context, _ *aggregatorpb.GetHazardsRequest, _ ...grpc.CallOption) (*aggregatorpb.GetHazardsResponse, error) {
+func (f fakeHazards) GetHazards(ctx context.Context, in *aggregatorpb.GetHazardsRequest, _ ...grpc.CallOption) (*aggregatorpb.GetHazardsResponse, error) {
 	if f.calls != nil {
 		*f.calls++
+	}
+
+	if f.got != nil {
+		*f.got = in
 	}
 
 	if f.role != nil {
@@ -131,7 +136,7 @@ func TestMediaSeesOnlyTheSummaryFields(t *testing.T) {
 		t.Fatalf("Media must get exactly the summary fields %v, got %v", want, got)
 	}
 
-	for _, raw := range []string{"latitude", "longitude", "attributes"} {
+	for _, raw := range []string{"source_ref_id", "latitude", "longitude", "attributes"} {
 		if body := rec.Body.String(); strings.Contains(body, `"`+raw+`"`) {
 			t.Fatalf("a Media response must never carry %s: %s", raw, body)
 		}
@@ -161,7 +166,7 @@ func TestLapanganAndOperatorSeeEveryField(t *testing.T) {
 func TestMediaAskingForARawFieldIsRefusedBeforeTheAggregator(t *testing.T) {
 	t.Parallel()
 
-	for _, fields := range []string{"latitude", "hazard_id,longitude", "attributes"} {
+	for _, fields := range []string{"latitude", "hazard_id,longitude", "attributes", "source_ref_id", "hazard_id,source_ref_id"} {
 		calls := 0
 
 		rec, _ := getHazards(t, fakeHazards{resp: oneEvent(t), calls: &calls}, roleMedia, "type=SEISMIC&fields="+fields)
@@ -252,5 +257,82 @@ func TestRoleIsSentAsMetadata(t *testing.T) {
 
 	if role != roleLapangan {
 		t.Fatalf("expected x-client-role %q, got %q", roleLapangan, role)
+	}
+}
+
+func TestPagingAndSearchReachTheAggregatorAndComeBackAsPage(t *testing.T) {
+	t.Parallel()
+
+	var got *aggregatorpb.GetHazardsRequest
+
+	resp := oneEvent(t)
+	resp.HasMore = true
+
+	rec, body := getHazards(t, fakeHazards{resp: resp, got: &got}, roleMedia, "type=SEISMIC&limit=10&offset=20&severity=AWAS&q=%20aceh%20")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body)
+	}
+
+	if got.GetLimit() != 10 || got.GetOffset() != 20 || got.GetSeverity() != "AWAS" || got.GetQuery() != "aceh" {
+		t.Fatalf("the Aggregator must get the page, filter and trimmed search, got %v", got)
+	}
+
+	page, _ := body["page"].(map[string]any)
+	if page["limit"] != float64(10) || page["offset"] != float64(20) || page["has_more"] != true {
+		t.Fatalf("the response must say which page this is, got %v", body["page"])
+	}
+}
+
+func TestWithoutPagingParamsTheDefaultPageSizeIsUsed(t *testing.T) {
+	t.Parallel()
+
+	var got *aggregatorpb.GetHazardsRequest
+
+	if rec, _ := getHazards(t, fakeHazards{resp: oneEvent(t), got: &got}, roleOperator, "type=SEISMIC"); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	if got.GetLimit() != defaultLimit || got.GetOffset() != 0 {
+		t.Fatalf("expected the default page, got %v", got)
+	}
+}
+
+func TestBadPagingParamsAreRefusedBeforeTheAggregator(t *testing.T) {
+	t.Parallel()
+
+	for _, q := range []string{"limit=0", "limit=101", "limit=abc", "offset=-1", "offset=1.5", "severity=SEVERE", "q=" + strings.Repeat("a", maxQueryLen+1)} {
+		calls := 0
+
+		rec, _ := getHazards(t, fakeHazards{resp: oneEvent(t), calls: &calls}, roleOperator, "type=SEISMIC&"+q)
+		if rec.Code != http.StatusBadRequest || calls != 0 {
+			t.Fatalf("%s: expected 400 without calling the Aggregator, got %d after %d calls", q, rec.Code, calls)
+		}
+	}
+}
+
+func TestMeReportsTheCallersEmailAndRole(t *testing.T) {
+	t.Parallel()
+
+	for _, role := range []string{roleMedia, roleLapangan, roleOperator} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil)
+		req.AddCookie(sessionCookie(cookieJWT, validToken(t, role)))
+
+		rec := httptest.NewRecorder()
+		newVerifier().require(http.HandlerFunc(me)).ServeHTTP(rec, req)
+
+		var body map[string]string
+
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+
+		if rec.Code != http.StatusOK || body["role"] != role || body["email"] == "" {
+			t.Fatalf("%s: expected 200 with the role, got %d %s", role, rec.Code, rec.Body)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	newVerifier().require(http.HandlerFunc(me)).ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/me", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("without a session /me must be 401, got %d", rec.Code)
 	}
 }

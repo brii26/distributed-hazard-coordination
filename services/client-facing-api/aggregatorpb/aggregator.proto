@@ -30,11 +30,17 @@ service Aggregator {
 
 message GetHazardsRequest {
   string hazard_type = 1; // SEISMIC | VOLCANIC
+  // Paging, newest first. limit 0 means the server default; it is capped server-side.
+  int32 limit = 2;
+  int32 offset = 3;
+  string severity = 4; // optional exact filter: NORMAL | WASPADA | SIAGA | AWAS
+  string query = 5;    // optional, matched against area_name (case-insensitive substring)
 }
 
 message GetHazardsResponse {
   repeated HazardEvent data = 1;
   ResponseMeta meta = 2;
+  bool has_more = 3; // another page follows this one
 }
 
 // HazardEvent is the canonical record (TRD 3.2). Fields a source may not give are

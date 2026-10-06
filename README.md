@@ -46,7 +46,7 @@ Every directory under `services/` is a Go module that the local checks below loo
 docker compose up --build
 ```
 
-Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`; BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
+Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`, the web frontend on `:3000` (see "Web frontend" below); BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
 
 ### Checking that the databases are isolated
 
@@ -55,7 +55,7 @@ Each database sits on an internal network shared only with its owner: `canonical
 With the stack running, probe both databases from every service:
 
 ```bash
-for s in aggregator auth-service bmkg-mock pvmbg-mock rabbitmq client-facing-api dashboard-updater notifier audit-logger; do
+for s in aggregator auth-service bmkg-mock pvmbg-mock rabbitmq client-facing-api web-frontend dashboard-updater notifier audit-logger; do
   echo "$s  canonical-store: $(docker compose exec -T $s sh -c 'nc -zw2 canonical-store 5432 >/dev/null 2>&1 && echo reachable || echo unreachable')" \
           " user-db: $(docker compose exec -T $s sh -c 'nc -zw2 user-db 5432 >/dev/null 2>&1 && echo reachable || echo unreachable')"
 done
@@ -93,6 +93,18 @@ done
 Any non-empty `gofmt -l` output means run `gofmt -w .` in that service directory before committing. `golangci-lint` uses the repo-root `.golangci.yml` (vendored from the `golang-lint` skill) — it's strict on purpose (unchecked errors, missing timeouts on HTTP servers, etc.); fix the underlying issue rather than reaching for a `//nolint` comment unless you can justify it in the comment itself.
 
 If you've changed a `Dockerfile` or added new dependencies, also run `docker build services/<name>` before pushing.
+
+## Web frontend
+
+A static single-page app built with SvelteKit (`adapter-static`, no server-side rendering) in `services/web-frontend`, served by nginx. After `docker compose up` open <http://localhost:3000>. Routes:
+
+- `/login`, `/register` (always a Media account), and Log out in the header.
+- `/hazards`: Seismic and Volcanic tabs, a severity filter, and a search box that runs on its own once typing pauses for 350 ms. The browser only ever holds one page: each request asks the API for `limit` (10, 25, 50 or 100 per page) and `offset`, and the page refreshes by polling every `FRONTEND_POLL_INTERVAL_MS` (default 5000). The raw fields (source ref, coordinates, attributes) are drawn only when the API sent them, so a Media session never shows them.
+- `/accounts`: create an account with a chosen role. The header link and the page are for Operators only; the page learns the role from `GET /me` (the cookies are HttpOnly), and the API still refuses anyone else with a 403.
+
+**How the cookies reach the API:** the page and the API share one origin. nginx serves the app and proxies `/api/*` to the Client-Facing API (stripping the prefix), so the browser attaches the HttpOnly `jwt` and `refresh_token` cookies itself (`credentials: "include"`) and no CORS is needed. `CLIENT_FACING_API_BASE_URL` (default `/api`) and `FRONTEND_POLL_INTERVAL_MS` are baked into the static files at image build time; a full URL for the first one calls an API on another origin, which would also need CORS with credentials on the Client-Facing API. Changing either needs `docker compose build web-frontend`. The cookies are `Secure` by default (`COOKIE_SECURE=true`); browsers still accept them on `http://localhost`, but set `COOKIE_SECURE=false` to use another host over plain HTTP.
+
+The page follows the light or dark setting of the browser. Paging, the severity filter and the search are done by the API and the Canonical Store, not the browser. The API gives no total: it asks the store for one extra row to know whether another page follows. `OFFSET` and the substring search get slower on very large tables; the code notes the upgrade (keyset paging and a trigram index).
 
 ## Service-to-service integration tests
 

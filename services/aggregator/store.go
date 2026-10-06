@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
@@ -121,12 +122,27 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 	return changed, tx.Commit()
 }
 
-// listByType returns every stored event of one hazard type, newest first.
-// ponytail: no pagination, the whole type is returned in one response; fine for
-// the mock-sized data set. Add a limit or paging before real volumes.
-func (s *store) listByType(ctx context.Context, hazardType string) (_ []HazardEvent, err error) {
+// listQuery is one page of one hazard type. Severity and Search are optional
+// filters: Search is a case-insensitive substring of area_name.
+type listQuery struct {
+	HazardType string
+	Severity   string
+	Search     string
+	Limit      int
+	Offset     int
+}
+
+// likeEscaper makes a user's search text literal inside LIKE (ESCAPE '\').
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// listByType returns one page of a hazard type, newest first, and whether another
+// page follows (it asks for one extra row instead of counting the whole type).
+// ponytail: OFFSET still walks the skipped rows and the substring search is a
+// scan over the type; at millions of rows move to keyset paging
+// (occurred_at, hazard_id) and a pg_trgm index on area_name.
+func (s *store) listByType(ctx context.Context, q listQuery) (_ []HazardEvent, _ bool, err error) {
 	start := time.Now()
-	defer func() { logCall(ctx, "canonical-store list "+hazardType, start, err) }()
+	defer func() { logCall(ctx, "canonical-store list "+q.HazardType, start, err) }()
 
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
@@ -134,9 +150,14 @@ func (s *store) listByType(ctx context.Context, hazardType string) (_ []HazardEv
 	rows, err := s.db.QueryContext(ctx, `
 SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
        latitude, longitude, occurred_at, ingested_at, attributes
-FROM hazard_events WHERE hazard_type = $1 ORDER BY occurred_at DESC`, hazardType)
+FROM hazard_events
+WHERE hazard_type = $1
+  AND ($2::text = '' OR severity = $2::text)
+  AND ($3::text = '' OR area_name ILIKE '%' || $3::text || '%' ESCAPE '\')
+ORDER BY occurred_at DESC, hazard_id
+LIMIT $4 OFFSET $5`, q.HazardType, q.Severity, likeEscaper.Replace(q.Search), q.Limit+1, q.Offset)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	defer func() { _ = rows.Close() }()
@@ -154,7 +175,7 @@ FROM hazard_events WHERE hazard_type = $1 ORDER BY occurred_at DESC`, hazardType
 
 		if err := rows.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &severity, &area,
 			&lat, &lon, &h.OccurredAt, &h.IngestedAt, &attrs); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 
 		if severity.Valid {
@@ -175,14 +196,23 @@ FROM hazard_events WHERE hazard_type = $1 ORDER BY occurred_at DESC`, hazardType
 
 		if len(attrs) > 0 {
 			if err := json.Unmarshal(attrs, &h.Attributes); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 		}
 
 		out = append(out, h)
 	}
 
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	more := len(out) > q.Limit
+	if more {
+		out = out[:q.Limit]
+	}
+
+	return out, more, nil
 }
 
 // ping reports whether the Canonical Store answers, for the health check.

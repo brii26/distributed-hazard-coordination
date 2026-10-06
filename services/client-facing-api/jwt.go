@@ -58,6 +58,10 @@ type jwtVerifier struct {
 	// limiter, when set, rate-limits every protected route per client (#28). It
 	// wraps next, so it applies after a refresh too.
 	limiter *rateLimiter
+	// clear, when set, expires both session cookies on a response. The browser
+	// cannot do it itself (they are HttpOnly), so every 401 the middleware sends
+	// for a request that carried a cookie uses it: a dead token is gone at once.
+	clear func(w http.ResponseWriter)
 }
 
 func newJWTVerifier(secret []byte) *jwtVerifier {
@@ -123,7 +127,7 @@ func (v *jwtVerifier) require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(cookieJWT)
 		if err != nil || cookie.Value == "" {
-			unauthorized(w)
+			v.reject(w, r)
 
 			return
 		}
@@ -136,9 +140,18 @@ func (v *jwtVerifier) require(next http.Handler) http.Handler {
 		case errors.Is(err, errExpiredToken) && v.refresh != nil && hasCookie(r, cookieRefresh):
 			v.refresh(w, r, next)
 		default:
-			unauthorized(w)
+			v.reject(w, r)
 		}
 	})
+}
+
+// reject answers 401 and, when the request carried a session cookie, expires both.
+func (v *jwtVerifier) reject(w http.ResponseWriter, r *http.Request) {
+	if v.clear != nil && (hasCookie(r, cookieJWT) || hasCookie(r, cookieRefresh)) {
+		v.clear(w)
+	}
+
+	unauthorized(w)
 }
 
 func hasCookie(r *http.Request, name string) bool {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -349,7 +350,7 @@ func TestListByTypeReturnsOnlyThatTypeWithNullsKept(t *testing.T) { //nolint:goc
 		}
 	}
 
-	got, err := s.listByType(context.Background(), typeSeismic)
+	got, _, err := s.listByType(context.Background(), listQuery{HazardType: typeSeismic, Limit: maxPageLimit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +375,7 @@ func TestListByTypeReturnsOnlyThatTypeWithNullsKept(t *testing.T) { //nolint:goc
 		t.Fatalf("expected the bare event with its nulls kept, got %+v", found)
 	}
 
-	vol, err := s.listByType(context.Background(), typeVolcanic)
+	vol, _, err := s.listByType(context.Background(), listQuery{HazardType: typeVolcanic, Limit: maxPageLimit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,6 +383,64 @@ func TestListByTypeReturnsOnlyThatTypeWithNullsKept(t *testing.T) { //nolint:goc
 	for _, h := range vol {
 		if h.SourceRefID == volcanic && (h.Severity == nil || *h.Severity != severityWaspada || h.Attributes["eruption_count_24h"] != 4.0) {
 			t.Fatalf("full event came back wrong: %+v", h)
+		}
+	}
+}
+
+func TestListByTypePagesFiltersAndSearchesLiterally(t *testing.T) {
+	t.Parallel()
+
+	s := testStore(t, 5)
+	tag := fmt.Sprintf("Zz%d", time.Now().UnixNano()) // keeps this test's rows apart from the shared table
+
+	// Five volcanic events, one minute apart, newest last inserted first in the list.
+	for i, name := range []string{tag + " Alpha", tag + " Beta", tag + " 100% Gamma", tag + " Delta_x", tag + " Epsilon"} {
+		h := hazard(sourcePVMBG, ref(t, s))
+		h.AreaName = &name
+		h.OccurredAt = pastTime.Add(time.Duration(i) * time.Minute)
+
+		if i%2 == 0 {
+			sev := "AWAS"
+			h.Severity = &sev
+		}
+
+		if _, err := s.upsert(context.Background(), h); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page := func(q listQuery) ([]string, bool) {
+		q.HazardType = typeVolcanic
+
+		got, more, err := s.listByType(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		names := make([]string, 0, len(got))
+		for _, e := range got {
+			names = append(names, strings.TrimPrefix(*e.AreaName, tag+" "))
+		}
+
+		return names, more
+	}
+
+	for _, c := range []struct {
+		name     string
+		q        listQuery
+		want     []string
+		wantMore bool
+	}{
+		{"first page, newest first, more to come", listQuery{Search: tag, Limit: 2}, []string{"Epsilon", "Delta_x"}, true},
+		{"last page, the remainder", listQuery{Search: tag, Limit: 2, Offset: 4}, []string{"Alpha"}, false},
+		{"search ignores case", listQuery{Search: strings.ToLower(tag + " beta"), Limit: 10}, []string{"Beta"}, false},
+		{"a percent sign is literal", listQuery{Search: tag + " 100%", Limit: 10}, []string{"100% Gamma"}, false},
+		{"an underscore is literal", listQuery{Search: tag + " Delta_", Limit: 10}, []string{"Delta_x"}, false},
+		{"an underscore matches no other character", listQuery{Search: tag + " Alpha_", Limit: 10}, []string{}, false},
+		{"severity filter", listQuery{Search: tag, Severity: "AWAS", Limit: 10}, []string{"Epsilon", "100% Gamma", "Alpha"}, false},
+	} {
+		if got, more := page(c.q); !slices.Equal(got, c.want) || more != c.wantMore {
+			t.Fatalf("%s: got %v more=%v, want %v more=%v", c.name, got, more, c.want, c.wantMore)
 		}
 	}
 }

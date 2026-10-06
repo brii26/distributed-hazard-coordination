@@ -39,6 +39,7 @@ func (a *authAPI) register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/register", a.signup)
 
 	if a.verifier != nil {
+		mux.Handle("GET /me", a.verifier.require(http.HandlerFunc(me)))
 		mux.Handle("POST /accounts", a.verifier.require(http.HandlerFunc(a.createAccount)))
 	}
 }

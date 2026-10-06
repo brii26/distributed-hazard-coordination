@@ -181,6 +181,23 @@ services:
       timeout: 3s
       retries: 5
 
+  web-frontend:
+    build:
+      context: ./services/web-frontend
+      args:
+        CLIENT_FACING_API_BASE_URL: ${CLIENT_FACING_API_BASE_URL:-/api}
+        FRONTEND_POLL_INTERVAL_MS: ${FRONTEND_POLL_INTERVAL_MS:-5000}
+    depends_on:
+      client-facing-api:
+        condition: service_healthy
+    ports:
+      - "${WEB_FRONTEND_PORT:-3000}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   dashboard-updater:
     build: ./services/dashboard-updater
     depends_on:

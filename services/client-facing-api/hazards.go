@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -18,8 +22,8 @@ import (
 // The two field classes of doc/TRD_M1.md 4: every role sees the summary, only
 // Tim Lapangan and BNPB Ops see the raw fields.
 var (
-	summaryFields = []string{"hazard_id", "source", "source_ref_id", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
-	rawFields     = []string{"latitude", "longitude", "attributes"}
+	summaryFields = []string{"hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
+	rawFields     = []string{"source_ref_id", "latitude", "longitude", "attributes"}
 )
 
 func fieldsFor(role string) []string {
@@ -69,12 +73,63 @@ func requestedFields(raw, role string) ([]string, error) {
 	return out, nil
 }
 
+// Paging of GET /hazards: the page size a caller gets without asking, and the most it
+// may ask for, so one response never carries the whole table.
+const (
+	defaultLimit = 25
+	maxLimit     = 100
+	maxQueryLen  = 100
+)
+
+// pageParams reads and checks ?limit=, ?offset=, ?severity= and ?q=. Anything out
+// of range is a 400 here, so the Aggregator only ever sees sane values.
+func pageParams(v url.Values) (limit, offset int32, severity, search string, err error) {
+	limit = defaultLimit
+
+	if s := v.Get("limit"); s != "" {
+		n, convErr := strconv.ParseInt(s, 10, 32)
+		if convErr != nil || n < 1 || n > maxLimit {
+			return 0, 0, "", "", fmt.Errorf("limit must be a whole number from 1 to %d", maxLimit)
+		}
+
+		limit = int32(n)
+	}
+
+	if s := v.Get("offset"); s != "" {
+		n, convErr := strconv.ParseInt(s, 10, 32)
+		if convErr != nil || n < 0 {
+			return 0, 0, "", "", errors.New("offset must be a whole number, 0 or more")
+		}
+
+		offset = int32(n)
+	}
+
+	severity = v.Get("severity")
+	if !slices.Contains([]string{"", "NORMAL", "WASPADA", "SIAGA", "AWAS"}, severity) {
+		return 0, 0, "", "", errors.New("severity must be NORMAL, WASPADA, SIAGA or AWAS")
+	}
+
+	search = strings.TrimSpace(v.Get("q"))
+	if utf8.RuneCountInString(search) > maxQueryLen {
+		return 0, 0, "", "", fmt.Errorf("q must be at most %d characters", maxQueryLen)
+	}
+
+	return limit, offset, severity, search, nil
+}
+
 func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, _ := claimsFrom(r.Context())
 	typ, rawFieldList := r.URL.Query().Get("type"), r.URL.Query().Get("fields")
 
 	if typ != "SEISMIC" && typ != "VOLCANIC" {
 		writeJSON(w, http.StatusBadRequest, errBody("type must be SEISMIC or VOLCANIC"))
+
+		return
+	}
+
+	limit, offset, severity, search, err := pageParams(r.URL.Query())
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody(err.Error()))
 
 		return
 	}
@@ -101,7 +156,9 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// correlation ID is added by the connection's interceptor (logOutbound).
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-client-role", claims.Role)
 
-	resp, err := h.agg.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{HazardType: typ})
+	resp, err := h.agg.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{
+		HazardType: typ, Limit: limit, Offset: offset, Severity: severity, Query: search,
+	})
 	if err != nil {
 		hazardsFailed(r.Context(), w, err)
 
@@ -113,7 +170,11 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		data = append(data, project(eventJSON(e), fields))
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"data": data, "meta": metaJSON(resp.GetMeta())})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": data,
+		"meta": metaJSON(resp.GetMeta()),
+		"page": map[string]any{"limit": limit, "offset": offset, "has_more": resp.GetHasMore()},
+	})
 }
 
 // hazardsFailed maps the Aggregator's status to the client (TRD 3.3, 3.4).

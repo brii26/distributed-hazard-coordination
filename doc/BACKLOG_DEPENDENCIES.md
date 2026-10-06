@@ -8,8 +8,8 @@ Regenerate after adding/closing issues: `gh issue list --repo brii26/distributed
 
 These have zero dependencies and can be picked up immediately, by anyone, in any order:
 
-- #33 Web Frontend: CSR scaffold (login, register, hazards views)
 - #74 Docs: README run guide, config reference and per-problem scenario triggers
+- #114 Real-time push of new HazardEvents to clients, no polling
 
 ## Full graph
 
@@ -74,9 +74,10 @@ graph TD
   71["#71 bmkg delay"]
   73["#73 db network isolation"]
   94["#94 integration tests: service to service"]
+  114["#114 real-time push of new HazardEvents"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,34,35,36,37,61,69,71,72,73,83,94 done
+  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,61,69,71,72,73,83,94 done
 ```
 
 ## Notes on reading this
