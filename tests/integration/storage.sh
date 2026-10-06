@@ -48,8 +48,8 @@ wait_for() {
   exit 1
 }
 
-wait_for "User DB" docker exec $prefix-userdb pg_isready -h 127.0.0.1 -U "$USER_DB_USER"
-wait_for "Canonical Store" docker exec $prefix-canonical pg_isready -h 127.0.0.1 -U "$CANONICAL_DB_USER"
+wait_for "User DB" docker exec $prefix-userdb pg_isready -h 127.0.0.1 -U "$USER_DB_USER" -d "$USER_DB_NAME"
+wait_for "Canonical Store" docker exec $prefix-canonical pg_isready -h 127.0.0.1 -U "$CANONICAL_DB_USER" -d "$CANONICAL_DB_NAME"
 wait_for "RabbitMQ" docker exec $prefix-rabbitmq rabbitmq-diagnostics -q check_running
 
 status=0

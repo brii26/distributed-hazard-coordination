@@ -1,5 +1,3 @@
-version: "3.9"
-
 # See doc/TRD_M1.md for the full specification each service implements.
 
 services:
@@ -52,7 +50,7 @@ services:
       - canonical_store_data:/var/lib/postgresql/data
       - ./services/aggregator/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${CANONICAL_DB_USER:-aggregator}"]
+      test: ["CMD-SHELL", "pg_isready -U ${CANONICAL_DB_USER:-aggregator} -d ${CANONICAL_DB_NAME:-canonical_store}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -73,7 +71,7 @@ services:
       - user_db_data:/var/lib/postgresql/data
       - ./services/auth-service/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-auth}"]
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-auth} -d ${USER_DB_NAME:-user_db}"]
       interval: 5s
       timeout: 3s
       retries: 5
