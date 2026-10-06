@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -37,7 +38,7 @@ var healthSources = []string{sourceBMKG, sourcePVMBG}
 type readAPI struct {
 	aggregatorpb.UnimplementedAggregatorServer
 
-	list     func(ctx context.Context, hazardType string) ([]HazardEvent, error)
+	list     func(ctx context.Context, q listQuery) ([]HazardEvent, bool, error)
 	ping     func(ctx context.Context) error // the Canonical Store
 	rabbitUp func(ctx context.Context) error
 	breakers map[string]*breaker // by source name
@@ -95,6 +96,51 @@ func caller(ctx context.Context) (correlationID, role string) {
 	return first(metaCorrelationID), first(metaClientRole)
 }
 
+// Page size: the default when a caller sends none, and the cap on what it may ask.
+const (
+	defaultPageLimit = 50
+	maxPageLimit     = 200
+	maxSearchLen     = 100
+)
+
+var severities = map[string]bool{"NORMAL": true, "WASPADA": true, "SIAGA": true, "AWAS": true}
+
+// pageQuery checks a request's paging, filter and search and turns it into a
+// store query. A limit of 0 is the default; a bigger one is capped, not refused.
+func pageQuery(req *aggregatorpb.GetHazardsRequest) (listQuery, error) {
+	limit := int(req.GetLimit())
+
+	switch {
+	case limit < 0:
+		return listQuery{}, status.Error(codes.InvalidArgument, "limit must not be negative")
+	case limit == 0:
+		limit = defaultPageLimit
+	case limit > maxPageLimit:
+		limit = maxPageLimit
+	}
+
+	if req.GetOffset() < 0 {
+		return listQuery{}, status.Error(codes.InvalidArgument, "offset must not be negative")
+	}
+
+	if sev := req.GetSeverity(); sev != "" && !severities[sev] {
+		return listQuery{}, status.Error(codes.InvalidArgument, "severity must be NORMAL, WASPADA, SIAGA or AWAS")
+	}
+
+	search := strings.TrimSpace(req.GetQuery())
+	if utf8.RuneCountInString(search) > maxSearchLen {
+		return listQuery{}, status.Errorf(codes.InvalidArgument, "query must be at most %d characters", maxSearchLen)
+	}
+
+	return listQuery{
+		HazardType: req.GetHazardType(),
+		Severity:   req.GetSeverity(),
+		Search:     search,
+		Limit:      limit,
+		Offset:     int(req.GetOffset()),
+	}, nil
+}
+
 // GetHazards serves one hazard type from the Canonical Store along with the state
 // of its source. A source that is down still serves what is stored (OK, with
 // stale_since set); only a down source with nothing stored is UNAVAILABLE.
@@ -107,7 +153,12 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 		return nil, status.Error(codes.InvalidArgument, "hazard_type must be SEISMIC or VOLCANIC")
 	}
 
-	events, err := a.list(withCorrelation(ctx, id), req.GetHazardType())
+	q, err := pageQuery(req)
+	if err != nil {
+		return nil, err
+	}
+
+	events, more, err := a.list(withCorrelation(ctx, id), q)
 	if err != nil {
 		withID(id).Warn("read api canonical store failed", "method", "GetHazards", "error", err.Error())
 
@@ -116,7 +167,9 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 
 	snap := a.breakers[src].snapshot()
 
-	if len(events) == 0 && snap.Status == statusDown {
+	// Only an unfiltered first page that is empty means "nothing stored".
+	unfiltered := q.Offset == 0 && q.Severity == "" && q.Search == ""
+	if len(events) == 0 && unfiltered && snap.Status == statusDown {
 		return nil, status.Errorf(codes.Unavailable, "%s is down and no %s data is stored", src, req.GetHazardType())
 	}
 
@@ -133,7 +186,7 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 		data = append(data, pb)
 	}
 
-	return &aggregatorpb.GetHazardsResponse{Data: data, Meta: metaOf(snap)}, nil
+	return &aggregatorpb.GetHazardsResponse{Data: data, Meta: metaOf(snap), HasMore: more}, nil
 }
 
 // GetHealth reports each source, the Canonical Store and RabbitMQ. Only the

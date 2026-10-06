@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,8 +32,8 @@ func testAPI(t *testing.T, events map[string][]HazardEvent, maxInflight int) (*r
 	t.Helper()
 
 	api := &readAPI{
-		list: func(_ context.Context, hazardType string) ([]HazardEvent, error) {
-			return events[hazardType], nil
+		list: func(_ context.Context, q listQuery) ([]HazardEvent, bool, error) {
+			return events[q.HazardType], false, nil
 		},
 		ping:     func(context.Context) error { return nil },
 		rabbitUp: func(context.Context) error { return nil },
@@ -161,7 +162,7 @@ func TestStoreErrorIsUnavailableNotUnknown(t *testing.T) {
 	t.Parallel()
 
 	api, c := testAPI(t, nil, 10)
-	api.list = func(context.Context, string) ([]HazardEvent, error) { return nil, errBoom }
+	api.list = func(context.Context, listQuery) ([]HazardEvent, bool, error) { return nil, false, errBoom }
 
 	_, err := c.GetHazards(context.Background(), &aggregatorpb.GetHazardsRequest{HazardType: typeSeismic})
 	if status.Code(err) != codes.Unavailable {
@@ -180,12 +181,12 @@ func TestOverTheCapIsResourceExhaustedAndTheRestFinish(t *testing.T) {
 
 	started := make(chan struct{}, limit)
 	release := make(chan struct{})
-	api.list = func(context.Context, string) ([]HazardEvent, error) {
+	api.list = func(context.Context, listQuery) ([]HazardEvent, bool, error) {
 		started <- struct{}{}
 
 		<-release
 
-		return nil, nil
+		return nil, false, nil
 	}
 
 	call := func() error {
@@ -361,5 +362,48 @@ func TestRESTHealthIsNotHeldUpByTheGRPCCap(t *testing.T) {
 
 	if code, _ := getHealth(t, api); code != http.StatusOK {
 		t.Fatalf("health must answer while the read API is saturated, got %d", code)
+	}
+}
+
+func TestPageQueryDefaultsCapsAndRefuses(t *testing.T) {
+	t.Parallel()
+
+	req := func(limit, offset int32, sev, q string) *aggregatorpb.GetHazardsRequest {
+		return &aggregatorpb.GetHazardsRequest{HazardType: typeSeismic, Limit: limit, Offset: offset, Severity: sev, Query: q}
+	}
+
+	if got, err := pageQuery(req(0, 0, "", "")); err != nil || got.Limit != defaultPageLimit {
+		t.Fatalf("no limit must mean the default, got %+v %v", got, err)
+	}
+
+	if got, err := pageQuery(req(100000, 20, "AWAS", "  aceh ")); err != nil || got.Limit != maxPageLimit || got.Offset != 20 || got.Severity != "AWAS" || got.Search != "aceh" {
+		t.Fatalf("a big limit must be capped and the search trimmed, got %+v %v", got, err)
+	}
+
+	for name, r := range map[string]*aggregatorpb.GetHazardsRequest{
+		"negative limit":  req(-1, 0, "", ""),
+		"negative offset": req(10, -1, "", ""),
+		"unknown level":   req(10, 0, "SEVERE", ""),
+		"long search":     req(10, 0, "", strings.Repeat("a", maxSearchLen+1)),
+	} {
+		if _, err := pageQuery(r); status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("%s: expected INVALID_ARGUMENT, got %v", name, err)
+		}
+	}
+}
+
+func TestAFilteredEmptyPageIsNotNothingStoredWhileTheSourceIsDown(t *testing.T) {
+	t.Parallel()
+
+	api, c := testAPI(t, nil, 10)
+	trip(api, sourceBMKG)
+
+	if _, err := c.GetHazards(context.Background(), &aggregatorpb.GetHazardsRequest{HazardType: typeSeismic}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("an unfiltered empty first page of a down source is UNAVAILABLE, got %v", err)
+	}
+
+	resp, err := c.GetHazards(context.Background(), &aggregatorpb.GetHazardsRequest{HazardType: typeSeismic, Query: "nowhere"})
+	if err != nil || len(resp.GetData()) != 0 {
+		t.Fatalf("a search with no match must be an empty OK page, got %v %v", resp, err)
 	}
 }

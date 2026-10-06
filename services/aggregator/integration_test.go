@@ -85,7 +85,7 @@ func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	t.Helper()
 
-	events, err := e.db.listByType(context.Background(), typ)
+	events, _, err := e.db.listByType(context.Background(), listQuery{HazardType: typ, Limit: maxPageLimit})
 	if err != nil {
 		t.Fatal(err)
 	}

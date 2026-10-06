@@ -20,6 +20,11 @@ func (v *jwtVerifier) withRefresh(a *authAPI) *jwtVerifier {
 		a.refreshAndForward(v, w, r, next)
 	}
 
+	v.clear = func(w http.ResponseWriter) {
+		a.setCookie(w, cookieJWT, "", -1)
+		a.setCookie(w, cookieRefresh, "", -1)
+	}
+
 	return v
 }
 

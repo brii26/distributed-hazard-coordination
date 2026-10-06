@@ -219,3 +219,49 @@ func TestExpiryIsExclusive(t *testing.T) {
 		t.Fatalf("a token one second before exp must be valid, got %v", err)
 	}
 }
+
+// cleared reports which session cookies a response expires.
+func cleared(rec *httptest.ResponseRecorder) map[string]bool {
+	out := map[string]bool{}
+
+	for _, c := range rec.Result().Cookies() {
+		if c.MaxAge < 0 && c.Value == "" {
+			out[c.Name] = true
+		}
+	}
+
+	return out
+}
+
+func TestADeadSessionIsClearedFromTheBrowserAt401(t *testing.T) {
+	t.Parallel()
+
+	api := &authAPI{timeout: time.Second, secure: true, auth: fakeAuth{}}
+	garbage := sessionCookie(cookieJWT, "garbage")
+
+	for name, c := range map[string]struct {
+		cookies []*http.Cookie
+		want    bool
+	}{
+		"tampered token":                    {[]*http.Cookie{garbage, sessionCookie(cookieRefresh, "r")}, true},
+		"tampered token, no refresh cookie": {[]*http.Cookie{garbage}, true},
+		"only a leftover refresh cookie":    {[]*http.Cookie{sessionCookie(cookieRefresh, "r")}, true},
+		"expired and no refresh cookie":     {[]*http.Cookie{sessionCookie(cookieJWT, expiredToken(t))}, true},
+		"no cookies at all":                 {nil, false},
+	} {
+		rec, _, _ := get(newVerifier().withRefresh(api), c.cookies...)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: expected 401, got %d", name, rec.Code)
+		}
+
+		got := cleared(rec)
+
+		if c.want && (!got[cookieJWT] || !got[cookieRefresh]) {
+			t.Fatalf("%s: expected both cookies cleared, got %v", name, got)
+		}
+
+		if !c.want && len(got) != 0 {
+			t.Fatalf("%s: expected no cookie changes, got %v", name, got)
+		}
+	}
+}

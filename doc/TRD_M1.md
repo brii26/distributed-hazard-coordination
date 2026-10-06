@@ -323,10 +323,15 @@ rpc GetHealth(google.protobuf.Empty) returns (HealthStatus)
 
 message GetHazardsRequest {
   string hazard_type = 1;   // SEISMIC | VOLCANIC
+  int32 limit = 2;          // 0 = default 50, dibatasi 200 di server
+  int32 offset = 3;
+  string severity = 4;      // opsional: NORMAL | WASPADA | SIAGA | AWAS
+  string query = 5;         // opsional: substring area_name, case-insensitive
 }
 message GetHazardsResponse {
-  repeated HazardEvent data = 1;
+  repeated HazardEvent data = 1;   // satu halaman, terbaru dulu
   ResponseMeta meta = 2;    // source_status, stale_since, last_success_at
+  bool has_more = 3;        // masih ada halaman berikutnya
 }
 ```
 
@@ -373,7 +378,8 @@ Pemetaan kondisi-respons §3.3 ke gRPC: `OK` dengan `meta.source_status=DOWN` da
 | POST | `/auth/logout` | cookie | invalidasi refresh token |
 | POST | `/auth/register` | body `{email, password}`, tanpa auth | Membuat akun baru dengan role tetap `Media`. `409` bila email sudah terdaftar. |
 | POST | `/accounts` | body `{email, password, role}`, cookie JWT role `Operator` | Membuat akun baru dengan role `Media`\|`Lapangan`\|`Operator` sesuai body. `403` bila caller bukan Operator. `409` bila email sudah terdaftar. |
-| GET | `/hazards?type=SEISMIC\|VOLCANIC` | cookie JWT | `HazardEvent[]` terfilter sesuai role |
+| GET | `/hazards?type=SEISMIC\|VOLCANIC` | cookie JWT | Satu halaman `HazardEvent` terfilter sesuai role, terbaru dulu: `{data, meta, page: {limit, offset, has_more}}`. Parameter opsional: `limit` (1-100, default 25), `offset` (≥0), `severity` (`NORMAL`\|`WASPADA`\|`SIAGA`\|`AWAS`), `q` (maks 100 karakter, substring `area_name`, case-insensitive). Nilai di luar rentang `400`. Tidak ada total: `has_more` didapat dengan meminta satu baris ekstra, sehingga tidak ada `COUNT` atas seluruh tabel. |
+| GET | `/me` | cookie JWT | `{email, role}` dari klaim JWT yang sudah diverifikasi, agar browser (yang tak bisa membaca cookie HttpOnly) tahu role-nya. `401` tanpa sesi. Hanya petunjuk UI: penegakan role tetap di server. |
 | GET | `/health` | — | `{status}` |
 
 **Hak akses per role (ditegakkan server-side):**
@@ -405,7 +411,7 @@ Token = Base64HeaderAndPayload + "." + Signature
 ```
 `exp` bergantung role — Tim Lapangan: `iat + 60` detik (default, configurable).
 
-**Verifikasi per request** (semua endpoint bercookie JWT): signature HMAC-SHA256 + klaim `exp` diverifikasi lokal di Client-Facing API, tanpa call ke Auth Service. Valid → request diteruskan ke Aggregator. Invalid dan `exp` kedaluwarsa → lihat §4.2. Invalid karena sebab lain (signature salah) → `401`.
+**Verifikasi per request** (semua endpoint bercookie JWT): signature HMAC-SHA256 + klaim `exp` diverifikasi lokal di Client-Facing API, tanpa call ke Auth Service. Valid → request diteruskan ke Aggregator. Invalid dan `exp` kedaluwarsa → lihat §4.2. Invalid karena sebab lain (signature salah) → `401`. Setiap `401` dari verifikasi JWT untuk request yang membawa cookie sesi juga menghapus kedua cookie (`jwt`, `refresh_token`) lewat `Set-Cookie` dengan `Max-Age=0`, karena browser tidak bisa menghapus cookie HttpOnly sendiri; frontend lalu langsung mengarahkan ke `/login`.
 
 ### 4.2 Transparent Refresh (dipicu otomatis, bukan endpoint terpisah)
 

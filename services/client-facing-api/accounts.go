@@ -81,6 +81,20 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// me tells the caller who the verified session is: the email and role from the
+// JWT's claims, so a browser (which cannot read its HttpOnly cookies) can show
+// only what its role may use. The server still enforces every role check itself.
+func me(w http.ResponseWriter, r *http.Request) {
+	claims, ok := claimsFrom(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, errBody("unauthorized"))
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"email": claims.Email, "role": claims.Role})
+}
+
 // createFailed answers a failed account creation: a taken email is a 409, a value
 // the Auth Service refuses (empty or oversized input, unknown role) a 400, and
 // anything else is the usual 502/504 for an Auth Service that can't answer.
