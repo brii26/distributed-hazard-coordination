@@ -70,7 +70,7 @@ func (s *authServer) ttlFor(role string) time.Duration {
 }
 
 // tokenResponse signs a JWT for u; the caller supplies the refresh token.
-func (s *authServer) tokenResponse(u user, refreshToken string) (*authpb.TokenResponse, error) {
+func (s *authServer) tokenResponse(ctx context.Context, u user, refreshToken string) (*authpb.TokenResponse, error) {
 	iat := s.now()
 	exp := iat.Add(s.ttlFor(u.Role))
 
@@ -80,7 +80,7 @@ func (s *authServer) tokenResponse(u user, refreshToken string) (*authpb.TokenRe
 		return nil, err
 	}
 
-	log.Printf("jwt issued: role=%s exp=%d", u.Role, exp.Unix())
+	logFor(ctx).Info("jwt issued", "role", u.Role, "exp", exp.Unix())
 
 	return &authpb.TokenResponse{Jwt: jwt, RefreshToken: refreshToken, ExpiresIn: int64(exp.Sub(iat).Seconds())}, nil
 }
@@ -90,7 +90,7 @@ var errInvalidCredentials = status.Error(codes.Unauthenticated, "invalid credent
 func (s *authServer) Login(ctx context.Context, req *authpb.LoginRequest) (*authpb.TokenResponse, error) {
 	u, err := s.store.UserByEmail(ctx, req.GetEmail())
 	if err != nil && !errors.Is(err, errNotFound) {
-		log.Printf("login: store error: %v", err)
+		logFor(ctx).Warn("login store error", "error", err)
 
 		return nil, status.Error(codes.Internal, "internal error")
 	}
@@ -110,17 +110,17 @@ func (s *authServer) Login(ctx context.Context, req *authpb.LoginRequest) (*auth
 	}
 
 	if err := s.store.AddRefreshToken(ctx, refresh, u.ID); err != nil {
-		log.Printf("login: store error: %v", err)
+		logFor(ctx).Warn("login store error", "error", err)
 
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	resp, err := s.tokenResponse(u, refresh)
+	resp, err := s.tokenResponse(ctx, u, refresh)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	log.Printf("login: user_id=%s result=ok", u.ID)
+	logFor(ctx).Info("login", "user_id", u.ID, "result", "ok")
 
 	return resp, nil
 }
@@ -139,24 +139,24 @@ func (s *authServer) Refresh(ctx context.Context, req *authpb.RefreshRequest) (*
 	}
 
 	if err != nil {
-		log.Printf("refresh: store error: %v", err)
+		logFor(ctx).Warn("refresh store error", "error", err)
 
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	resp, err := s.tokenResponse(u, next)
+	resp, err := s.tokenResponse(ctx, u, next)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	log.Printf("refresh: user_id=%s result=rotated", u.ID)
+	logFor(ctx).Info("refresh", "user_id", u.ID, "result", "rotated")
 
 	return resp, nil
 }
 
 func (s *authServer) Logout(ctx context.Context, req *authpb.LogoutRequest) (*emptypb.Empty, error) {
 	if err := s.store.DeleteRefreshToken(ctx, req.GetRefreshToken()); err != nil {
-		log.Printf("logout: store error: %v", err)
+		logFor(ctx).Warn("logout store error", "error", err)
 
 		return nil, status.Error(codes.Internal, "internal error")
 	}
@@ -202,12 +202,12 @@ func (s *authServer) create(ctx context.Context, email, password, role string) e
 	case errors.Is(err, errExists):
 		return status.Error(codes.AlreadyExists, "email already registered")
 	case err != nil:
-		log.Printf("create account: store error: %v", err)
+		logFor(ctx).Warn("create account store error", "error", err)
 
 		return status.Error(codes.Internal, "internal error")
 	}
 
-	log.Printf("account created: user_id=%s role=%s", id, role)
+	logFor(ctx).Info("account created", "user_id", id, "role", role)
 
 	return nil
 }

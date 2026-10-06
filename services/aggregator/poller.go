@@ -153,6 +153,11 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 		return nil, err
 	}
 
+	// The source logs the poll cycle's ID it receives (doc/TRD_M1.md 1, 0.1).
+	if id := correlationOf(ctx); id != "" {
+		req.Header.Set("X-Correlation-ID", id)
+	}
+
 	if err := c.auth(req); err != nil {
 		return nil, err
 	}

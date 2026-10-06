@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -149,5 +150,25 @@ func TestAPollCycleLogsItsCallsAndResultUnderOneCorrelationID(t *testing.T) {
 
 	if call["status"] != "failure" || poll["result"] != "failure" {
 		t.Fatalf("expected a failed call and a failed poll, got %v / %v", call, poll)
+	}
+}
+
+func TestPollsSendTheCycleIDToTheSource(t *testing.T) {
+	got := make(chan string, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get("X-Correlation-ID")
+
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+
+	c := &sourceClient{baseURL: srv.URL, timeout: time.Second, client: srv.Client(), auth: func(*http.Request) error { return nil }}
+	if _, err := c.records(withCorrelation(context.Background(), "cycle-7"), "/seismic-events", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if id := <-got; id != "cycle-7" {
+		t.Fatalf("the source must receive the cycle's ID, got %q", id)
 	}
 }

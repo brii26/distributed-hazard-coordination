@@ -113,7 +113,7 @@ func newMux(store *tokenStore, adminKey string, reports *reportStore, minDelay, 
 	mux.HandleFunc("POST /admin/schema-version", requireAdminKey(adminKey, schemaVersionHandler))
 	mux.HandleFunc("GET /volcanic-reports", requireBearer(store, reportsHandler(reports, minDelay, maxDelay)))
 
-	return withOutage(mux)
+	return withRequestLog(withOutage(mux))
 }
 
 // resolvePort validates a raw port value (as read from the PORT env var),
