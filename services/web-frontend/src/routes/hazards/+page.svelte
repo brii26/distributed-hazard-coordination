@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { api, pollIntervalMs } from '../../lib/api.js';
+  import { api, base, pollIntervalMs } from '../../lib/api.js';
   import { clearSession, session } from '../../lib/session.svelte.js';
 
   const SIZES = [10, 25, 50, 100]; // the API refuses more than 100 per page
@@ -20,6 +20,7 @@
   let pageNo = $state(1);
   let size = $state(25);
   let now = $state(Date.now());
+  let live = $state(false); // the push stream is connected
   let seq = 0;
 
   const offset = $derived((pageNo - 1) * size);
@@ -93,6 +94,25 @@
     pageNo = 1;
   }
 
+  // Push: the server sends an event the moment it exists, and the list reloads so
+  // paging, filter and search stay right. EventSource reconnects on its own; events
+  // missed while it was down are not replayed, the reload on reconnect picks them up.
+  // Polling below stays as the fallback.
+  $effect(() => {
+    if (!session.loggedIn) return;
+    const es = new EventSource(`${base}/hazards/stream?type=${type}`, { withCredentials: true });
+    es.onopen = () => {
+      live = true;
+      load();
+    };
+    es.onmessage = () => load();
+    es.onerror = () => {
+      live = false;
+    };
+
+    return () => es.close();
+  });
+
   onMount(() => {
     const timer = setInterval(load, pollIntervalMs);
     return () => clearInterval(timer);
@@ -116,7 +136,7 @@
     <h1>Hazards</h1>
     <p class="status" role="status">
       {#if meta}
-        Source {meta.source_status}{meta.stale_since ? `, stale since ${when(meta.stale_since)}` : ''}. This page refreshes every {pollIntervalMs / 1000} s.
+        Source {meta.source_status}{meta.stale_since ? `, stale since ${when(meta.stale_since)}` : ''}. {live ? 'Live: new hazards appear as they arrive.' : `Live updates are off; this page refreshes every ${pollIntervalMs / 1000} s.`}
       {:else}
         Loading
       {/if}

@@ -162,6 +162,11 @@ func main() {
 	// /hazards shares the health check's Aggregator connection and timeout.
 	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
 
+	// The push stream (#114) is fed by the Dashboard Updater and is the only public way to it.
+	if upstream := os.Getenv("DASHBOARD_UPDATER_URL"); upstream != "" {
+		mux.Handle("GET /hazards/stream", auth.verifier.require(newStreamAPI(upstream)))
+	}
+
 	// Reparsed as an int purely so the log line below carries a numeric
 	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)

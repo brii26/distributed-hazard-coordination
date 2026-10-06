@@ -1,5 +1,5 @@
 // Baked in at build time (Dockerfile build args), see doc/TRD_M1.md 9.
-const base = import.meta.env.VITE_CLIENT_FACING_API_BASE_URL;
+export const base = import.meta.env.VITE_CLIENT_FACING_API_BASE_URL;
 export const pollIntervalMs = Number(import.meta.env.VITE_FRONTEND_POLL_INTERVAL_MS);
 
 // The session lives in HttpOnly cookies the browser attaches itself (credentials:

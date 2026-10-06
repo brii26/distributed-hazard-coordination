@@ -55,6 +55,7 @@ func newMux(s *state, connected func() bool) *http.ServeMux {
 		events := s.snapshot()
 		writeJSON(w, http.StatusOK, map[string]any{"count": len(events), "events": events})
 	})
+	mux.HandleFunc("GET /stream", s.hub.stream)
 
 	return mux
 }
