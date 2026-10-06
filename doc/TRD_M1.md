@@ -380,8 +380,8 @@ Pemetaan kondisi-respons §3.3 ke gRPC: `OK` dengan `meta.source_status=DOWN` da
 
 | Role | Field yang terlihat |
 |---|---|
-| Media / Pers | Hanya klasifikasi Ringkasan: hazard_id, source, source_ref_id, hazard_type, severity, area_name, occurred_at, ingested_at |
-| Tim Lapangan (BASARNAS/Pemda) | Seluruh field (Ringkasan + Mentah: latitude, longitude, attributes); access token TTL pendek (default 60 detik) |
+| Media / Pers | Hanya klasifikasi Ringkasan: hazard_id, source, hazard_type, severity, area_name, occurred_at, ingested_at |
+| Tim Lapangan (BASARNAS/Pemda) | Seluruh field (Ringkasan + Mentah: source_ref_id, latitude, longitude, attributes); access token TTL pendek (default 60 detik) |
 | BNPB Pusat / Internal Ops | Seluruh field |
 
 Permintaan eksplisit terhadap field mentah oleh client ber-scope Media ditolak `401`/`403`.

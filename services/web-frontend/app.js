@@ -6,7 +6,7 @@ const { apiBase, pollIntervalMs } = window.CONFIG;
 const $ = (id) => document.getElementById(id);
 
 const SUMMARY = ["hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"];
-const RAW = ["latitude", "longitude", "attributes"];
+const RAW = ["source_ref_id", "latitude", "longitude", "attributes"];
 
 let hazardType = "SEISMIC";
 let timer = null;
@@ -49,7 +49,7 @@ function cell(row, text) {
 function render(data) {
   // The API only sends the raw fields to roles allowed to see them, so a Media
   // response has no such keys and no such columns are drawn.
-  const cols = SUMMARY.concat(data.length && RAW[0] in data[0] ? RAW : []);
+  const cols = SUMMARY.concat(data.length && "latitude" in data[0] ? RAW : []);
   const head = document.createElement("tr");
   for (const c of cols) {
     const th = document.createElement("th");

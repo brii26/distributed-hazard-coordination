@@ -18,8 +18,8 @@ import (
 // The two field classes of doc/TRD_M1.md 4: every role sees the summary, only
 // Tim Lapangan and BNPB Ops see the raw fields.
 var (
-	summaryFields = []string{"hazard_id", "source", "source_ref_id", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
-	rawFields     = []string{"latitude", "longitude", "attributes"}
+	summaryFields = []string{"hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
+	rawFields     = []string{"source_ref_id", "latitude", "longitude", "attributes"}
 )
 
 func fieldsFor(role string) []string {

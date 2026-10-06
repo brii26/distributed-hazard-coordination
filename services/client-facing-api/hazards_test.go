@@ -131,7 +131,7 @@ func TestMediaSeesOnlyTheSummaryFields(t *testing.T) {
 		t.Fatalf("Media must get exactly the summary fields %v, got %v", want, got)
 	}
 
-	for _, raw := range []string{"latitude", "longitude", "attributes"} {
+	for _, raw := range []string{"source_ref_id", "latitude", "longitude", "attributes"} {
 		if body := rec.Body.String(); strings.Contains(body, `"`+raw+`"`) {
 			t.Fatalf("a Media response must never carry %s: %s", raw, body)
 		}
@@ -161,7 +161,7 @@ func TestLapanganAndOperatorSeeEveryField(t *testing.T) {
 func TestMediaAskingForARawFieldIsRefusedBeforeTheAggregator(t *testing.T) {
 	t.Parallel()
 
-	for _, fields := range []string{"latitude", "hazard_id,longitude", "attributes"} {
+	for _, fields := range []string{"latitude", "hazard_id,longitude", "attributes", "source_ref_id", "hazard_id,source_ref_id"} {
 		calls := 0
 
 		rec, _ := getHazards(t, fakeHazards{resp: oneEvent(t), calls: &calls}, roleMedia, "type=SEISMIC&fields="+fields)
