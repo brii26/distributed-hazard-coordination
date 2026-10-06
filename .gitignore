@@ -35,3 +35,4 @@ services/*/audit-logger
 
 # local learning scratchpad, never committed
 /playground/
+tests/load/results/
