@@ -9,16 +9,31 @@ Full technical spec: [`doc/TRD_M1.md`](doc/TRD_M1.md). Assignment spec: [`doc/IF
 - Go 1.26+
 - Docker + Docker Compose (only needed for `docker compose up` — not required to build/test an individual service)
 - `git`
+- `curl` and `jq`, for the copy-paste scenario commands below
 
 How you get these on your machine is up to you — a system package manager, `asdf`, whatever. If you'd rather not manage them yourself, this repo happens to include a [devenv](https://devenv.sh/) config (`devenv.nix`) that pins Go, `golangci-lint`, and `gh` for you: `devenv shell` drops you into a shell with all of it on `PATH`. That's just how the maintainers set their own machines up, not something the project requires — every command below is a plain command that works the same whether it's typed directly or inside a devenv shell.
 
-## Setup
+## Run it from a clean clone
 
 ```bash
 git clone https://github.com/brii26/distributed-hazard-coordination.git
 cd distributed-hazard-coordination
-cp .env.example .env  # fill in real values — .env is gitignored, never commit it
+cp .env.example .env                 # the example values work as is for a local run; .env is gitignored
+docker compose up -d --build --wait  # builds every image, returns once every health check passes
+docker compose ps                    # every service "running", the ones with a health check "(healthy)"
 ```
+
+If one of the host ports below is already taken on your machine, change it in `.env` (`CLIENT_FACING_API_PORT`, `WEB_FRONTEND_PORT`, `BMKG_PORT`, `PVMBG_PORT`, `RABBITMQ_MANAGEMENT_PORT`); the scenario commands further down read the ports from there. The first build takes a few minutes. `--wait` returns once every container with a health check reports healthy, so when it exits the stack is ready. Stop it with `docker compose down`; add `-v` to also wipe the databases, the PVMBG token and the consumers' dedup files and start from zero.
+
+| Port | What |
+|---|---|
+| <http://localhost:3000> | Web frontend (log in as `SEED_OPERATOR_EMAIL` / `SEED_OPERATOR_PASSWORD` from `.env`) |
+| <http://localhost:8080> | Client-Facing API, the only public API (`/auth/*`, `/accounts`, `/me`, `/hazards`, `/health`) |
+| <http://localhost:8081> | BMKG mock, to poke it directly (needs `X-BMKG-Key`) |
+| <http://localhost:8082> | PVMBG mock, including the demo switches `/admin/outage` and `/admin/schema-version` (need `X-Admin-Key`) |
+| <http://localhost:15672> | RabbitMQ management UI (`guest` / `guest`) |
+
+The Aggregator, Auth Service, both databases and the consumers publish no host port (doc/TRD_M1.md 0). Their health is reachable from inside the stack, for example `docker compose exec aggregator wget -qO- localhost:8091/health`; every service's `/health` answers `{"status":"ok"|"degraded"|"down",...}`.
 
 ## Repository layout
 
@@ -42,11 +57,7 @@ Every directory under `services/` is a Go module that the local checks below loo
 
 ## Running the full stack
 
-```bash
-docker compose up --build
-```
-
-Waits on health checks before dependent services start (e.g. Aggregator waits on Postgres + RabbitMQ + both mocks). Client-Facing API is exposed on `:8080`, the web frontend on `:3000` (see "Web frontend" below); BMKG/PVMBG mocks on `:8081`/`:8082` if you want to poke them directly.
+`docker compose up --build` (as above) waits on health checks before dependent services start: the Aggregator waits for both Postgres instances, RabbitMQ and both mocks, the Client-Facing API for the Aggregator and the Auth Service, the web frontend for the Client-Facing API.
 
 ### Checking that the databases are isolated
 
@@ -62,6 +73,188 @@ done
 ```
 
 Only `aggregator` reaches `canonical-store` and only `auth-service` reaches `user-db`; everything else says `unreachable`.
+
+## Configuration reference
+
+Every variable in `.env.example`. Compose reads `.env` and passes each one to the services listed; the default applies when the variable is unset. A variable with no default must be set (the example values are fine locally). The spec's per-service list is doc/TRD_M1.md 10.
+
+| Variable | Used by | Default | Meaning |
+|---|---|---|---|
+| `BMKG_PORT` | bmkg-mock | 8081 | Host port of the BMKG mock |
+| `BMKG_API_KEY` | bmkg-mock, aggregator | none | Static key BMKG checks in `X-BMKG-Key` |
+| `BMKG_SEED_COUNT` | bmkg-mock | 20 | Seismic events generated at start |
+| `BMKG_EVENT_INTERVAL_S` | bmkg-mock | 10 | A new seismic event every N seconds |
+| `BMKG_DELAY_MIN_MS` / `BMKG_DELAY_MAX_MS` | bmkg-mock | 50 / 150 | Injected latency per request |
+| `PVMBG_PORT` | pvmbg-mock | 8082 | Host port of the PVMBG mock |
+| `PVMBG_OAUTH_CLIENT_ID` / `PVMBG_OAUTH_CLIENT_SECRET` | pvmbg-mock, aggregator | none | OAuth client credentials (Basic auth on `/oauth/token`) |
+| `PVMBG_ONE_TIME_CODE` | pvmbg-mock, aggregator | none | Authorization code for the first token, accepted once per PVMBG lifetime |
+| `PVMBG_ADMIN_KEY` | pvmbg-mock | none | `X-Admin-Key` for `/admin/outage` and `/admin/schema-version` |
+| `PVMBG_DELAY_MIN_MS` / `PVMBG_DELAY_MAX_MS` | pvmbg-mock | 500 / 3000 | Injected latency per request (Problem 2) |
+| `PVMBG_SEED_COUNT` | pvmbg-mock | 20 | Volcanic reports generated at start |
+| `PVMBG_EVENT_INTERVAL_S` | pvmbg-mock | 10 | A new volcanic report every N seconds |
+| `CANONICAL_DB_USER` / `CANONICAL_DB_PASSWORD` / `CANONICAL_DB_NAME` | canonical-store, aggregator | aggregator / none / canonical_store | Canonical Store credentials and database |
+| `USER_DB_USER` / `USER_DB_PASSWORD` / `USER_DB_NAME` | user-db, auth-service | auth / none / user_db | User DB credentials and database |
+| `RABBITMQ_MANAGEMENT_PORT` | rabbitmq | 15672 | Host port of the RabbitMQ management UI |
+| `RABBITMQ_EXCHANGE` | aggregator, consumers | hazard.events | Fanout exchange name; must match `infra/rabbitmq/definitions.json` |
+| `POLL_INTERVAL_MS` | aggregator | 3000 | Poll interval per source |
+| `POLL_TIMEOUT_MS` | aggregator | 4000 | Timeout of one poll call |
+| `CB_FAILURE_THRESHOLD` | aggregator | 3 | Failed polls in a row before the circuit breaker opens |
+| `CB_OPEN_DURATION_MS` | aggregator | 10000 | How long the breaker stays open before a trial poll |
+| `AGGREGATOR_MAX_INFLIGHT_REQUESTS` | aggregator | 100 | Concurrency cap of the gRPC read API (`RESOURCE_EXHAUSTED` beyond it) |
+| `DB_POOL_SIZE` | aggregator | 20 | Connection pool to the Canonical Store |
+| `JWT_SIGNING_SECRET` | auth-service, client-facing-api | none | Shared HMAC secret for JWTs |
+| `SECRET_SALT` | user-db, auth-service | none | Salt in `sha256(password + salt)`; the User DB seed uses it too |
+| `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Tim Lapangan access token lifetime (seconds) |
+| `SEED_OPERATOR_EMAIL` / `SEED_OPERATOR_PASSWORD` | user-db, auth-service | none | The Operator account created on a fresh User DB |
+| `CLIENT_FACING_API_PORT` | client-facing-api | 8080 | Host port of the public API |
+| `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` | client-facing-api | 100 | Global concurrency cap (429 + `Retry-After` beyond it) |
+| `RATE_LIMIT_RPS` | client-facing-api | 50 | Token bucket per client (account) |
+| `UPSTREAM_TIMEOUT_MS` | client-facing-api | 1000 | Timeout of each call to the Aggregator and the Auth Service |
+| `COOKIE_SECURE` | client-facing-api | true | Mark the `jwt`/`refresh_token` cookies Secure (fine on `http://localhost`) |
+| `WEB_FRONTEND_PORT` | web-frontend | 3000 | Host port of the web frontend |
+| `CLIENT_FACING_API_BASE_URL` | web-frontend (build) | /api | API base the static app calls; `/api` goes through the frontend's own nginx |
+| `FRONTEND_POLL_INTERVAL_MS` | web-frontend (build) | 5000 | How often the hazards page refreshes |
+
+Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8095), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default).
+
+## Test scenarios (Problems 1 to 5)
+
+Run from the repository root with the stack up (`docker compose up -d --build --wait`). Needs `curl` and `jq`. Each block is copy-paste; the expected outcome follows it. Load the values the stack runs with and log in as the seeded Operator once:
+
+```bash
+set -a; . ./.env; set +a
+API=http://localhost:${CLIENT_FACING_API_PORT:-8080}
+BMKG=http://localhost:${BMKG_PORT:-8081}
+PVMBG=http://localhost:${PVMBG_PORT:-8082}
+login() { curl -s -c "$1.jar" -X POST $API/auth/login -d "{\"email\":\"$2\",\"password\":\"$3\"}"; echo; }
+login op "$SEED_OPERATOR_EMAIL" "$SEED_OPERATOR_PASSWORD"   # {"expires_in":...}, cookies saved in op.jar
+```
+
+### Problem 1: schema change at the source
+
+```bash
+curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=3" | jq '[.data[] | {area_name, severity, confidence: .attributes.confidence_level}]'
+curl -s -X POST $PVMBG/admin/schema-version -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # {"schema_version":"extended"}
+sleep 15
+curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=3" | jq '[.data[] | {area_name, severity, confidence: .attributes.confidence_level}]'
+docker compose ps aggregator --format '{{.Status}}'
+```
+
+Before the switch `confidence` is `null`; after it the newest reports carry a value, the older ones are still served unchanged, and the Aggregator's uptime shows it was never restarted. Switch back with the same `POST`.
+
+The same records side by side in the Canonical Store, newest first (also the Problem 4 evidence of records before and after the change):
+
+```bash
+docker compose exec -T canonical-store psql -U "$CANONICAL_DB_USER" -d "$CANONICAL_DB_NAME" -c \
+  "SELECT source_ref_id, severity, attributes ? 'confidence_level' AS has_confidence, ingested_at FROM hazard_events WHERE hazard_type = 'VOLCANIC' ORDER BY ingested_at DESC LIMIT 6"
+```
+
+`has_confidence` is `t` for the reports ingested after the switch and `f` for the ones before, all in one table with no migration.
+
+### Problem 2: slow and failing source
+
+PVMBG latency at 3 s while BMKG stays fast, then the load test:
+
+```bash
+PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 docker compose up -d --wait pvmbg-mock
+for i in 1 2 3 4 5; do curl -s -o /dev/null -w '%{time_total}s\n' -b op.jar "$API/hazards?type=SEISMIC"; done
+tests/load/run.sh   # k6: bmkg_only p95 < 300 ms, mixed 50 connections for 60 s with < 1% errors (429s not counted)
+```
+
+The seismic requests stay well under 300 ms (they never wait on PVMBG). Setting the delay recreates the PVMBG container, which forgets the tokens it issued; the Aggregator notices on its next token rotation and re-authenticates by itself (`token bootstrap fallback` in its log, doc/TRD_M1.md 3.0), so PVMBG data can take up to about a minute to come back after this step. `tests/load/run.sh` brings up its own copy of the stack, prints throughput, p50/p95/p99 and counts per status code, and fails if a threshold fails.
+
+Outage on, stale data, recovery:
+
+```bash
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # {"outage_active":true}
+sleep 20
+curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq .meta   # source_status DOWN, stale_since set, data still served
+curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq .meta    # BMKG still UP
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # {"outage_active":false}
+for i in $(seq 90); do curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq -e '.meta.source_status == "UP"' >/dev/null && { echo "PVMBG UP again after ${i}s"; break; }; sleep 1; done
+curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq .meta   # UP, stale_since null, nothing restarted
+```
+
+With nothing stored for the source the answer is an explicit 503 instead of stale data. To see it, empty the volcanic rows while the outage is on. This deletes the stored volcanic reports (only new ones come back), so run it after the Problem 1 comparison:
+
+```bash
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+sleep 20
+docker compose exec -T canonical-store psql -U "$CANONICAL_DB_USER" -d "$CANONICAL_DB_NAME" -c "DELETE FROM hazard_events WHERE hazard_type = 'VOLCANIC'"
+curl -s -w '\nHTTP %{http_code}\n' -b op.jar "$API/hazards?type=VOLCANIC"   # HTTP 503 with an error body
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # off again; the data comes back
+```
+
+Restore the normal PVMBG latency with `docker compose up -d --wait pvmbg-mock`.
+
+### Problem 3: authentication and per-field access
+
+Each source only accepts its own credentials:
+
+```bash
+curl -s -o /dev/null -w 'BMKG, no key: %{http_code}\n' $BMKG/seismic-events                                    # 401
+curl -s -o /dev/null -w 'BMKG, PVMBG admin key: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_ADMIN_KEY" $BMKG/seismic-events   # 403
+curl -s -o /dev/null -w 'PVMBG, BMKG key as token: %{http_code}\n' -H "Authorization: Bearer $BMKG_API_KEY" $PVMBG/volcanic-reports   # 401
+```
+
+A Media account sees the summary only and is refused raw fields:
+
+```bash
+curl -s -X POST $API/auth/register -d '{"email":"media@demo.example","password":"media-pass-1"}' -w 'register: %{http_code}\n'   # 201 (409 on a rerun)
+login media media@demo.example media-pass-1
+curl -s -b media.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.data[0] | keys'                   # no latitude, longitude, attributes
+curl -s -o /dev/null -w 'Media asks for latitude: %{http_code}\n' -b media.jar "$API/hazards?type=SEISMIC&fields=latitude"   # 403
+```
+
+A Tim Lapangan token expires after `ACCESS_TOKEN_TTL_S` (60 s) and is refreshed behind the next request:
+
+```bash
+curl -s -b op.jar -X POST $API/accounts -d '{"email":"field@demo.example","password":"field-pass-1","role":"Lapangan"}' -w 'create: %{http_code}\n'   # 201 (409 on a rerun)
+login field field@demo.example field-pass-1
+sleep 65
+curl -s -i -b field.jar -c field.jar "$API/hazards?type=SEISMIC&limit=1" | grep -iE '^HTTP|^set-cookie: (jwt|refresh_token)'
+```
+
+The last call answers `200` and sets a new `jwt` and a rotated `refresh_token`: the expired session was refreshed transparently. Sending the old cookies again after this fails with `401`.
+
+### Problem 4: independent services and storage ownership
+
+Stop, rebuild and restart one container while the rest keep running:
+
+```bash
+docker compose stop notifier && docker compose ps --format '{{.Service}} {{.Status}}'   # only the Notifier is stopped
+docker compose up -d --build --no-deps --wait notifier                                  # rebuilt and back, nothing else restarted
+curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.meta.source_status'      # the API kept serving throughout
+```
+
+Records before and after the schema change, side by side in the Canonical Store: see the query at the end of Problem 1.
+
+Storage isolation (only the owner reaches each database): see "Checking that the databases are isolated" above.
+
+### Problem 5: event fan-out to independent consumers
+
+Stop one consumer while publishing continues; its queue keeps the backlog and it catches up when it returns:
+
+```bash
+docker compose stop notifier
+sleep 30
+docker compose exec -T rabbitmq rabbitmqctl list_queues name messages   # notifier's count grows, the others stay near 0
+docker compose start notifier
+sleep 10
+docker compose exec -T rabbitmq rabbitmqctl list_queues name messages   # notifier back near 0
+docker compose logs --since 15s notifier | grep -c '"message processed"'
+```
+
+Add a consumer without touching the producer. The Audit Logger is that consumer: remove it from the running stack, then add it back. The Aggregator is neither changed nor restarted; it only knows the exchange (`services/aggregator` has no reference to any consumer):
+
+```bash
+docker compose rm -sf audit-logger
+docker compose exec -T rabbitmq rabbitmqctl list_queues name   # its queue still exists from earlier runs, or not at all on a fresh stack
+docker compose up -d --wait audit-logger
+sleep 10
+docker compose exec -T audit-logger sh -c 'wc -l /var/lib/audit-logger/audit.log'   # new events logged straight away
+docker compose ps aggregator --format '{{.Status}}'                                 # its uptime shows the producer was not restarted
+```
 
 ## Running a single service locally (without Docker)
 
@@ -127,7 +320,7 @@ Brings up the whole `docker-compose.yml` stack in a separate project, `hazard-sm
 tests/smoke/run.sh
 ```
 
-Needs Docker Compose and curl. It uses `.env.example`, so no `.env` is needed, builds the images, tears everything down afterwards, and publishes its host ports on 28080-28082 and 25672, clear of a normal `docker compose up`. Takes about a minute.
+Needs Docker Compose and curl. It uses `.env.example`, so no `.env` is needed, builds the images, tears everything down afterwards, and publishes its host ports on 28080-28082, 25672 and 23000, clear of a normal `docker compose up`. Takes about a minute.
 
 ## Load test (Problem 2)
 
@@ -141,7 +334,7 @@ tests/load/run.sh
 MIXED_VUS=100 MIXED_DURATION=120s tests/load/run.sh   # a bigger run
 ```
 
-k6 prints throughput, avg/p50/p90/p95/p99 latency, and request counts per status code (200, 401, 429, 500, 502, 503, 504, so 429s are visible apart from real failures). The summary is saved as `tests/load/results/p2-<timestamp>.txt` and `.json` (git-ignored) to paste into the report. The script exits non-zero if a threshold fails. Needs Docker Compose; it uses `.env.example`, so no `.env` is needed, and publishes its host ports on 38080-38082 and 35672. Results depend on the machine it runs on (doc/TRD_M1.md 12).
+k6 prints throughput, avg/p50/p90/p95/p99 latency, and request counts per status code (200, 401, 429, 500, 502, 503, 504, so 429s are visible apart from real failures). The summary is saved as `tests/load/results/p2-<timestamp>.txt` and `.json` (git-ignored) to paste into the report. The script exits non-zero if a threshold fails. Needs Docker Compose; it uses `.env.example`, so no `.env` is needed, and publishes its host ports on 38080-38082, 35672 and 33000. Results depend on the machine it runs on (doc/TRD_M1.md 12).
 
 ## Go workspace notes
 
