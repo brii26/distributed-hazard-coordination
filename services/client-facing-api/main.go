@@ -147,6 +147,9 @@ func main() {
 	mux := newMux(auth)
 	mux.Handle("GET /health", health)
 
+	// /hazards shares the health check's Aggregator connection and timeout.
+	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
+
 	// Reparsed as an int purely so the log line below carries a numeric
 	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
