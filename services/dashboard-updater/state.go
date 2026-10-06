@@ -38,10 +38,11 @@ func severityOf(e HazardEvent) string {
 type state struct {
 	mu     sync.RWMutex
 	events map[string]HazardEvent
+	hub    *hub
 }
 
 func newState() *state {
-	return &state{events: map[string]HazardEvent{}}
+	return &state{events: map[string]HazardEvent{}, hub: newHub()}
 }
 
 // handle upserts one event. Keyed by hazard_id, so a redelivered message just
@@ -60,6 +61,8 @@ func (s *state) handle(m message) outcome {
 	_, existed := s.events[e.HazardID]
 	s.events[e.HazardID] = e
 	s.mu.Unlock()
+
+	s.hub.publish(m.body)
 
 	result := "inserted"
 	if existed {

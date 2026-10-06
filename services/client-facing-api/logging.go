@@ -172,6 +172,10 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.NewResponseController reach the real writer to flush and set
+// deadlines, which the hazard stream needs.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // withCorrelation gives every client request a correlation ID (doc/TRD_M1.md
 // 0.1): the client's X-Correlation-ID when it sends a usable one, a new one
 // otherwise. It is returned in the response header, carried in the context to

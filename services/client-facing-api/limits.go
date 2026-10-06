@@ -27,12 +27,13 @@ func tooMany(w http.ResponseWriter, retryAfter int) {
 
 // capInflight is the global concurrency cap: a semaphore of max slots. A request
 // that finds it full is refused at once with 429, never queued, so overload
-// cannot pile up. /health is exempt, so the healthcheck keeps answering under load.
+// cannot pile up. /health is exempt, so the healthcheck keeps answering under load,
+// and so is the long-lived /hazards/stream, which has its own cap.
 func capInflight(maxInflight int, next http.Handler) http.Handler {
 	sem := make(chan struct{}, maxInflight)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/health" || r.URL.Path == "/hazards/stream" {
 			next.ServeHTTP(w, r)
 
 			return

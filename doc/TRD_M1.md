@@ -436,7 +436,7 @@ Refresh token bersifat stateful, disimpan di tabel `refresh_tokens` milik Auth S
 
 **Logging:** correlation ID dibangkitkan untuk setiap request client masuk dan diteruskan ke semua panggilan keluar; setiap request (role, endpoint, field yang diminta, hasil authorize); setiap kejadian rate-limit/429 (client_id, sisa kapasitas); setiap transparent refresh yang terpicu (client_id, hasil rotasi); durasi tiap panggilan ke Aggregator/Auth Service.
 
-**Konfigurasi:** `PORT=8080` (REST publik), `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`, `JWT_SIGNING_SECRET` (shared dengan Auth Service, internal only), `MAX_INFLIGHT_REQUESTS=100`, `RATE_LIMIT_RPS=50`, `UPSTREAM_TIMEOUT_MS=1000`, `ACCESS_TOKEN_TTL_S=60`, `COOKIE_SECURE=true` (cookie `jwt`/`refresh_token` diberi atribut Secure).
+**Konfigurasi:** `PORT=8080` (REST publik), `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`, `JWT_SIGNING_SECRET` (shared dengan Auth Service, internal only), `MAX_INFLIGHT_REQUESTS=100`, `RATE_LIMIT_RPS=50`, `UPSTREAM_TIMEOUT_MS=1000`, `ACCESS_TOKEN_TTL_S=60`, `COOKIE_SECURE=true` (cookie `jwt`/`refresh_token` diberi atribut Secure), `DASHBOARD_UPDATER_URL` (sumber `GET /hazards/stream`; bila kosong endpoint itu tidak ada).
 
 ---
 
@@ -558,6 +558,7 @@ Setiap consumer adalah service/container tersendiri, dapat di-deploy independen,
 **Dimiliki:** state map in-memory `hazard_id -> HazardEvent`.
 **Idempotensi:** upsert ke state map berkunci `hazard_id`.
 **Ack:** manual, setelah upsert selesai.
+**Push realtime:** `GET /stream` (internal, tidak dipublikasikan ke host) adalah Server-Sent Events: satu frame `data:` berisi `HazardEvent` lengkap (JSON) setiap kali upsert selesai, plus komentar `: keep-alive` tiap 15 detik. Setiap klien punya buffer 64 event; klien yang tertinggal (lambat/mati) diputus, tidak pernah memblokir consumer atau klien lain. Dashboard Updater berdiri sendiri: dihentikan tidak mengganggu Aggregator maupun consumer lain, dan klien mendapat 502 pada stream sampai ia hidup lagi.
 **Batasan diketahui:** state hilang saat restart, tidak ada resync dari API Aggregator saat start.
 
 ### 8.2 Notifier
@@ -601,9 +602,13 @@ Seluruh consumer menggunakan manual acknowledgment — konsekuensinya, setiap co
 
 **Mode rendering:** Client-Side Rendering — server hanya menyajikan berkas statis tanpa logika render; seluruh fetching data dan rendering UI berjalan di browser, memanggil endpoint REST Client-Facing API. Cookie HttpOnly disertakan otomatis oleh browser pada setiap call (`credentials: include`), tanpa frontend perlu membaca/menyimpan token secara eksplisit.
 
-**Endpoint Client-Facing API yang dipakai:** `POST /auth/login`, `POST /auth/logout`, `POST /auth/register`, `POST /accounts` (khusus role Operator), `GET /hazards`.
+**Endpoint Client-Facing API yang dipakai:** `POST /auth/login`, `POST /auth/logout`, `POST /auth/register`, `POST /accounts` (khusus role Operator), `GET /hazards`, `GET /hazards/stream`.
 
-**Update data:** client-side polling ke `GET /hazards` pada interval configurable — bukan push/WebSocket, selaras dengan model polling yang sudah dipakai di sistem (§3.1), tidak menambah mekanisme realtime baru di M1.
+**Update data (push):** frontend membuka `EventSource` ke `GET /hazards/stream?type=` (via Client-Facing API, yang tetap satu-satunya pintu publik). Client-Facing API meneruskan `GET /stream` Dashboard Updater (`DASHBOARD_UPDATER_URL`), menyaring per `type`, dan memproyeksikan field per role seperti `GET /hazards` (Media hanya field ringkasan; Lapangan/Operator semua field). JWT diperiksa sama seperti endpoint lain saat stream dibuka; stream ditutup server saat `exp` token tercapai, sehingga sesi kedaluwarsa tidak bisa mempertahankannya — `EventSource` menyambung ulang otomatis dan middleware me-refresh token secara transparan atau menjawab 401. Stream punya batas jumlah (500) sendiri dan tidak dihitung dalam `MAX_INFLIGHT_REQUESTS`. Terukur pada stack lokal: event muncul di stream ±4 ms setelah `ingested_at` dari Aggregator (event BMKG 2026-10-06, `ingested_at` 15:21:56.6205, diterima 15:21:56.6246).
+
+**Pilihan mekanisme:** SSE, bukan WebSocket — komunikasi hanya satu arah, jalan di atas HTTP biasa melalui nginx dan cookie HttpOnly, dan sambung ulang otomatis sudah ada di browser.
+
+**Klien yang tersambung ulang:** event yang terlewat tidak diputar ulang. Saat stream terbuka (termasuk sambung ulang) frontend memuat ulang `GET /hazards`, yang sumber kebenarannya Canonical Store, jadi daftar kembali lengkap. Tiap event push juga memicu muat ulang itu, sehingga paging, filter, dan pencarian tetap benar. Polling `GET /hazards` pada `FRONTEND_POLL_INTERVAL_MS` tetap berjalan sebagai cadangan bila stream putus.
 
 **Konfigurasi:** `CLIENT_FACING_API_BASE_URL` (di-bake saat build, karena berkas statis), `FRONTEND_POLL_INTERVAL_MS`.
 
@@ -620,6 +625,7 @@ Seluruh consumer menggunakan manual acknowledgment — konsekuensinya, setiap co
 | `MAX_INFLIGHT_REQUESTS` | Aggregator, Client-Facing API | 100 | concurrency cap (masing-masing punya sendiri) |
 | `RATE_LIMIT_RPS` | Client-Facing API | 50 | token bucket per client |
 | `UPSTREAM_TIMEOUT_MS` | Client-Facing API | 1000 | timeout memanggil Aggregator |
+| `DASHBOARD_UPDATER_URL` | Client-Facing API | - | alamat `GET /stream` Dashboard Updater untuk push realtime |
 | `DB_POOL_SIZE` | Aggregator | 20 | connection pool Canonical Store |
 | `ACCESS_TOKEN_TTL_S` | Auth Service, Client-Facing API | 60 | TTL JWT |
 | `PVMBG_DELAY_MIN_MS` / `_MAX_MS` | PVMBG mock | 500 / 3000 | simulasi latensi |
