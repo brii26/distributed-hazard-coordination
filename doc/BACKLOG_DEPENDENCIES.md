@@ -10,7 +10,6 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 
 - #33 Web Frontend: CSR scaffold (login, register, hazards views)
 - #34 Cross-cutting: correlation ID propagation across all services
-- #35 Cross-cutting: health check depth per service
 - #36 Cross-cutting: docker-compose full-stack smoke test
 - #37 Cross-cutting: P2 load-test harness
 
@@ -79,7 +78,7 @@ graph TD
   94["#94 integration tests: service to service"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,61,69,71,72,73,83,94 done
+  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,35,61,69,71,72,73,83,94 done
 ```
 
 ## Notes on reading this
