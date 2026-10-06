@@ -55,6 +55,9 @@ type jwtVerifier struct {
 	// and a refresh_token cookie is present: the transparent refresh (#26). Until
 	// that exists it is nil and an expired token is simply a 401.
 	refresh func(w http.ResponseWriter, r *http.Request, next http.Handler)
+	// limiter, when set, rate-limits every protected route per client (#28). It
+	// wraps next, so it applies after a refresh too.
+	limiter *rateLimiter
 }
 
 func newJWTVerifier(secret []byte) *jwtVerifier {
@@ -113,6 +116,10 @@ func (v *jwtVerifier) verify(token string) (jwtClaims, error) {
 // claims in the context; a validly signed but expired one is handed to refresh when
 // a refresh_token cookie exists; everything else is a 401.
 func (v *jwtVerifier) require(next http.Handler) http.Handler {
+	if v.limiter != nil {
+		next = v.limiter.wrap(next)
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(cookieJWT)
 		if err != nil || cookie.Value == "" {
