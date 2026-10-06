@@ -24,6 +24,12 @@ type fakeAggregator struct {
 	err    error
 }
 
+const (
+	statusConnected    = "connected"
+	statusDisconnected = "disconnected"
+	statusDegraded     = "degraded"
+)
+
 func (f fakeAggregator) GetHealth(context.Context, *emptypb.Empty, ...grpc.CallOption) (*aggregatorpb.HealthStatus, error) {
 	return &aggregatorpb.HealthStatus{Status: f.status}, f.err
 }
@@ -70,12 +76,12 @@ func TestHealthReflectsTheDependencies(t *testing.T) {
 		wantStatus        string
 		wantAgg, wantAuth string
 	}{
-		{"both up", fakeAggregator{status: "ok"}, up, "ok", "connected", "connected"},
-		{"aggregator limping on a dead source is still usable", fakeAggregator{status: "degraded"}, up, "ok", "connected", "connected"},
-		{"aggregator unreachable", fakeAggregator{err: unreachable}, up, "degraded", "disconnected", "connected"},
-		{"aggregator up but its Canonical Store is gone", fakeAggregator{status: "down"}, up, "degraded", "disconnected", "connected"},
-		{"auth service down", fakeAggregator{status: "ok"}, down, "degraded", "connected", "disconnected"},
-		{"both down is still degraded, never down", fakeAggregator{err: unreachable}, down, "degraded", "disconnected", "disconnected"},
+		{"both up", fakeAggregator{status: "ok"}, up, "ok", statusConnected, statusConnected},
+		{"aggregator limping on a dead source is still usable", fakeAggregator{status: statusDegraded}, up, "ok", statusConnected, statusConnected},
+		{"aggregator unreachable", fakeAggregator{err: unreachable}, up, statusDegraded, statusDisconnected, statusConnected},
+		{"aggregator up but its Canonical Store is gone", fakeAggregator{status: "down"}, up, statusDegraded, statusDisconnected, statusConnected},
+		{"auth service down", fakeAggregator{status: "ok"}, down, statusDegraded, statusConnected, statusDisconnected},
+		{"both down is still degraded, never down", fakeAggregator{err: unreachable}, down, statusDegraded, statusDisconnected, statusDisconnected},
 	}
 
 	for _, tt := range tests {

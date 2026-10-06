@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -86,6 +87,7 @@ func find(lines []map[string]any, message string) map[string]any {
 	return nil
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	buf := captureLogs(t)
 
@@ -97,6 +99,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestOutboundCallsLogTargetDurationAndStatus(t *testing.T) {
 	buf := captureLogs(t)
 	ctx := withCorrelation(context.Background(), "cycle-1")
@@ -127,16 +130,19 @@ func TestOutboundCallsLogTargetDurationAndStatus(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestAPollCycleLogsItsCallsAndResultUnderOneCorrelationID(t *testing.T) {
 	buf := captureLogs(t)
 
 	c := &sourceClient{baseURL: "http://127.0.0.1:1", timeout: 200 * time.Millisecond, client: &http.Client{}, auth: func(*http.Request) error { return nil }}
-	p := &poller{name: sourceBMKG, breaker: newBreaker(sourceBMKG, 3, time.Second), out: make(chan pollResult, 1),
+	p := &poller{
+		name: sourceBMKG, breaker: newBreaker(sourceBMKG, 3, time.Second), out: make(chan pollResult, 1),
 		fetch: func(ctx context.Context, since time.Time) (pollResult, error) {
 			_, err := c.records(ctx, "/seismic-events", since)
 
 			return pollResult{}, err
-		}}
+		},
+	}
 
 	p.pollOnce(context.Background())
 
@@ -149,5 +155,26 @@ func TestAPollCycleLogsItsCallsAndResultUnderOneCorrelationID(t *testing.T) {
 
 	if call["status"] != "failure" || poll["result"] != "failure" {
 		t.Fatalf("expected a failed call and a failed poll, got %v / %v", call, poll)
+	}
+}
+
+//nolint:paralleltest // swaps the global logger
+func TestPollsSendTheCycleIDToTheSource(t *testing.T) {
+	got := make(chan string, 1)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get("X-Correlation-ID")
+
+		_, _ = w.Write([]byte("[]"))
+	}))
+	defer srv.Close()
+
+	c := &sourceClient{baseURL: srv.URL, timeout: time.Second, client: srv.Client(), auth: func(*http.Request) error { return nil }}
+	if _, err := c.records(withCorrelation(context.Background(), "cycle-7"), "/seismic-events", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if id := <-got; id != "cycle-7" {
+		t.Fatalf("the source must receive the cycle's ID, got %q", id)
 	}
 }

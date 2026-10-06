@@ -22,7 +22,7 @@ func newTestAuditor(t *testing.T, dir string) *auditor {
 	return &auditor{log: audit, dedup: dedup}
 }
 
-func msgFor(id, severity string, extra string) message {
+func msgFor(id, severity, extra string) message {
 	body := fmt.Sprintf(`{"hazard_id":%q,"severity":%q%s}`, id, severity, extra)
 
 	return message{body: []byte(body), correlationID: "c-" + id}
@@ -32,7 +32,7 @@ func msgFor(id, severity string, extra string) message {
 func lines(t *testing.T, dir string) []entry {
 	t.Helper()
 
-	f, err := os.Open(filepath.Join(dir, "audit.log"))
+	f, err := os.Open(filepath.Join(dir, "audit.log")) //nolint:gosec // dir is the test's own temp dir
 	if err != nil {
 		t.Fatal(err)
 	}

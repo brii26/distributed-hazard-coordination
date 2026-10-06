@@ -26,6 +26,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+//nolint:paralleltest // needs the real broker
 func TestRealBrokerConsumesAcksAndCatchesUpAfterARestart(t *testing.T) {
 	url := os.Getenv("RABBITMQ_TEST_URL")
 	if url == "" {

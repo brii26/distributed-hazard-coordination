@@ -111,6 +111,7 @@ func run() error {
 
 		go func() {
 			defer close(done)
+
 			c.run(ctx)
 		}()
 	}

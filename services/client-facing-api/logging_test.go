@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -40,6 +44,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -67,7 +72,7 @@ func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 
 	var lines []map[string]any
 
-	for _, raw := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatalf("not JSON: %q", raw)
@@ -90,5 +95,98 @@ func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 		if d, _ := l["duration_ms"].(float64); d < 2 {
 			t.Fatalf("call %d: duration_ms must be measured, got %v", i, l["duration_ms"])
 		}
+	}
+}
+
+// serveWithCorrelation runs one request through the correlation middleware and
+// returns the response and the log lines it produced.
+const clientID = "client-abc-123"
+
+func serveWithCorrelation(t *testing.T, header string, inner http.Handler) (*httptest.ResponseRecorder, []map[string]any) {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	setupLogging(&buf)
+	t.Cleanup(func() { setupLogging(os.Stdout) })
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/hazards", nil)
+	if header != "" {
+		req.Header.Set(correlationHeader, header)
+	}
+
+	rec := httptest.NewRecorder()
+	withCorrelation(inner).ServeHTTP(rec, req)
+
+	var lines []map[string]any
+
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("not JSON: %q", raw)
+		}
+
+		lines = append(lines, m)
+	}
+
+	return rec, lines
+}
+
+//nolint:paralleltest // swaps the global logger
+func TestAClientCorrelationIDIsReusedReturnedAndLogged(t *testing.T) {
+	var seen string
+
+	rec, lines := serveWithCorrelation(t, clientID, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = requestID(r.Context())
+		logFor(r.Context()).Info("inside the handler")
+	}))
+
+	if seen != clientID || rec.Header().Get(correlationHeader) != clientID {
+		t.Fatalf("the client's ID must be used and returned, got %q and header %q", seen, rec.Header().Get(correlationHeader))
+	}
+
+	if len(lines) != 2 || lines[0]["correlation_id"] != clientID || lines[1]["message"] != "request" || lines[1]["correlation_id"] != clientID {
+		t.Fatalf("every line of the request must carry its ID, got %v", lines)
+	}
+}
+
+//nolint:paralleltest // swaps the global logger
+func TestAMissingOrUnusableCorrelationIDIsReplaced(t *testing.T) {
+	for _, header := range []string{"", "has spaces", "line\nbreak", strings.Repeat("x", 129)} {
+		var seen string
+
+		rec, _ := serveWithCorrelation(t, header, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { seen = requestID(r.Context()) }))
+
+		if seen == "" || seen == header || !validCorrelation.MatchString(seen) || rec.Header().Get(correlationHeader) != seen {
+			t.Fatalf("header %q: expected a fresh ID in the context and the response, got %q", header, seen)
+		}
+	}
+}
+
+//nolint:paralleltest // swaps the global logger
+func TestTheRequestIDIsForwardedAsGRPCMetadata(t *testing.T) {
+	var buf bytes.Buffer
+
+	setupLogging(&buf)
+	t.Cleanup(func() { setupLogging(os.Stdout) })
+
+	ctx := context.WithValue(context.Background(), requestIDKey{}, "req-42")
+
+	var sent []string
+
+	_ = logOutbound("aggregator:9091")(ctx, "/aggregator.v1.Aggregator/GetHazards", nil, nil, nil,
+		func(ctx context.Context, _ string, _, _ any, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
+			md, _ := metadata.FromOutgoingContext(ctx)
+			sent = md.Get("x-correlation-id")
+
+			return nil
+		})
+
+	if len(sent) != 1 || sent[0] != "req-42" {
+		t.Fatalf("the call must carry the request's ID once, got %v", sent)
+	}
+
+	if !strings.Contains(buf.String(), `"correlation_id":"req-42"`) {
+		t.Fatalf("the outbound call line must carry the request's ID, got %s", buf.String())
 	}
 }

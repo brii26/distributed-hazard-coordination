@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -87,26 +86,24 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			code = http.StatusForbidden
 		}
 
-		log.Printf("hazards role=%s type=%s fields=%q authorize=denied: %v", claims.Role, typ, rawFieldList, err)
+		logFor(r.Context()).Info("hazards request", "role", claims.Role, "type", typ, "fields", rawFieldList, "authorize", "denied", "reason", err.Error())
 		writeJSON(w, code, errBody(err.Error()))
 
 		return
 	}
 
-	log.Printf("hazards role=%s type=%s fields=%q authorize=allowed", claims.Role, typ, rawFieldList)
+	logFor(r.Context()).Info("hazards request", "role", claims.Role, "type", typ, "fields", rawFieldList, "authorize", "allowed")
 
 	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
 	defer cancel()
 
-	// Role and correlation ID travel as gRPC metadata, never as message fields (TRD 0.0).
-	md := metadata.Pairs("x-client-role", claims.Role)
-	if id := r.Header.Get("X-Correlation-ID"); id != "" {
-		md.Append("x-correlation-id", id)
-	}
+	// The role travels as gRPC metadata, never as a message field (TRD 0.0); the
+	// correlation ID is added by the connection's interceptor (logOutbound).
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-client-role", claims.Role)
 
-	resp, err := h.agg.GetHazards(metadata.NewOutgoingContext(ctx, md), &aggregatorpb.GetHazardsRequest{HazardType: typ})
+	resp, err := h.agg.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{HazardType: typ})
 	if err != nil {
-		hazardsFailed(w, err)
+		hazardsFailed(r.Context(), w, err)
 
 		return
 	}
@@ -120,8 +117,8 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // hazardsFailed maps the Aggregator's status to the client (TRD 3.3, 3.4).
-func hazardsFailed(w http.ResponseWriter, err error) {
-	switch status.Code(err) {
+func hazardsFailed(ctx context.Context, w http.ResponseWriter, err error) {
+	switch status.Code(err) { //nolint:exhaustive // every other code is the default 502
 	case codes.Unavailable:
 		// The source is down and nothing is stored: an explicit 503, not a 500 or a hang.
 		writeJSON(w, http.StatusServiceUnavailable, errBody("no data available: "+status.Convert(err).Message()))
@@ -131,7 +128,7 @@ func hazardsFailed(w http.ResponseWriter, err error) {
 	case codes.InvalidArgument:
 		writeJSON(w, http.StatusBadRequest, errBody(status.Convert(err).Message()))
 	case codes.DeadlineExceeded:
-		log.Print("hazards: aggregator timed out")
+		logFor(ctx).Warn("hazards aggregator timed out")
 		writeJSON(w, http.StatusGatewayTimeout, errBody("aggregator timed out"))
 	default:
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -140,7 +137,7 @@ func hazardsFailed(w http.ResponseWriter, err error) {
 			return
 		}
 
-		log.Printf("hazards: aggregator error: %v", err)
+		logFor(ctx).Warn("hazards aggregator error", "error", err)
 		writeJSON(w, http.StatusBadGateway, errBody("aggregator unavailable"))
 	}
 }

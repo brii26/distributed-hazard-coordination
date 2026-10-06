@@ -31,7 +31,7 @@ type fakeHazards struct {
 	role  *string
 }
 
-func (f fakeHazards) GetHazards(ctx context.Context, in *aggregatorpb.GetHazardsRequest, _ ...grpc.CallOption) (*aggregatorpb.GetHazardsResponse, error) {
+func (f fakeHazards) GetHazards(ctx context.Context, _ *aggregatorpb.GetHazardsRequest, _ ...grpc.CallOption) (*aggregatorpb.GetHazardsResponse, error) {
 	if f.calls != nil {
 		*f.calls++
 	}
@@ -46,7 +46,7 @@ func (f fakeHazards) GetHazards(ctx context.Context, in *aggregatorpb.GetHazards
 	return f.resp, f.err
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
 
 var occurred = time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
 
@@ -63,7 +63,7 @@ func oneEvent(t *testing.T) *aggregatorpb.GetHazardsResponse {
 		Data: []*aggregatorpb.HazardEvent{
 			{
 				HazardId: "h1", Source: "BMKG", SourceRefId: "E1", HazardType: "SEISMIC",
-				Severity: ptr("WASPADA"), AreaName: ptr("Sumatera"), Latitude: ptr(-1.5), Longitude: ptr(100.2),
+				Severity: new("WASPADA"), AreaName: new("Sumatera"), Latitude: new(-1.5), Longitude: new(100.2),
 				OccurredAt: timestamppb.New(occurred), IngestedAt: timestamppb.New(occurred.Add(time.Second)), Attributes: attrs,
 			},
 			{HazardId: "h2", Source: "BMKG", SourceRefId: "E2", HazardType: "SEISMIC", OccurredAt: timestamppb.New(occurred), IngestedAt: timestamppb.New(occurred)},
@@ -85,6 +85,7 @@ func getHazards(t *testing.T, f fakeHazards, role, query string) (*httptest.Resp
 	newVerifier().require(hazardsAPI{agg: f, timeout: time.Second}).ServeHTTP(rec, req)
 
 	var body map[string]any
+
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
 
 	return rec, body

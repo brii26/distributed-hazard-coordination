@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -45,7 +44,7 @@ func capInflight(maxInflight int, next http.Handler) http.Handler {
 
 			next.ServeHTTP(w, r)
 		default:
-			log.Printf("rate-limit kind=inflight path=%s remaining=0", r.URL.Path)
+			logFor(r.Context()).Warn("rate-limit", "kind", "inflight", "path", r.URL.Path, "remaining", 0)
 			tooMany(w, 1)
 		}
 	})
@@ -118,7 +117,7 @@ func (l *rateLimiter) wrap(next http.Handler) http.Handler {
 
 		ok, remaining, retryAfter := l.take(claims.Email)
 		if !ok {
-			log.Printf("rate-limit kind=client client_id=%s path=%s remaining=%.2f", claims.Email, r.URL.Path, remaining)
+			logFor(r.Context()).Warn("rate-limit", "kind", "client", "client_id", claims.Email, "path", r.URL.Path, "remaining", remaining)
 			tooMany(w, retryAfter)
 
 			return

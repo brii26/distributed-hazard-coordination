@@ -68,7 +68,7 @@ func (e itEnv) do(t *testing.T, method, path, body string, jar cookies) reply {
 	}
 
 	for name, value := range jar {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
+		req.AddCookie(&http.Cookie{Name: name, Value: value}) //nolint:gosec // a test client replaying the cookies it was given
 	}
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
@@ -157,7 +157,7 @@ func (e itEnv) requireAccountRPCs(t *testing.T) {
 func (e itEnv) newLapangan(t *testing.T) cookies {
 	t.Helper()
 
-	email, password := freshEmail("lapangan"), "pw-lapangan-1"
+	email, password := freshEmail("lapangan"), "pw-lapangan-1" //nolint:gosec // a throwaway test account
 
 	r := e.do(t, http.MethodPost, "/accounts", fmt.Sprintf(`{"email":%q,"password":%q,"role":"Lapangan"}`, email, password), e.operator(t))
 	if r.code != http.StatusCreated {
@@ -218,6 +218,7 @@ func compose(t *testing.T, args ...string) {
 	}
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationLoginSetsHttpOnlyCookiesAndRejectsGenerically(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
@@ -248,6 +249,7 @@ func TestIntegrationLoginSetsHttpOnlyCookiesAndRejectsGenerically(t *testing.T) 
 	}
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationLogoutKillsTheRefreshToken(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
@@ -269,6 +271,7 @@ func TestIntegrationLogoutKillsTheRefreshToken(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationAuthServiceTokenPassesAndSurvivesAuthServiceDown(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
@@ -320,6 +323,7 @@ func waitForLogin(t *testing.T, e itEnv) {
 	t.Fatal("the Auth Service did not come back")
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationExpiredSessionRefreshesTransparently(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
@@ -352,6 +356,7 @@ func TestIntegrationExpiredSessionRefreshesTransparently(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationLostRefreshRaceIsACleanUnauthorized(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
@@ -386,6 +391,7 @@ func TestIntegrationLostRefreshRaceIsACleanUnauthorized(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationRegisterAlwaysGivesMedia(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
@@ -412,6 +418,7 @@ func TestIntegrationRegisterAlwaysGivesMedia(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationAccountsOnlyWorkForAnOperator(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)

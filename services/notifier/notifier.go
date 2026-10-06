@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -40,8 +39,7 @@ type notifier struct {
 // logAlert is the alert channel of this milestone: the TRD names no device
 // gateway, so an alert is a structured log line the demo can point at.
 func logAlert(e HazardEvent, correlationID string) {
-	log.Printf("alert sent correlation_id=%s hazard_id=%s hazard_type=%s severity=%s area=%q",
-		correlationID, e.HazardID, e.HazardType, orDash(e.Severity), orDash(e.AreaName))
+	withID(correlationID).Info("alert sent", "hazard_id", e.HazardID, "hazard_type", e.HazardType, "severity", orDash(e.Severity), "area", orDash(e.AreaName))
 }
 
 // handle alerts on a new (hazard_id, severity) and acks a repeat without alerting.
@@ -51,16 +49,16 @@ func logAlert(e HazardEvent, correlationID string) {
 func (n *notifier) handle(m message) outcome {
 	var e HazardEvent
 	if err := json.Unmarshal(m.body, &e); err != nil || e.HazardID == "" {
-		log.Printf("message received correlation_id=%s result=rejected reason=malformed", m.correlationID)
+		withID(m.correlationID).Warn("message received", "result", "rejected", "reason", "malformed")
 
 		return drop
 	}
 
 	k := dedupKey{e.HazardID, orDash(e.Severity)}
-	log.Printf("message received correlation_id=%s hazard_id=%s severity=%s", m.correlationID, k.hazardID, k.severity)
+	withID(m.correlationID).Info("message received", "hazard_id", k.hazardID, "severity", k.severity)
 
 	if n.dedup.has(k) {
-		log.Printf("message processed correlation_id=%s hazard_id=%s severity=%s result=skipped reason=duplicate", m.correlationID, k.hazardID, k.severity)
+		withID(m.correlationID).Info("message processed", "hazard_id", k.hazardID, "severity", k.severity, "result", "skipped", "reason", "duplicate")
 
 		return ack
 	}
@@ -68,13 +66,13 @@ func (n *notifier) handle(m message) outcome {
 	n.send(e, m.correlationID)
 
 	if err := n.dedup.record(k); err != nil {
-		log.Printf("dedup record failed correlation_id=%s hazard_id=%s: %v", m.correlationID, k.hazardID, err)
+		withID(m.correlationID).Warn("dedup record failed", "hazard_id", k.hazardID, "error", err)
 
 		return requeue
 	}
 
-	log.Printf("dedup record written correlation_id=%s hazard_id=%s severity=%s", m.correlationID, k.hazardID, k.severity)
-	log.Printf("message processed correlation_id=%s hazard_id=%s severity=%s result=processed", m.correlationID, k.hazardID, k.severity)
+	withID(m.correlationID).Info("dedup record written", "hazard_id", k.hazardID, "severity", k.severity)
+	withID(m.correlationID).Info("message processed", "hazard_id", k.hazardID, "severity", k.severity, "result", "processed")
 
 	return ack
 }

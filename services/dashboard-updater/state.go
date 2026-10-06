@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"slices"
 	"strings"
 	"sync"
@@ -50,12 +49,12 @@ func newState() *state {
 func (s *state) handle(m message) outcome {
 	var e HazardEvent
 	if err := json.Unmarshal(m.body, &e); err != nil || e.HazardID == "" {
-		log.Printf("message received correlation_id=%s result=rejected reason=malformed", m.correlationID)
+		withID(m.correlationID).Warn("message received", "result", "rejected", "reason", "malformed")
 
 		return drop
 	}
 
-	log.Printf("message received correlation_id=%s hazard_id=%s severity=%s", m.correlationID, e.HazardID, severityOf(e))
+	withID(m.correlationID).Info("message received", "hazard_id", e.HazardID, "severity", severityOf(e))
 
 	s.mu.Lock()
 	_, existed := s.events[e.HazardID]
@@ -67,7 +66,7 @@ func (s *state) handle(m message) outcome {
 		result = "updated"
 	}
 
-	log.Printf("message processed correlation_id=%s hazard_id=%s result=%s", m.correlationID, e.HazardID, result)
+	withID(m.correlationID).Info("message processed", "hazard_id", e.HazardID, "result", result)
 
 	return ack
 }
@@ -80,6 +79,7 @@ func (s *state) snapshot() []HazardEvent {
 	for _, e := range s.events {
 		out = append(out, e)
 	}
+
 	s.mu.RUnlock()
 
 	slices.SortFunc(out, func(a, b HazardEvent) int {

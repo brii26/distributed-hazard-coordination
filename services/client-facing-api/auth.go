@@ -87,7 +87,7 @@ func (a *authAPI) login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := a.auth.Login(ctx, &authpb.LoginRequest{Email: body.Email, Password: body.Password})
 	if err != nil {
-		a.fail(w, "login", err)
+		a.fail(r.Context(), w, "login", err)
 
 		return
 	}
@@ -115,7 +115,7 @@ func (a *authAPI) logout(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if _, err := a.auth.Logout(ctx, &authpb.LogoutRequest{RefreshToken: c.Value}); err != nil {
-		a.fail(w, "logout", err)
+		a.fail(r.Context(), w, "logout", err)
 
 		return
 	}
@@ -124,15 +124,15 @@ func (a *authAPI) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // fail turns an Auth Service error into the public response.
-func (a *authAPI) fail(w http.ResponseWriter, op string, err error) {
+func (a *authAPI) fail(ctx context.Context, w http.ResponseWriter, op string, err error) {
 	switch {
 	case status.Code(err) == codes.Unauthenticated:
 		writeJSON(w, http.StatusUnauthorized, errBody("invalid credentials"))
 	case errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded:
-		log.Printf("%s: auth service timed out", op)
+		logFor(ctx).Warn("auth service timed out", "op", op)
 		writeJSON(w, http.StatusGatewayTimeout, errBody("authentication service timed out"))
 	default:
-		log.Printf("%s: auth service error: %v", op, err)
+		logFor(ctx).Warn("auth service error", "op", op, "error", err)
 		writeJSON(w, http.StatusBadGateway, errBody("authentication service unavailable"))
 	}
 }

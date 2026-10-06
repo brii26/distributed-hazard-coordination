@@ -169,17 +169,20 @@ func TestStoreErrorIsUnavailableNotUnknown(t *testing.T) {
 	}
 }
 
+const degradedStatus = "degraded"
+
 func TestOverTheCapIsResourceExhaustedAndTheRestFinish(t *testing.T) {
 	t.Parallel()
 
-	const cap = 2
+	const limit = 2
 
-	api, c := testAPI(t, nil, cap)
+	api, c := testAPI(t, nil, limit)
 
-	started := make(chan struct{}, cap)
+	started := make(chan struct{}, limit)
 	release := make(chan struct{})
 	api.list = func(context.Context, string) ([]HazardEvent, error) {
 		started <- struct{}{}
+
 		<-release
 
 		return nil, nil
@@ -193,13 +196,13 @@ func TestOverTheCapIsResourceExhaustedAndTheRestFinish(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	held := make(chan error, cap)
+	held := make(chan error, limit)
 
-	for range cap {
+	for range limit {
 		wg.Go(func() { held <- call() })
 	}
 
-	for range cap {
+	for range limit {
 		<-started // both slots are now in flight
 	}
 
@@ -212,7 +215,7 @@ func TestOverTheCapIsResourceExhaustedAndTheRestFinish(t *testing.T) {
 	close(release)
 	wg.Wait()
 
-	for range cap {
+	for range limit {
 		if err := <-held; err != nil {
 			t.Fatalf("a request within the cap must finish normally, got %v", err)
 		}
@@ -247,9 +250,9 @@ func TestHealthStatus(t *testing.T) {
 		want   string
 	}{
 		{"all up", func(*readAPI) {}, "ok"},
-		{"a source down", func(a *readAPI) { trip(a, sourcePVMBG) }, "degraded"},
-		{"both sources down", func(a *readAPI) { trip(a, sourcePVMBG); trip(a, sourceBMKG) }, "degraded"},
-		{"rabbitmq down", func(a *readAPI) { a.rabbitUp = func(context.Context) error { return errBoom } }, "degraded"},
+		{"a source down", func(a *readAPI) { trip(a, sourcePVMBG) }, degradedStatus},
+		{"both sources down", func(a *readAPI) { trip(a, sourcePVMBG); trip(a, sourceBMKG) }, degradedStatus},
+		{"rabbitmq down", func(a *readAPI) { a.rabbitUp = func(context.Context) error { return errBoom } }, degradedStatus},
 		{"database down", func(a *readAPI) { a.ping = func(context.Context) error { return errBoom } }, "down"},
 	}
 
@@ -311,8 +314,8 @@ func TestRESTHealthStatusAndCode(t *testing.T) {
 		wantCode int
 	}{
 		{"all up", func(*readAPI) {}, "ok", http.StatusOK},
-		{"PVMBG down is still reachable", func(a *readAPI) { trip(a, sourcePVMBG) }, "degraded", http.StatusOK},
-		{"rabbitmq down is degraded", func(a *readAPI) { a.rabbitUp = func(context.Context) error { return errBoom } }, "degraded", http.StatusOK},
+		{"PVMBG down is still reachable", func(a *readAPI) { trip(a, sourcePVMBG) }, degradedStatus, http.StatusOK},
+		{"rabbitmq down is degraded", func(a *readAPI) { a.rabbitUp = func(context.Context) error { return errBoom } }, degradedStatus, http.StatusOK},
 		{"canonical store down", func(a *readAPI) { a.ping = func(context.Context) error { return errBoom } }, "down", http.StatusServiceUnavailable},
 	}
 

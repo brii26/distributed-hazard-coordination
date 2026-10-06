@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -37,6 +38,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestDatabaseCallsLogTargetDurationAndStatus(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -53,7 +55,7 @@ func TestDatabaseCallsLogTargetDurationAndStatus(t *testing.T) {
 
 	var lines []map[string]any
 
-	for _, raw := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatalf("not JSON: %q", raw)

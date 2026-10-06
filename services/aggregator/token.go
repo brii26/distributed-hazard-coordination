@@ -150,7 +150,7 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.client.Timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/oauth/token", strings.NewReader(form.Encode())) //nolint:gosec // baseURL is operator config (PVMBG_BASE_URL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/oauth/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
@@ -158,7 +158,7 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth(m.clientID, m.clientSecret)
 
-	resp, err := m.client.Do(req) //nolint:gosec // see NewRequestWithContext above
+	resp, err := m.client.Do(req)
 	if err != nil {
 		return err
 	}

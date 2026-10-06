@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -85,34 +84,34 @@ type auditor struct {
 func (a *auditor) handle(m message) outcome {
 	var e HazardEvent
 	if err := json.Unmarshal(m.body, &e); err != nil || e.HazardID == "" {
-		log.Printf("message received correlation_id=%s result=rejected reason=malformed", m.correlationID)
+		withID(m.correlationID).Warn("message received", "result", "rejected", "reason", "malformed")
 
 		return drop
 	}
 
 	k := dedupKey{e.HazardID, orDash(e.Severity)}
-	log.Printf("message received correlation_id=%s hazard_id=%s severity=%s", m.correlationID, k.hazardID, k.severity)
+	withID(m.correlationID).Info("message received", "hazard_id", k.hazardID, "severity", k.severity)
 
 	if a.dedup.has(k) {
-		log.Printf("message processed correlation_id=%s hazard_id=%s severity=%s result=skipped reason=duplicate", m.correlationID, k.hazardID, k.severity)
+		withID(m.correlationID).Info("message processed", "hazard_id", k.hazardID, "severity", k.severity, "result", "skipped", "reason", "duplicate")
 
 		return ack
 	}
 
 	if err := a.log.append(m.correlationID, m.body); err != nil {
-		log.Printf("audit append failed correlation_id=%s hazard_id=%s: %v", m.correlationID, k.hazardID, err)
+		withID(m.correlationID).Warn("audit append failed", "hazard_id", k.hazardID, "error", err)
 
 		return requeue
 	}
 
 	if err := a.dedup.record(k); err != nil {
-		log.Printf("dedup record failed correlation_id=%s hazard_id=%s: %v", m.correlationID, k.hazardID, err)
+		withID(m.correlationID).Warn("dedup record failed", "hazard_id", k.hazardID, "error", err)
 
 		return requeue
 	}
 
-	log.Printf("dedup record written correlation_id=%s hazard_id=%s severity=%s", m.correlationID, k.hazardID, k.severity)
-	log.Printf("message processed correlation_id=%s hazard_id=%s severity=%s result=logged", m.correlationID, k.hazardID, k.severity)
+	withID(m.correlationID).Info("dedup record written", "hazard_id", k.hazardID, "severity", k.severity)
+	withID(m.correlationID).Info("message processed", "hazard_id", k.hazardID, "severity", k.severity, "result", "logged")
 
 	return ack
 }

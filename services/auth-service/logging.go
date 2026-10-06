@@ -78,6 +78,11 @@ func correlationOf(ctx context.Context) string {
 	return "-"
 }
 
+// logFor is the logger for one RPC, carrying the caller's correlation ID.
+func logFor(ctx context.Context) *slog.Logger {
+	return base.Load().With("correlation_id", correlationOf(ctx))
+}
+
 // logCall records one outbound call (here: the User DB): target, duration_ms,
 // status, and the cause when it failed (doc/TRD_M1.md 0.3).
 func logCall(ctx context.Context, target string, start time.Time, err error) {
