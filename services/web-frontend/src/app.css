@@ -1,0 +1,184 @@
+/* A hazard bulletin: serif headings and a double rule, like a printed notice, over a
+   quiet paper-and-graphite page with one forest-green accent. System fonts only, the
+   containers load nothing external. Severity is the one multi-color element: a
+   four-step data scale that always carries its name in text. */
+:root {
+  color-scheme: light dark;
+  --paper: #f3f0e8;
+  --card: #fdfcf8;
+  --ink: #1f2226;
+  --muted: #5a5e63;
+  --rule: #d6d1c4;
+  --accent: #1d6a45;
+  --on-accent: #ffffff;
+  --error: #a3231b;
+  --sev-normal: #5d6166;
+  --sev-waspada: #8a6a00;
+  --sev-siaga: #b4540c;
+  --sev-awas: #b3261e;
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #17181a;
+    --card: #202225;
+    --ink: #ebe9e3;
+    --muted: #a3a6a9;
+    --rule: #383b3f;
+    --accent: #6fcf9b;
+    --on-accent: #0c1f15;
+    --error: #ff9d92;
+    --sev-normal: #a9adb2;
+    --sev-waspada: #e8c04a;
+    --sev-siaga: #f19a55;
+    --sev-awas: #ff8579;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 var(--sans);
+}
+
+h1, h2, h3 { font-family: var(--serif); font-weight: 600; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(1.9rem, 4vw, 2.6rem); letter-spacing: -.01em; }
+p { margin: 0; }
+a { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.shell { max-width: 62rem; margin: 0 auto; padding: 0 1.25rem 4rem; }
+
+/* The masthead: name on the left, one double rule under it, the identity of the page. */
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .5rem 2rem;
+  padding: 1.5rem 0 .9rem;
+  border-bottom: 4px double var(--ink);
+  margin-bottom: 2.5rem;
+}
+.brand { font: 600 1.35rem/1 var(--serif); color: var(--ink); text-decoration: none; margin-right: auto; }
+.masthead nav { display: flex; gap: 1.5rem; align-items: center; }
+.masthead nav a { color: var(--muted); text-decoration: none; padding: .5rem 0; border-bottom: 2px solid transparent; }
+.masthead nav a:hover { color: var(--ink); }
+.masthead nav a[aria-current='page'] { color: var(--ink); border-bottom-color: var(--accent); }
+
+button, input, select { font: inherit; color: inherit; }
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: .6rem 1.1rem;
+  min-height: 2.75rem;
+  font-weight: 600;
+}
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.quiet { background: transparent; color: var(--ink); border-color: var(--rule); font-weight: 500; }
+button.quiet:not(:disabled):hover { border-color: var(--muted); }
+
+/* Sign in / register: a short statement of what this is, then the form. */
+.split { display: grid; gap: 2.5rem; }
+@media (min-width: 52rem) { .split { grid-template-columns: 1.1fr 1fr; gap: 4rem; align-items: start; } }
+.lede p { font: 1.25rem/1.5 var(--serif); color: var(--muted); margin-top: 1rem; max-width: 26rem; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 3px; padding: 1.75rem; }
+.card h2 { font-size: 1.4rem; margin-bottom: 1.25rem; }
+form { display: grid; gap: 1.1rem; }
+label, fieldset { display: grid; gap: .35rem; font-weight: 500; }
+fieldset { border: 0; padding: 0; margin: 0; }
+legend { font-weight: 500; padding: 0; margin-bottom: .35rem; }
+input[type='email'], input[type='password'], input[type='search'], select {
+  background: var(--paper);
+  border: 1px solid var(--muted);
+  border-radius: 3px;
+  padding: .55rem .7rem;
+  min-height: 2.75rem;
+  width: 100%;
+}
+.switch { margin-top: 1.25rem; color: var(--muted); }
+.note { margin-top: 1rem; padding: .65rem .85rem; border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 3px; background: var(--card); }
+.note.error { border-left-color: var(--error); color: var(--error); }
+
+.roles { display: grid; gap: .6rem; }
+.role { display: flex; gap: .75rem; align-items: start; padding: .7rem .85rem; border: 1px solid var(--rule); border-radius: 3px; font-weight: 400; cursor: pointer; background: var(--paper); }
+.role:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.role input { margin-top: .3rem; accent-color: var(--accent); }
+.role strong { display: block; font-weight: 600; }
+.role span span { color: var(--muted); font-size: .9rem; }
+
+/* Hazards */
+.head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem 2rem; }
+.status { color: var(--muted); font-size: .92rem; margin-top: .5rem; }
+.seg { display: inline-flex; border: 1px solid var(--ink); border-radius: 3px; overflow: hidden; }
+.seg button { background: transparent; color: var(--ink); border: 0; border-radius: 0; font-weight: 500; }
+.seg button + button { border-left: 1px solid var(--ink); }
+.seg button[aria-pressed='true'] { background: var(--ink); color: var(--paper); }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; margin: 1.75rem 0 1.25rem; }
+.search { flex: 1 1 16rem; max-width: 24rem; }
+.sr { position: absolute; left: -9999px; }
+.levels { display: flex; flex-wrap: wrap; gap: .5rem; }
+.level { display: flex; align-items: center; gap: .5rem; background: var(--card); color: var(--ink); border: 1px solid var(--rule); font-weight: 500; }
+.level[aria-pressed='true'] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.level .dot { width: .6rem; height: .6rem; border-radius: 50%; background: currentColor; align-self: center; }
+.level.AWAS .dot { color: var(--sev-awas); }
+.level.SIAGA .dot { color: var(--sev-siaga); }
+.level.WASPADA .dot { color: var(--sev-waspada); }
+.level.NORMAL .dot { color: var(--sev-normal); }
+
+.feed { list-style: none; margin: 1rem 0 0; padding: 0; border-top: 1px solid var(--ink); }
+.event { border-bottom: 1px solid var(--rule); }
+.event > summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: 6.5rem 1fr auto;
+  gap: .25rem 1rem;
+  align-items: baseline;
+  padding: 1rem .25rem;
+  cursor: pointer;
+}
+.event > summary::-webkit-details-marker { display: none; }
+.event > summary:hover { background: color-mix(in srgb, var(--card) 70%, transparent); }
+.sev { font: 700 .78rem/1 var(--sans); letter-spacing: .06em; }
+.sev.AWAS { color: var(--sev-awas); }
+.sev.SIAGA { color: var(--sev-siaga); }
+.sev.WASPADA { color: var(--sev-waspada); }
+.sev.NORMAL { color: var(--sev-normal); }
+.area { font: 600 1.2rem/1.2 var(--serif); }
+.kind { grid-column: 2; color: var(--muted); font-size: .9rem; }
+.ago { grid-column: 3; grid-row: 1; color: var(--muted); font-size: .9rem; white-space: nowrap; }
+.event[open] > summary { background: var(--card); }
+
+.detail { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1.5rem; margin: 0; padding: 1rem 1rem 1.25rem 7.75rem; background: var(--card); font-size: .92rem; }
+.detail dt { color: var(--muted); }
+.detail dd { margin: 0; overflow-wrap: anywhere; }
+.detail .mono, .detail pre { font-family: var(--mono); font-size: .82rem; }
+.detail pre { margin: 0; white-space: pre-wrap; }
+
+.empty { padding: 3rem 1rem; text-align: center; color: var(--muted); border-bottom: 1px solid var(--rule); }
+.empty strong { display: block; font: 600 1.15rem var(--serif); color: var(--ink); margin-bottom: .3rem; }
+
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; margin-top: 1.25rem; color: var(--muted); font-size: .92rem; }
+.pager .controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.pager label { display: flex; align-items: center; gap: .5rem; font-weight: 400; }
+.pager select { width: auto; min-height: 2.75rem; }
+
+@media (max-width: 40rem) {
+  .shell { padding: 0 1rem 3rem; }
+  .event > summary { grid-template-columns: 1fr auto; }
+  .sev { grid-column: 1; }
+  .area { grid-column: 1 / -1; }
+  .kind { grid-column: 1 / -1; }
+  .ago { grid-column: 2; grid-row: 1; }
+  .detail { grid-template-columns: 1fr; gap: .1rem; padding: 1rem; }
+  .detail dd { margin-bottom: .6rem; }
+}

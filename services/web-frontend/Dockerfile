@@ -1,12 +1,19 @@
 # syntax=docker/dockerfile:1
-FROM nginx:1.27-alpine
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
 
-# Static files: the two settings are baked into config.js at build time.
-ARG CLIENT_FACING_API_BASE_URL=
+# Baked into the static files at build time.
+ARG CLIENT_FACING_API_BASE_URL=/api
 ARG FRONTEND_POLL_INTERVAL_MS=5000
+ENV VITE_CLIENT_FACING_API_BASE_URL=$CLIENT_FACING_API_BASE_URL \
+    VITE_FRONTEND_POLL_INTERVAL_MS=$FRONTEND_POLL_INTERVAL_MS
+RUN npm run build
 
+FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY index.html app.js style.css config.js /usr/share/nginx/html/
-# COPY keeps the host file modes; nginx's worker needs to read them.
-RUN chmod -R a+rX /usr/share/nginx/html \
- && sed -i "s|__CLIENT_FACING_API_BASE_URL__|${CLIENT_FACING_API_BASE_URL}|; s|__FRONTEND_POLL_INTERVAL_MS__|${FRONTEND_POLL_INTERVAL_MS}|" /usr/share/nginx/html/config.js
+COPY --from=build /app/build /usr/share/nginx/html
+# COPY keeps the build stage's modes; nginx's worker needs to read them.
+RUN chmod -R a+rX /usr/share/nginx/html
