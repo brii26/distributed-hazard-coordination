@@ -117,12 +117,27 @@ func (m *tokenManager) load() error {
 }
 
 // rotate exchanges the stored refresh token for a new pair.
+// errInvalidGrant is PVMBG refusing the grant itself (OAuth "invalid_grant"):
+// the refresh token is unknown to it, not a passing failure worth retrying.
+var errInvalidGrant = errors.New("invalid_grant")
+
 func (m *tokenManager) rotate() error {
 	m.mu.RLock()
 	refresh := m.cur.RefreshToken
 	m.mu.RUnlock()
 
-	return m.obtain(grantRefreshToken, url.Values{"refresh_token": {refresh}})
+	err := m.obtain(grantRefreshToken, url.Values{"refresh_token": {refresh}})
+	if !errors.Is(err, errInvalidGrant) {
+		return err
+	}
+
+	// PVMBG no longer knows our refresh token: it restarted and lost its token
+	// store, and with it the record that the one-time code was spent. Retrying the
+	// dead token would fail forever (#117), so bootstrap again (doc/TRD_M1.md 3.0,
+	// recovery). The stored pair is only replaced once a new one is obtained.
+	withID("").Warn("token bootstrap fallback", "reason", "refresh token rejected with invalid_grant")
+
+	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
 // obtain calls PVMBG's token endpoint and, on success, persists the new pair
@@ -171,6 +186,14 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		var oauthErr struct {
+			Error string `json:"error"`
+		}
+
+		if json.Unmarshal(body, &oauthErr) == nil && oauthErr.Error == "invalid_grant" {
+			return fmt.Errorf("token endpoint returned %d: %w", resp.StatusCode, errInvalidGrant)
+		}
+
 		return fmt.Errorf("token endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
