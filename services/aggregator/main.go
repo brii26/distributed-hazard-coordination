@@ -138,12 +138,12 @@ func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*rea
 		return nil, nil, nil, err
 	}
 
-	lis, err := net.Listen("tcp", ":"+port)
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", ":"+port)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	log.Printf("aggregator read api listening on :%s", port)
+	log.Printf("aggregator read api listening on :%s", port) //nolint:gosec // port is validated by resolvePort
 
 	rabbitUp := func(context.Context) error {
 		if !pub.connected() {
@@ -159,7 +159,7 @@ func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*rea
 }
 
 // run starts the Aggregator and returns when it has stopped or failed to start.
-func run() error {
+func run() error { //nolint:gocyclo // start-up wiring, one step after another
 	port, err := resolvePort(os.Getenv("HEALTH_PORT"), defaultPort)
 	if err != nil {
 		return err

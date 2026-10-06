@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -135,7 +136,7 @@ func TestPublishNeverBlocksAndKeepsTheNewestWhenTheBrokerIsGone(t *testing.T) {
 		defer close(done)
 
 		for i := range 50 {
-			p.publish(event(fmt.Sprint(i)), "c")
+			p.publish(event(strconv.Itoa(i)), "c")
 		}
 	}()
 
@@ -270,7 +271,7 @@ func TestShutdownFlushesWhatIsBuffered(t *testing.T) {
 	eventually(t, "connected", p.connected)
 
 	for i := range 5 {
-		p.publish(event(fmt.Sprint(i)), "c")
+		p.publish(event(strconv.Itoa(i)), "c")
 	}
 
 	stop()
@@ -283,7 +284,7 @@ func TestShutdownFlushesWhatIsBuffered(t *testing.T) {
 // TestRealBroker needs a RabbitMQ at RABBITMQ_TEST_URL and skips otherwise. It
 // checks what the fake cannot: the message is persistent, carries the correlation ID
 // as a property, and is confirmed by the broker.
-func TestRealBroker(t *testing.T) {
+func TestRealBroker(t *testing.T) { //nolint:gocyclo // one broker scenario read top to bottom
 	t.Parallel()
 
 	url := os.Getenv("RABBITMQ_TEST_URL")

@@ -87,6 +87,7 @@ func find(lines []map[string]any, message string) map[string]any {
 	return nil
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	buf := captureLogs(t)
 
@@ -98,6 +99,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestOutboundCallsLogTargetDurationAndStatus(t *testing.T) {
 	buf := captureLogs(t)
 	ctx := withCorrelation(context.Background(), "cycle-1")
@@ -128,16 +130,19 @@ func TestOutboundCallsLogTargetDurationAndStatus(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestAPollCycleLogsItsCallsAndResultUnderOneCorrelationID(t *testing.T) {
 	buf := captureLogs(t)
 
 	c := &sourceClient{baseURL: "http://127.0.0.1:1", timeout: 200 * time.Millisecond, client: &http.Client{}, auth: func(*http.Request) error { return nil }}
-	p := &poller{name: sourceBMKG, breaker: newBreaker(sourceBMKG, 3, time.Second), out: make(chan pollResult, 1),
+	p := &poller{
+		name: sourceBMKG, breaker: newBreaker(sourceBMKG, 3, time.Second), out: make(chan pollResult, 1),
 		fetch: func(ctx context.Context, since time.Time) (pollResult, error) {
 			_, err := c.records(ctx, "/seismic-events", since)
 
 			return pollResult{}, err
-		}}
+		},
+	}
 
 	p.pollOnce(context.Background())
 
@@ -153,6 +158,7 @@ func TestAPollCycleLogsItsCallsAndResultUnderOneCorrelationID(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestPollsSendTheCycleIDToTheSource(t *testing.T) {
 	got := make(chan string, 1)
 

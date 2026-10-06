@@ -11,8 +11,10 @@ import (
 func event(id, typ, severity string) HazardEvent {
 	sev := severity
 
-	return HazardEvent{HazardID: id, Source: "BMKG", SourceRefID: "ref-" + id, HazardType: typ, Severity: &sev,
-		OccurredAt: time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC), IngestedAt: time.Date(2026, 10, 1, 10, 0, 1, 0, time.UTC)}
+	return HazardEvent{
+		HazardID: id, Source: "BMKG", SourceRefID: "ref-" + id, HazardType: typ, Severity: &sev,
+		OccurredAt: time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC), IngestedAt: time.Date(2026, 10, 1, 10, 0, 1, 0, time.UTC),
+	}
 }
 
 func msg(t *testing.T, e HazardEvent) message {

@@ -18,7 +18,7 @@ import (
 
 var (
 	schemaOnce sync.Once
-	schemaErr  error
+	errSchema  error
 	seq        atomic.Int64
 )
 
@@ -42,13 +42,13 @@ func testStore(t *testing.T) pgStore {
 
 	schemaOnce.Do(func() {
 		var ddl []byte
-		if ddl, schemaErr = os.ReadFile("migrations/001_users_refresh_tokens.sql"); schemaErr == nil {
-			_, schemaErr = db.ExecContext(context.Background(), string(ddl))
+		if ddl, errSchema = os.ReadFile("migrations/001_users_refresh_tokens.sql"); errSchema == nil {
+			_, errSchema = db.ExecContext(context.Background(), string(ddl))
 		}
 	})
 
-	if schemaErr != nil {
-		t.Fatal(schemaErr)
+	if errSchema != nil {
+		t.Fatal(errSchema)
 	}
 
 	return pgStore{db: db}

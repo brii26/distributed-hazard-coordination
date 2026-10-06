@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -43,6 +44,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -70,7 +72,7 @@ func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 
 	var lines []map[string]any
 
-	for _, raw := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatalf("not JSON: %q", raw)
@@ -98,6 +100,8 @@ func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 
 // serveWithCorrelation runs one request through the correlation middleware and
 // returns the response and the log lines it produced.
+const clientID = "client-abc-123"
+
 func serveWithCorrelation(t *testing.T, header string, inner http.Handler) (*httptest.ResponseRecorder, []map[string]any) {
 	t.Helper()
 
@@ -116,7 +120,7 @@ func serveWithCorrelation(t *testing.T, header string, inner http.Handler) (*htt
 
 	var lines []map[string]any
 
-	for _, raw := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+	for raw := range bytes.SplitSeq(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
 			t.Fatalf("not JSON: %q", raw)
@@ -128,23 +132,25 @@ func serveWithCorrelation(t *testing.T, header string, inner http.Handler) (*htt
 	return rec, lines
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestAClientCorrelationIDIsReusedReturnedAndLogged(t *testing.T) {
 	var seen string
 
-	rec, lines := serveWithCorrelation(t, "client-abc-123", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rec, lines := serveWithCorrelation(t, clientID, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = requestID(r.Context())
 		logFor(r.Context()).Info("inside the handler")
 	}))
 
-	if seen != "client-abc-123" || rec.Header().Get(correlationHeader) != "client-abc-123" {
+	if seen != clientID || rec.Header().Get(correlationHeader) != clientID {
 		t.Fatalf("the client's ID must be used and returned, got %q and header %q", seen, rec.Header().Get(correlationHeader))
 	}
 
-	if len(lines) != 2 || lines[0]["correlation_id"] != "client-abc-123" || lines[1]["message"] != "request" || lines[1]["correlation_id"] != "client-abc-123" {
+	if len(lines) != 2 || lines[0]["correlation_id"] != clientID || lines[1]["message"] != "request" || lines[1]["correlation_id"] != clientID {
 		t.Fatalf("every line of the request must carry its ID, got %v", lines)
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestAMissingOrUnusableCorrelationIDIsReplaced(t *testing.T) {
 	for _, header := range []string{"", "has spaces", "line\nbreak", strings.Repeat("x", 129)} {
 		var seen string
@@ -157,6 +163,7 @@ func TestAMissingOrUnusableCorrelationIDIsReplaced(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestTheRequestIDIsForwardedAsGRPCMetadata(t *testing.T) {
 	var buf bytes.Buffer
 

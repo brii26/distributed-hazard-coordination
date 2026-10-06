@@ -92,7 +92,7 @@ func correlationOf(ctx context.Context) string {
 func logCall(ctx context.Context, target string, start time.Time, err error) {
 	// An RPC answered with Unauthenticated, AlreadyExists or InvalidArgument is a
 	// reply the caller acts on, not a failed call.
-	switch status.Code(err) {
+	switch status.Code(err) { //nolint:exhaustive // only these three are replies, not failures
 	case codes.Unauthenticated, codes.AlreadyExists, codes.InvalidArgument:
 		err = nil
 	}

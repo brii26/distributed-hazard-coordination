@@ -79,6 +79,7 @@ func TestIdleBucketsAreEvictedWhenThereAreMany(t *testing.T) {
 	}
 
 	c.t = c.t.Add(2 * bucketIdleTime)
+
 	l.take("new")
 
 	if len(l.buckets) != 1 {
@@ -139,6 +140,7 @@ func TestInflightCapRefusesAtOnceAndSparesHealth(t *testing.T) {
 	h := capInflight(2, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
 			entered <- struct{}{}
+
 			<-release
 		}
 

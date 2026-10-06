@@ -8,11 +8,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +159,7 @@ func (e itAgg) bmkgList(t *testing.T, path string) []map[string]any {
 	return out
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationBMKGKeyIsAcceptedAndRejected(t *testing.T) {
 	e := aggIntegration(t)
 
@@ -182,6 +183,7 @@ func TestIntegrationBMKGKeyIsAcceptedAndRejected(t *testing.T) {
 	waitFor(t, "BMKG events in the Canonical Store", 30*time.Second, func() bool { return len(e.stored(t, typeSeismic)) > 0 })
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.T) {
 	e := aggIntegration(t)
 
@@ -203,8 +205,10 @@ func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.
 
 	// Every stored event exists at the source, once.
 	known := map[string]bool{}
+
 	for _, ev := range e.bmkgList(t, "/seismic-events") {
-		known[ev["event_id"].(string)] = true //nolint:forcetypeassert // the mock's contract
+		id, _ := ev["event_id"].(string)
+		known[id] = true
 	}
 
 	seen := map[string]bool{}
@@ -241,7 +245,7 @@ func wantSeverity(magnitude float64, warnings []map[string]any) string {
 	}
 }
 
-func TestIntegrationBMKGEventsAndWarningsAreMappedAndStored(t *testing.T) {
+func TestIntegrationBMKGEventsAndWarningsAreMappedAndStored(t *testing.T) { //nolint:gocyclo,paralleltest // one scenario read top to bottom
 	e := aggIntegration(t)
 
 	events := e.bmkgList(t, "/seismic-events")
@@ -262,8 +266,11 @@ func TestIntegrationBMKGEventsAndWarningsAreMappedAndStored(t *testing.T) {
 
 	waitFor(t, "every event in the snapshot to be stored", 45*time.Second, func() bool {
 		stored := byID()
+
 		for _, ev := range events {
-			if _, ok := stored[ev["event_id"].(string)]; !ok { //nolint:forcetypeassert // the mock's contract
+			id, _ := ev["event_id"].(string)
+
+			if _, ok := stored[id]; !ok {
 				return false
 			}
 		}
@@ -348,6 +355,7 @@ func (e itAgg) pvmbgStatus() string {
 	return resp.GetMeta().GetSourceStatus()
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationPVMBGOAuthBootstrapFeedsTheStore(t *testing.T) {
 	e := aggIntegration(t)
 
@@ -361,7 +369,7 @@ func TestIntegrationPVMBGOAuthBootstrapFeedsTheStore(t *testing.T) {
 	waitFor(t, "PVMBG reported UP", 30*time.Second, func() bool { return e.pvmbgStatus() == statusUp })
 }
 
-func TestIntegrationPVMBGOutageGoesStaleThenRecoversAndSeismicIsUnaffected(t *testing.T) {
+func TestIntegrationPVMBGOutageGoesStaleThenRecoversAndSeismicIsUnaffected(t *testing.T) { //nolint:gocyclo,paralleltest // one scenario read top to bottom
 	e := aggIntegration(t)
 
 	waitFor(t, "stored volcanic data and PVMBG UP", 60*time.Second, func() bool {
@@ -409,6 +417,7 @@ func TestIntegrationPVMBGOutageGoesStaleThenRecoversAndSeismicIsUnaffected(t *te
 	})
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationPVMBGSchemaChangeAddsConfidenceLevelWithoutARestart(t *testing.T) {
 	e := aggIntegration(t)
 
@@ -432,7 +441,7 @@ func TestIntegrationPVMBGSchemaChangeAddsConfidenceLevelWithoutARestart(t *testi
 
 	container := itCompose(t, "ps", "-q", "aggregator")
 	startedAt := func() string {
-		out, err := exec.CommandContext(context.Background(), "docker", "inspect", "-f", "{{.State.StartedAt}}", container).CombinedOutput()
+		out, err := exec.CommandContext(context.Background(), "docker", "inspect", "-f", "{{.State.StartedAt}}", container).CombinedOutput() //nolint:gosec // test helper, the container id comes from docker compose
 		if err != nil {
 			t.Fatalf("docker inspect: %v %s", err, out)
 		}
@@ -476,6 +485,7 @@ func tokenFileOf(t *testing.T) tokenFile {
 	return f
 }
 
+//nolint:paralleltest // shares the docker stack
 func TestIntegrationPVMBGTokenRotatesAndASpentCodeIsNotNeededAfterARestart(t *testing.T) {
 	e := aggIntegration(t)
 
@@ -503,7 +513,7 @@ func TestIntegrationPVMBGTokenRotatesAndASpentCodeIsNotNeededAfterARestart(t *te
 		return err == nil && e.pvmbgStatus() == statusUp
 	})
 
-	if got := fmt.Sprint(len(e.stored(t, typeVolcanic)) > 0); got != "true" {
+	if got := strconv.FormatBool(len(e.stored(t, typeVolcanic)) > 0); got != "true" {
 		t.Fatal("expected volcanic reports in the store")
 	}
 }

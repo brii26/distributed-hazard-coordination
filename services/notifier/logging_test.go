@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -32,6 +33,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestWithIDCarriesTheMessagesCorrelationID(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -42,6 +44,7 @@ func TestWithIDCarriesTheMessagesCorrelationID(t *testing.T) {
 	withID("").Info("no id")
 
 	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+
 	for i, want := range []string{"cycle-9", "-"} {
 		var line map[string]any
 		if err := json.Unmarshal(lines[i], &line); err != nil || line["correlation_id"] != want {

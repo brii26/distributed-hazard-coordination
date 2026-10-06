@@ -11,6 +11,7 @@ import (
 	"testing"
 )
 
+//nolint:paralleltest // swaps the global logger
 func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -35,6 +36,7 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // swaps the global logger
 func TestRequestLogCarriesTheAggregatorsCorrelationID(t *testing.T) {
 	var buf bytes.Buffer
 

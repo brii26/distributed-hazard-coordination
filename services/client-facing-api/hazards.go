@@ -118,7 +118,7 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // hazardsFailed maps the Aggregator's status to the client (TRD 3.3, 3.4).
 func hazardsFailed(ctx context.Context, w http.ResponseWriter, err error) {
-	switch status.Code(err) {
+	switch status.Code(err) { //nolint:exhaustive // every other code is the default 502
 	case codes.Unavailable:
 		// The source is down and nothing is stored: an explicit 503, not a 500 or a hang.
 		writeJSON(w, http.StatusServiceUnavailable, errBody("no data available: "+status.Convert(err).Message()))

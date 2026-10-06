@@ -84,6 +84,7 @@ func newAuthAPI() (*authAPI, error) {
 	}
 
 	api := &authAPI{auth: authpb.NewAuthClient(conn), timeout: time.Duration(timeoutMS) * time.Millisecond, secure: secure}
+
 	rps, err := envPositiveInt("RATE_LIMIT_RPS", defaultRateRPS)
 	if err != nil {
 		return nil, err

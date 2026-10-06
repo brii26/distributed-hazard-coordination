@@ -28,6 +28,8 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 // TestRealBrokerAddedLaterReceivesNewEvents is P5.4: the exchange is already in
 // use when the Audit Logger is added, and it receives what is published from then on.
+//
+//nolint:paralleltest // needs the real broker
 func TestRealBrokerAddedLaterReceivesNewEvents(t *testing.T) {
 	url := os.Getenv("RABBITMQ_TEST_URL")
 	if url == "" {
@@ -81,6 +83,7 @@ func TestRealBrokerAddedLaterReceivesNewEvents(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Go(func() { c.run(ctx) })
+
 	defer func() { cancel(); wg.Wait() }()
 
 	waitFor(t, "connected", c.connected)

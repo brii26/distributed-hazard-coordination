@@ -136,6 +136,7 @@ func (c *consumer) dispatch(d amqp.Delivery) {
 		withID(d.CorrelationId).Info("ack sent", "delivery_tag", d.DeliveryTag)
 	case requeue:
 		time.Sleep(requeueDelay) // a short pause so a persistent failure does not spin
+
 		err = d.Nack(false, true)
 		withID(d.CorrelationId).Warn("nack sent", "requeue", "true", "delivery_tag", d.DeliveryTag)
 	case drop:

@@ -79,6 +79,7 @@ func (s *state) snapshot() []HazardEvent {
 	for _, e := range s.events {
 		out = append(out, e)
 	}
+
 	s.mu.RUnlock()
 
 	slices.SortFunc(out, func(a, b HazardEvent) int {

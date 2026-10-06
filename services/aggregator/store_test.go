@@ -332,7 +332,7 @@ func TestOpenStoreFailsFastOnAnUnreachableDatabase(t *testing.T) {
 	}
 }
 
-func TestListByTypeReturnsOnlyThatTypeWithNullsKept(t *testing.T) {
+func TestListByTypeReturnsOnlyThatTypeWithNullsKept(t *testing.T) { //nolint:gocyclo // one table of null cases
 	t.Parallel()
 
 	s := testStore(t, 5)
