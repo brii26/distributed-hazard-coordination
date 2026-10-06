@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 
 	"google.golang.org/grpc/codes"
@@ -48,7 +47,7 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 
 	resp, err := a.auth.Refresh(ctx, &authpb.RefreshRequest{RefreshToken: old.Value})
 	if err != nil {
-		a.refreshFailed(w, err)
+		a.refreshFailed(r.Context(), w, err)
 
 		return
 	}
@@ -57,7 +56,7 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 	// must verify; if it does not, the two services disagree on JWT_SIGNING_SECRET.
 	claims, err := v.verify(resp.GetJwt())
 	if err != nil {
-		log.Printf("refresh: the Auth Service issued a token that does not verify: %v", err)
+		logFor(r.Context()).Error("transparent refresh", "result", "failure", "reason", "the Auth Service issued a token that does not verify", "error", err)
 		writeJSON(w, http.StatusBadGateway, errBody("authentication service unavailable"))
 
 		return
@@ -65,6 +64,7 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 
 	a.setCookie(w, cookieJWT, resp.GetJwt(), 0)
 	a.setCookie(w, cookieRefresh, resp.GetRefreshToken(), 0)
+	logFor(r.Context()).Info("transparent refresh", "client_id", claims.Email, "result", "rotated")
 
 	held := withSession(r, resp.GetJwt(), resp.GetRefreshToken())
 	next.ServeHTTP(w, held.WithContext(context.WithValue(held.Context(), claimsKey{}, claims)))
@@ -73,17 +73,18 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 // refreshFailed answers a failed exchange. An unknown refresh token is a 401 and
 // both cookies are cleared. An Auth Service that is down or too slow is a 502 or
 // 504 and the cookies stay: the refresh token may still be valid.
-func (a *authAPI) refreshFailed(w http.ResponseWriter, err error) {
+func (a *authAPI) refreshFailed(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case status.Code(err) == codes.Unauthenticated:
+		logFor(ctx).Info("transparent refresh", "result", "rejected", "reason", "unknown refresh token")
 		a.setCookie(w, cookieJWT, "", -1)
 		a.setCookie(w, cookieRefresh, "", -1)
 		unauthorized(w)
 	case errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded:
-		log.Print("refresh: auth service timed out")
+		logFor(ctx).Warn("transparent refresh", "result", "timeout")
 		writeJSON(w, http.StatusGatewayTimeout, errBody("authentication service timed out"))
 	default:
-		log.Printf("refresh: auth service error: %v", err)
+		logFor(ctx).Warn("transparent refresh", "result", "failure", "error", err)
 		writeJSON(w, http.StatusBadGateway, errBody("authentication service unavailable"))
 	}
 }

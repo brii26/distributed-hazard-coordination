@@ -170,7 +170,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           capInflight(maxInflight, mux),
+		Handler:           withCorrelation(capInflight(maxInflight, mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

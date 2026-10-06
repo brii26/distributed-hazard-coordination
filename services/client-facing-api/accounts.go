@@ -28,7 +28,7 @@ func (a *authAPI) signup(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if _, err := a.auth.Register(ctx, &authpb.RegisterRequest{Email: body.Email, Password: body.Password}); err != nil {
-		a.createFailed(w, "register", err)
+		a.createFailed(r.Context(), w, "register", err)
 
 		return
 	}
@@ -62,7 +62,7 @@ func (a *authAPI) createAccount(w http.ResponseWriter, r *http.Request) {
 
 	req := &authpb.CreateAccountRequest{Email: body.Email, Password: body.Password, Role: body.Role}
 	if _, err := a.auth.CreateAccount(ctx, req); err != nil {
-		a.createFailed(w, "create account", err)
+		a.createFailed(r.Context(), w, "create account", err)
 
 		return
 	}
@@ -84,13 +84,13 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // createFailed answers a failed account creation: a taken email is a 409, a value
 // the Auth Service refuses (empty or oversized input, unknown role) a 400, and
 // anything else is the usual 502/504 for an Auth Service that can't answer.
-func (a *authAPI) createFailed(w http.ResponseWriter, op string, err error) {
+func (a *authAPI) createFailed(ctx context.Context, w http.ResponseWriter, op string, err error) {
 	switch {
 	case status.Code(err) == codes.AlreadyExists:
 		writeJSON(w, http.StatusConflict, errBody("email already registered"))
 	case status.Code(err) == codes.InvalidArgument:
 		writeJSON(w, http.StatusBadRequest, errBody("invalid email, password or role"))
 	default:
-		a.fail(w, op, err)
+		a.fail(ctx, w, op, err)
 	}
 }
