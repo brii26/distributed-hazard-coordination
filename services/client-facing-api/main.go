@@ -84,7 +84,13 @@ func newAuthAPI() (*authAPI, error) {
 	}
 
 	api := &authAPI{auth: authpb.NewAuthClient(conn), timeout: time.Duration(timeoutMS) * time.Millisecond, secure: secure}
+	rps, err := envPositiveInt("RATE_LIMIT_RPS", defaultRateRPS)
+	if err != nil {
+		return nil, err
+	}
+
 	api.verifier = newJWTVerifier([]byte(secret)).withRefresh(api)
+	api.verifier.limiter = newRateLimiter(rps)
 
 	return api, nil
 }
@@ -147,6 +153,11 @@ func main() {
 	mux := newMux(auth)
 	mux.Handle("GET /health", health)
 
+	maxInflight, err := envPositiveInt("MAX_INFLIGHT_REQUESTS", defaultMaxInflight)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// /hazards shares the health check's Aggregator connection and timeout.
 	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
 
@@ -159,7 +170,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           mux,
+		Handler:           capInflight(maxInflight, mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
