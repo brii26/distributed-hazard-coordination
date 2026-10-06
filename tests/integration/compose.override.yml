@@ -1,0 +1,15 @@
+# Adds the host ports the service-to-service suites need to look inside a pair.
+# Only used by tests/integration/run.sh; the normal stack keeps both unpublished
+# (doc/TRD_M1.md 0.0: the Canonical Store and the gRPC API are internal).
+services:
+  canonical-store:
+    # Its own network is internal (no host access), so the test project also puts
+    # it on the default one, which is what lets the published port work.
+    networks:
+      - default
+      - canonical-net
+    ports:
+      - "15432:5432"
+  aggregator:
+    ports:
+      - "19091:9091"
