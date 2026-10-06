@@ -107,6 +107,16 @@ tests/integration/run.sh all         # all three, one after the other
 
 Needs Docker Compose and Go. The tests live next to the code they exercise (`integration_test.go` in `services/client-facing-api` and `services/aggregator`) and skip unless `run.sh` sets their environment, so a plain `go test ./...` stays offline.
 
+## Full-stack smoke test
+
+Brings up the whole `docker-compose.yml` stack in a separate project, `hazard-smoke`, and checks that it works as one system: every service's `/health` answers, the seeded Operator can log in and `/hazards` returns data from both mocks through the Aggregator, and restarting one consumer (the Notifier) leaves every other service running and untouched.
+
+```bash
+tests/smoke/run.sh
+```
+
+Needs Docker Compose and curl. It uses `.env.example`, so no `.env` is needed, builds the images, tears everything down afterwards, and publishes its host ports on 28080-28082 and 25672, clear of a normal `docker compose up`. Takes about a minute.
+
 ## Load test (Problem 2)
 
 Runs [k6](https://k6.io) (from its Docker image, nothing to install) against the full stack in a separate compose project, `hazard-load`, with PVMBG answering after 3 s. Two scenarios, both against `/hazards` as the seeded Operator:
