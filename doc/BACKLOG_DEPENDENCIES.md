@@ -10,6 +10,8 @@ These have zero dependencies and can be picked up immediately, by anyone, in any
 
 - #74 Docs: README run guide, config reference and per-problem scenario triggers
 - #114 Real-time push of new HazardEvents to clients, no polling
+- #116 Cross-cutting: OpenTelemetry tracing with Jaeger across all services
+- #123 Audit report: failures found by the abuse test script
 
 ## Full graph
 
@@ -75,9 +77,13 @@ graph TD
   73["#73 db network isolation"]
   94["#94 integration tests: service to service"]
   114["#114 real-time push of new HazardEvents"]
+  116["#116 opentelemetry + jaeger tracing"]
+  117["#117 pvmbg token recovery after restart"]
+  118["#118 postgres healthcheck -d"]
+  123["#123 abuse audit report"]
 
   classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
-  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,61,69,71,72,73,83,94 done
+  class 1,2,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,61,69,71,72,73,83,94,117,118 done
 ```
 
 ## Notes on reading this

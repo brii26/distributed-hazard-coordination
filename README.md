@@ -115,7 +115,10 @@ tests/integration/run.sh cfa-auth    # Client-Facing API + Auth Service (login, 
 tests/integration/run.sh agg-bmkg    # Aggregator + BMKG mock (API key, since cursor, events and tsunami warnings mapped and stored)
 tests/integration/run.sh agg-pvmbg   # Aggregator + PVMBG mock (OAuth bootstrap and rotation, outage, schema change: Problems 1-3)
 tests/integration/run.sh all         # all three, one after the other
+tests/integration/run.sh abuse       # the whole stack through restarts, outages, crashes, load and malformed input (about 8 minutes; not part of "all")
 ```
+
+`abuse` is the failure-mode suite (`abuse_integration_test.go` in `services/client-facing-api`). Every test starts from a fresh `down -v` stack, so one failure never explains the next, and each carries a comment saying what it does and what it expects. A red test is a real defect: the comment names the issue when there is one. `IT_LOAD_SECONDS=60` makes the load test run for the spec's full minute, and `ABUSE_RUN=TestAbuseDownUp tests/integration/run.sh abuse` runs a single test.
 
 Needs Docker Compose and Go. The tests live next to the code they exercise (`integration_test.go` in `services/client-facing-api` and `services/aggregator`) and skip unless `run.sh` sets their environment, so a plain `go test ./...` stays offline.
 
