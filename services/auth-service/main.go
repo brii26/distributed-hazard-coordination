@@ -116,7 +116,10 @@ func newAuthServer() (*authServer, error) {
 		return nil, err
 	}
 
-	ping := func(ctx context.Context) error {
+	ping := func(ctx context.Context) (err error) {
+		start := time.Now()
+		defer func() { logCall(ctx, "user-db ping", start, err) }()
+
 		ctx, cancel := context.WithTimeout(ctx, dbPingTimeout)
 		defer cancel()
 

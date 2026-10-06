@@ -78,7 +78,7 @@ func newAuthAPI() (*authAPI, error) {
 		return nil, errors.New("JWT_SIGNING_SECRET must be set")
 	}
 
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithUnaryInterceptor(logOutbound(addr)))
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func newHealthAPI() (healthAPI, error) {
 	}
 
 	// Lazy like the Auth Service connection: the service starts while the Aggregator is still coming up.
-	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithUnaryInterceptor(logOutbound(agg)))
 	if err != nil {
 		return healthAPI{}, err
 	}

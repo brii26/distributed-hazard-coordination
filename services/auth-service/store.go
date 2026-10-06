@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -36,14 +37,27 @@ type userStore interface {
 	DeleteRefreshToken(ctx context.Context, token string) error
 }
 
+// logDB logs one User DB call. "No such row" and "already exists" are answers
+// the caller acts on, not failed calls, so they log as a success.
+func logDB(ctx context.Context, target string, start time.Time, err error) {
+	if errors.Is(err, errNotFound) || errors.Is(err, errExists) {
+		err = nil
+	}
+
+	logCall(ctx, target, start, err)
+}
+
 type pgStore struct {
 	db *sql.DB
 }
 
-func (s pgStore) UserByEmail(ctx context.Context, email string) (user, error) {
+func (s pgStore) UserByEmail(ctx context.Context, email string) (_ user, err error) {
+	start := time.Now()
+	defer func() { logDB(ctx, "user-db select user", start, err) }()
+
 	var u user
 
-	err := s.db.QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		`SELECT user_id, email, password_hash, role FROM users WHERE email = $1`, email,
 	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -53,8 +67,11 @@ func (s pgStore) UserByEmail(ctx context.Context, email string) (user, error) {
 	return u, err
 }
 
-func (s pgStore) CreateUser(ctx context.Context, u user) error {
-	_, err := s.db.ExecContext(ctx,
+func (s pgStore) CreateUser(ctx context.Context, u user) (err error) {
+	start := time.Now()
+	defer func() { logDB(ctx, "user-db insert user", start, err) }()
+
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO users (user_id, email, password_hash, role) VALUES ($1, $2, $3, $4)`,
 		u.ID, u.Email, u.PasswordHash, u.Role)
 
@@ -66,14 +83,20 @@ func (s pgStore) CreateUser(ctx context.Context, u user) error {
 	return err
 }
 
-func (s pgStore) AddRefreshToken(ctx context.Context, token, userID string) error {
-	_, err := s.db.ExecContext(ctx,
+func (s pgStore) AddRefreshToken(ctx context.Context, token, userID string) (err error) {
+	start := time.Now()
+	defer func() { logDB(ctx, "user-db insert refresh token", start, err) }()
+
+	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO refresh_tokens (refresh_token, user_id) VALUES ($1, $2)`, token, userID)
 
 	return err
 }
 
-func (s pgStore) RotateRefreshToken(ctx context.Context, oldToken, newToken string) (user, error) {
+func (s pgStore) RotateRefreshToken(ctx context.Context, oldToken, newToken string) (_ user, err error) {
+	start := time.Now()
+	defer func() { logDB(ctx, "user-db rotate refresh token", start, err) }()
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return user{}, err
@@ -106,8 +129,11 @@ func (s pgStore) RotateRefreshToken(ctx context.Context, oldToken, newToken stri
 	return u, tx.Commit()
 }
 
-func (s pgStore) DeleteRefreshToken(ctx context.Context, token string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE refresh_token = $1`, token)
+func (s pgStore) DeleteRefreshToken(ctx context.Context, token string) (err error) {
+	start := time.Now()
+	defer func() { logDB(ctx, "user-db delete refresh token", start, err) }()
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE refresh_token = $1`, token)
 
 	return err
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync"
 	"time"
 )
@@ -65,7 +64,7 @@ func newBreaker(name string, threshold int, openFor time.Duration) *breaker {
 
 // transition moves to state to and logs it; the caller holds the write lock.
 func (b *breaker) transition(to breakerState) {
-	log.Printf("circuit breaker source=%s transition=%s->%s consecutive_fail=%d", b.name, b.state, to, b.consecutiveFail)
+	withID("").Info("circuit breaker transition", "source", b.name, "from", b.state.String(), "to", to.String(), "consecutive_fail", b.consecutiveFail)
 
 	b.state = to
 }

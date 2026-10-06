@@ -71,7 +71,7 @@ func (a *readAPI) limit(ctx context.Context, req any, info *grpc.UnaryServerInfo
 		defer func() { <-a.sem }()
 	default:
 		id, role := caller(ctx)
-		log.Printf("read api method=%s correlation_id=%s role=%s result=rejected reason=max_inflight", info.FullMethod, id, role)
+		withID(id).Warn("read api request", "method", info.FullMethod, "role", role, "result", "rejected", "reason", "max_inflight")
 
 		return nil, status.Error(codes.ResourceExhausted, "too many in-flight requests")
 	}
@@ -100,16 +100,16 @@ func caller(ctx context.Context) (correlationID, role string) {
 // stale_since set); only a down source with nothing stored is UNAVAILABLE.
 func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRequest) (*aggregatorpb.GetHazardsResponse, error) {
 	id, role := caller(ctx)
-	log.Printf("read api method=GetHazards correlation_id=%s role=%s hazard_type=%s", id, role, req.GetHazardType())
+	withID(id).Info("read api request", "method", "GetHazards", "role", role, "hazard_type", req.GetHazardType())
 
 	src, ok := typeSources[req.GetHazardType()]
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "hazard_type must be SEISMIC or VOLCANIC")
 	}
 
-	events, err := a.list(ctx, req.GetHazardType())
+	events, err := a.list(withCorrelation(ctx, id), req.GetHazardType())
 	if err != nil {
-		log.Printf("read api method=GetHazards correlation_id=%s canonical store: %v", id, err)
+		withID(id).Warn("read api canonical store failed", "method", "GetHazards", "error", err.Error())
 
 		return nil, status.Error(codes.Unavailable, "canonical store unavailable")
 	}
@@ -125,7 +125,7 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 	for _, e := range events {
 		pb, err := toProto(e)
 		if err != nil {
-			log.Printf("read api method=GetHazards correlation_id=%s hazard_id=%s: %v", id, e.HazardID, err)
+			withID(id).Warn("read api encode failed", "method", "GetHazards", "hazard_id", e.HazardID, "error", err.Error())
 
 			return nil, status.Error(codes.Internal, "failed to encode hazard event")
 		}
