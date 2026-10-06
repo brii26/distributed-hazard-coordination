@@ -19,7 +19,7 @@ compose="docker compose -p hazard-load --env-file $root/.env.example -f $root/do
 set -a; . ./.env.example; set +a
 
 # Host ports clear of a normal `docker compose up` running next to this.
-export CLIENT_FACING_API_PORT=38080 BMKG_PORT=38081 PVMBG_PORT=38082 RABBITMQ_MANAGEMENT_PORT=35672
+export CLIENT_FACING_API_PORT=38080 BMKG_PORT=38081 PVMBG_PORT=38082 RABBITMQ_MANAGEMENT_PORT=35672 WEB_FRONTEND_PORT=33000
 export COOKIE_SECURE=false
 # The token must outlive the run, so no refresh is needed mid-test.
 export ACCESS_TOKEN_TTL_S=3600

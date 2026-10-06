@@ -19,7 +19,7 @@ compose="docker compose -p hazard-smoke --env-file $root/.env.example -f $root/d
 set -a; . ./.env.example; set +a
 
 # Host ports clear of a normal `docker compose up` running next to this.
-export CLIENT_FACING_API_PORT=28080 BMKG_PORT=28081 PVMBG_PORT=28082 RABBITMQ_MANAGEMENT_PORT=25672
+export CLIENT_FACING_API_PORT=28080 BMKG_PORT=28081 PVMBG_PORT=28082 RABBITMQ_MANAGEMENT_PORT=25672 WEB_FRONTEND_PORT=23000
 # The cookie jar below talks plain HTTP.
 export COOKIE_SECURE=false
 # Fast polling and event arrival, so data shows within seconds.
