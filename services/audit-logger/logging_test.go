@@ -31,3 +31,21 @@ func TestPlainLogLinesAreJSONWithTheRequiredFields(t *testing.T) {
 		t.Fatalf("unexpected line %v", line)
 	}
 }
+
+func TestWithIDCarriesTheMessagesCorrelationID(t *testing.T) {
+	var buf bytes.Buffer
+
+	setupLogging(&buf)
+	t.Cleanup(func() { setupLogging(os.Stdout) })
+
+	withID("cycle-9").Info("message received")
+	withID("").Info("no id")
+
+	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+	for i, want := range []string{"cycle-9", "-"} {
+		var line map[string]any
+		if err := json.Unmarshal(lines[i], &line); err != nil || line["correlation_id"] != want {
+			t.Fatalf("line %d: expected correlation_id %q, got %s", i, want, lines[i])
+		}
+	}
+}

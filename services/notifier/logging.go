@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 const serviceName = "notifier"
@@ -38,7 +39,22 @@ func newLogger(w io.Writer) *slog.Logger {
 // through the JSON logger, so a plain log.Printf is a JSON line too, with
 // correlation_id "-" until it has one (#34).
 func setupLogging(w io.Writer) {
-	slog.SetDefault(newLogger(w).With("correlation_id", "-"))
+	l := newLogger(w)
+	base.Store(l)
+	slog.SetDefault(l.With("correlation_id", "-"))
+}
+
+// base is the logger without a correlation_id, so withID can add the right one.
+var base atomic.Pointer[slog.Logger]
+
+// withID is the logger for one message's correlation ID, the AMQP correlation_id
+// property the Aggregator set from its poll cycle ("-" when a message has none).
+func withID(id string) *slog.Logger {
+	if id == "" {
+		id = "-"
+	}
+
+	return base.Load().With("correlation_id", id)
 }
 
 // Installed at start-up, before main, so every line from the first one is JSON.

@@ -133,14 +133,14 @@ func (c *consumer) dispatch(d amqp.Delivery) {
 	switch c.handle(message{body: d.Body, correlationID: d.CorrelationId}) {
 	case ack:
 		err = d.Ack(false)
-		log.Printf("ack sent correlation_id=%s delivery_tag=%d", d.CorrelationId, d.DeliveryTag)
+		withID(d.CorrelationId).Info("ack sent", "delivery_tag", d.DeliveryTag)
 	case requeue:
 		time.Sleep(requeueDelay) // a short pause so a persistent failure does not spin
 		err = d.Nack(false, true)
-		log.Printf("nack sent requeue=true correlation_id=%s delivery_tag=%d", d.CorrelationId, d.DeliveryTag)
+		withID(d.CorrelationId).Warn("nack sent", "requeue", "true", "delivery_tag", d.DeliveryTag)
 	case drop:
 		err = d.Nack(false, false)
-		log.Printf("nack sent requeue=false correlation_id=%s delivery_tag=%d", d.CorrelationId, d.DeliveryTag)
+		withID(d.CorrelationId).Info("nack sent", "requeue", "false", "delivery_tag", d.DeliveryTag)
 	}
 
 	if err != nil {
