@@ -69,7 +69,7 @@ func newPublisher(dial func(context.Context) (session, error), capacity int) *pu
 func (p *publisher) publish(h HazardEvent, correlationID string) {
 	body, err := json.Marshal(h)
 	if err != nil {
-		log.Printf("publish hazard_id=%s result=failure err=%q", h.HazardID, err)
+		withID(correlationID).Warn("publish", "hazard_id", h.HazardID, "result", "failure", "error", err.Error())
 
 		return
 	}
@@ -77,7 +77,7 @@ func (p *publisher) publish(h HazardEvent, correlationID string) {
 	p.mu.Lock()
 
 	if len(p.queue) >= p.capacity {
-		log.Printf("publish hazard_id=%s result=buffer-drop reason=buffer_full", p.queue[0].hazardID)
+		withID(p.queue[0].correlationID).Warn("publish", "hazard_id", p.queue[0].hazardID, "result", "buffer-drop", "reason", "buffer_full")
 
 		p.queue = p.queue[1:]
 	}
@@ -124,13 +124,13 @@ func (p *publisher) done(m message) {
 // confirm round trip; fine at poll-interval rates, batch confirms if it is not.
 func (p *publisher) send(ctx context.Context, s session, m message) error {
 	if err := s.publish(ctx, m); err != nil {
-		log.Printf("publish hazard_id=%s correlation_id=%s result=failure err=%q", m.hazardID, m.correlationID, err)
+		withID(m.correlationID).Warn("publish", "hazard_id", m.hazardID, "result", "failure", "error", err.Error())
 
 		return err
 	}
 
 	p.done(m)
-	log.Printf("publish hazard_id=%s correlation_id=%s result=success", m.hazardID, m.correlationID)
+	withID(m.correlationID).Info("publish", "hazard_id", m.hazardID, "result", "success")
 
 	return nil
 }
@@ -270,7 +270,12 @@ func dialAMQP(url, exchange string) func(context.Context) (session, error) {
 
 // publish sends m persistent (delivery_mode=2) with the correlation ID as an AMQP
 // property, not in the payload, and waits for the broker's confirm.
-func (s *amqpSession) publish(ctx context.Context, m message) error {
+func (s *amqpSession) publish(ctx context.Context, m message) (err error) {
+	start := time.Now()
+	defer func() {
+		logCall(withCorrelation(ctx, m.correlationID), "rabbitmq publish exchange="+s.exchange, start, err)
+	}()
+
 	conf, err := s.ch.PublishWithDeferredConfirmWithContext(ctx, s.exchange, "", false, false, amqp.Publishing{
 		ContentType:   "application/json",
 		DeliveryMode:  amqp.Persistent,
