@@ -7,6 +7,8 @@
 #   tests/integration/run.sh agg-bmkg    Aggregator + BMKG mock
 #   tests/integration/run.sh agg-pvmbg   Aggregator + PVMBG mock
 #   tests/integration/run.sh all         the three, one after the other
+#   tests/integration/run.sh abuse       the whole stack, pushed through restarts, outages,
+#                                        crashes, load and malformed input (about 8 minutes; not in "all")
 #
 # Needs docker compose and Go. Values come from .env.example, so no .env is needed.
 set -euo pipefail
@@ -39,7 +41,7 @@ up() {
 
 run_go() {
   local module=$1 pattern=$2
-  (cd "services/$module" && go test -count=1 -v -timeout 10m -run "$pattern" ./...)
+  (cd "services/$module" && go test -count=1 -v -timeout "${GO_TEST_TIMEOUT:-10m}" -run "$pattern" ./...)
 }
 
 suite_cfa_auth() {
@@ -74,10 +76,29 @@ suite_agg_pvmbg() {
   aggregator_env run_go aggregator '^TestIntegrationPVMBG'
 }
 
+suite_abuse() {
+  # The spec's own numbers: PVMBG answers in 3 s, so a slow source is really slow.
+  export PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 POLL_TIMEOUT_MS=5000
+  # New records keep arriving, so "ingest resumed" is something a test can see.
+  export BMKG_EVENT_INTERVAL_S=2 PVMBG_EVENT_INTERVAL_S=2
+  # Every test starts from a fresh stack, so the whole suite takes about 8 minutes.
+  export GO_TEST_TIMEOUT=45m
+  up bmkg-mock pvmbg-mock canonical-store user-db rabbitmq aggregator auth-service client-facing-api \
+    dashboard-updater notifier audit-logger
+  IT_ABUSE_URL="http://127.0.0.1:$CLIENT_FACING_API_PORT" \
+    IT_OPERATOR_EMAIL="$SEED_OPERATOR_EMAIL" IT_OPERATOR_PASSWORD="$SEED_OPERATOR_PASSWORD" \
+    IT_BMKG_URL="http://127.0.0.1:$BMKG_PORT" IT_BMKG_KEY="$BMKG_API_KEY" \
+    IT_PVMBG_URL="http://127.0.0.1:$PVMBG_PORT" IT_PVMBG_ADMIN_KEY="$PVMBG_ADMIN_KEY" \
+    IT_CANONICAL_USER="$CANONICAL_DB_USER" IT_CANONICAL_DB="$CANONICAL_DB_NAME" \
+    IT_LOAD_SECONDS="${IT_LOAD_SECONDS:-15}" \
+    run_go client-facing-api "${ABUSE_RUN:-^TestAbuse}"
+}
+
 case "${1:-}" in
   cfa-auth) suite_cfa_auth ;;
   agg-bmkg) suite_agg_bmkg ;;
   agg-pvmbg) suite_agg_pvmbg ;;
+  abuse) suite_abuse ;;
   all) (suite_cfa_auth) && (suite_agg_bmkg) && (suite_agg_pvmbg) ;;
-  *) echo "usage: $0 cfa-auth|agg-bmkg|agg-pvmbg|all" >&2; exit 2 ;;
+  *) echo "usage: $0 cfa-auth|agg-bmkg|agg-pvmbg|abuse|all" >&2; exit 2 ;;
 esac
