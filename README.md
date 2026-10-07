@@ -109,6 +109,7 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `CLIENT_FACING_API_PORT` | client-facing-api | 8080 | Host port of the public API |
 | `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` | client-facing-api | 100 | Global concurrency cap (429 + `Retry-After` beyond it) |
 | `RATE_LIMIT_RPS` | client-facing-api | 50 | Token bucket per client (account) |
+| `AUTH_RATE_LIMIT_RPS` | client-facing-api | 10 | Token bucket per client IP on `/auth/login` and `/auth/register` |
 | `UPSTREAM_TIMEOUT_MS` | client-facing-api | 1000 | Timeout of each call to the Aggregator and the Auth Service |
 | `COOKIE_SECURE` | client-facing-api | true | Mark the `jwt`/`refresh_token` cookies Secure (fine on `http://localhost`) |
 | `WEB_FRONTEND_PORT` | web-frontend | 3000 | Host port of the web frontend |

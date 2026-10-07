@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -11,6 +12,10 @@ import (
 const (
 	defaultMaxInflight = 100
 	defaultRateRPS     = 50
+
+	// defaultAuthRPS is per client IP on login and register: a person typing never
+	// reaches it, a password-guessing or account-minting loop does.
+	defaultAuthRPS = 10
 
 	// ponytail: buckets of clients idle this long are dropped once there are many,
 	// so memory stays bounded; a busy client never loses its bucket.
@@ -113,12 +118,35 @@ func (l *rateLimiter) evictIdle(now time.Time) {
 // (doc/TRD_M1.md 4.1), so the account's email is the client_id: unique per
 // account and never the IP, which load tests and NAT share.
 func (l *rateLimiter) wrap(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return l.by(func(r *http.Request) string {
 		claims, _ := claimsFrom(r.Context())
 
-		ok, remaining, retryAfter := l.take(claims.Email)
+		return claims.Email
+	}, next)
+}
+
+// byIP limits the routes that run before any login (/auth/login, /auth/register),
+// where there is no account to key on. ponytail: the key is the TCP peer, so
+// browsers behind the web-frontend's nginx share one bucket; trusting
+// X-Forwarded-For would let a direct caller dodge it. Upgrade: nginx sets the real IP.
+func (l *rateLimiter) byIP(next http.HandlerFunc) http.Handler {
+	return l.by(func(r *http.Request) string {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return r.RemoteAddr
+		}
+
+		return host
+	}, next)
+}
+
+func (l *rateLimiter) by(key func(*http.Request) string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		client := key(r)
+
+		ok, remaining, retryAfter := l.take(client)
 		if !ok {
-			logFor(r.Context()).Warn("rate-limit", "kind", "client", "client_id", claims.Email, "path", r.URL.Path, "remaining", remaining)
+			logFor(r.Context()).Warn("rate-limit", "kind", "client", "client_id", client, "path", r.URL.Path, "remaining", remaining)
 			tooMany(w, retryAfter)
 
 			return
