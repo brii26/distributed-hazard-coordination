@@ -63,3 +63,20 @@ func TestResolvePortInvalid(t *testing.T) {
 		t.Fatal("expected error for invalid port, got nil")
 	}
 }
+
+func TestSeedEmailMustBeSomethingLoginAccepts(t *testing.T) {
+	t.Parallel()
+
+	for email, ok := range map[string]bool{
+		"":                      true,
+		"operator@bnpb.example": true,
+		"Operator@BNPB.example": true,
+		"admin":                 false,
+		"a b@x.example":         false,
+		"@x.example":            false,
+	} {
+		if err := checkSeedEmail(email); (err == nil) != ok {
+			t.Errorf("checkSeedEmail(%q) = %v, want ok=%v", email, err, ok)
+		}
+	}
+}
