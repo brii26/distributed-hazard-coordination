@@ -154,7 +154,7 @@ func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*rea
 }
 
 // Runs the Aggregator until it stops or fails to start.
-func run() error { //nolint:gocyclo // start-up wiring, one step after another
+func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after another
 	port, err := resolvePort(os.Getenv("HEALTH_PORT"), defaultPort)
 	if err != nil {
 		return err
