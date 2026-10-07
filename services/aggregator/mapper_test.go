@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -396,5 +397,43 @@ func TestNoSourceFieldIsDropped(t *testing.T) {
 		if _, ok := got[0].Attributes[k]; !ok && !canonical[k] {
 			t.Fatalf("field %q was dropped: %v", k, got[0].Attributes)
 		}
+	}
+}
+
+func TestDescribeFieldsNamesEveryDriftOnce(t *testing.T) {
+	t.Parallel()
+
+	base := func() map[string]any {
+		return map[string]any{
+			"report_id": "R1", "volcano_id": "MERAPI", "alert_level": "Siaga",
+			"eruption_count_24h": 4.0, "ash_column_height_m": 1200.0, "reported_at": "2026-10-04T09:00:00Z",
+		}
+	}
+
+	if got := describeFields(sourcePVMBG, []map[string]any{base(), base()}); len(got) != 0 {
+		t.Fatalf("a record that matches the contract needs no decision, got %v", got)
+	}
+
+	added := base()
+	added["confidence_level"] = 0.9
+
+	removed := base()
+	delete(removed, "ash_column_height_m")
+
+	renamed := base()
+	renamed["alert"] = renamed["alert_level"]
+	delete(renamed, "alert_level")
+
+	retyped := base()
+	retyped["eruption_count_24h"] = "4"
+
+	got := describeFields(sourcePVMBG, []map[string]any{added, added, removed, renamed, retyped})
+	want := []fieldDecision{
+		{"alert", "to_attributes"}, {"alert_level", "null"}, {"ash_column_height_m", "null"},
+		{"confidence_level", "to_attributes"}, {"eruption_count_24h", "retyped"},
+	}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("decisions = %v, want %v", got, want)
 	}
 }
