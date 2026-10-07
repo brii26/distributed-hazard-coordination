@@ -1,11 +1,40 @@
 # See doc/TRD_M1.md for the full specification each service implements.
 
+# Tracing (#116): every Go service exports spans here when TRACING_ENABLED=true.
+# Jaeger is not a dependency; with it down, services keep serving.
+x-tracing: &tracing
+  TRACING_ENABLED: ${TRACING_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+
 services:
+  # Jaeger v2: stores traces in memory and turns spans into RED metrics itself (spanmetrics),
+  # which Prometheus scrapes and the Monitor tab reads back (#116). Configs are inline so no
+  # host file's permissions can stop the container reading them.
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0
+    command: ["--config", "/etc/jaeger/config.yml"]
+    configs:
+      - source: jaeger_config
+        target: /etc/jaeger/config.yml
+      - source: jaeger_ui_config
+        target: /etc/jaeger/jaeger-ui.json
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+
+  # Holds only the numbers Jaeger derives from spans. Internal to the compose network, no
+  # published port, no volume: losing it on a restart only empties the charts.
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+
   bmkg-mock:
     build: ./services/bmkg-mock
     ports:
       - "${BMKG_PORT:-8081}:8081"
     environment:
+      <<: *tracing
       PORT: 8081
       BMKG_API_KEY: ${BMKG_API_KEY}
       SEED_COUNT: ${BMKG_SEED_COUNT:-20}
@@ -23,6 +52,7 @@ services:
     ports:
       - "${PVMBG_PORT:-8082}:8082"
     environment:
+      <<: *tracing
       PORT: 8082
       OAUTH_CLIENT_ID: ${PVMBG_OAUTH_CLIENT_ID}
       OAUTH_CLIENT_SECRET: ${PVMBG_OAUTH_CLIENT_SECRET}
@@ -105,6 +135,7 @@ services:
       pvmbg-mock:
         condition: service_healthy
     environment:
+      <<: *tracing
       GRPC_PORT: 9091
       HEALTH_PORT: 8091
       POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-3000}
@@ -140,6 +171,7 @@ services:
       user-db:
         condition: service_healthy
     environment:
+      <<: *tracing
       GRPC_PORT: 9092
       HEALTH_PORT: 8092
       USER_DB_URL: postgres://${USER_DB_USER:-auth}:${USER_DB_PASSWORD}@user-db:5432/${USER_DB_NAME:-user_db}?sslmode=disable
@@ -164,6 +196,7 @@ services:
     ports:
       - "${CLIENT_FACING_API_PORT:-8080}:8080"
     environment:
+      <<: *tracing
       PORT: 8080
       AGGREGATOR_GRPC_ADDR: aggregator:9091
       AUTH_SERVICE_GRPC_ADDR: auth-service:9092
@@ -204,6 +237,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: *tracing
       HEALTH_PORT: 8093
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
@@ -215,6 +249,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: *tracing
       HEALTH_PORT: 8094
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
@@ -229,6 +264,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: *tracing
       HEALTH_PORT: 8095
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
@@ -246,6 +282,69 @@ networks:
     internal: true
   userdb-net:
     internal: true
+
+configs:
+  jaeger_config:
+    content: |
+      service:
+        extensions: [jaeger_storage, jaeger_query]
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [jaeger_storage_exporter, spanmetrics]
+          metrics/spanmetrics:
+            receivers: [spanmetrics]
+            exporters: [prometheus]
+        telemetry:
+          logs:
+            level: INFO
+      extensions:
+        jaeger_query:
+          storage:
+            traces: memory_store
+            metrics: prometheus_store
+          ui:
+            config_file: /etc/jaeger/jaeger-ui.json
+        jaeger_storage:
+          backends:
+            memory_store:
+              memory:
+                max_traces: 100000
+          metric_backends:
+            prometheus_store:
+              prometheus:
+                endpoint: http://prometheus:9090
+                normalize_calls: true
+                normalize_duration: true
+      connectors:
+        spanmetrics:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+      processors:
+        batch:
+      exporters:
+        jaeger_storage_exporter:
+          trace_storage: memory_store
+        prometheus:
+          endpoint: 0.0.0.0:8889
+  # themes.enabled shows the dark/light toggle (off, the UI is always light); monitor turns on the Monitor tab.
+  jaeger_ui_config:
+    content: |
+      {"themes": {"enabled": true}, "monitor": {"menuEnabled": true}}
+  prometheus_config:
+    content: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: aggregated-trace-metrics
+          static_configs:
+            - targets: ['jaeger:8889']
 
 volumes:
   canonical_store_data:

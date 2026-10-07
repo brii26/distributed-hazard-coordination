@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -58,7 +59,7 @@ func newReadAPI(db *store, rabbitUp func(context.Context) error, breakers map[st
 }
 
 func newGRPCServer(a *readAPI) *grpc.Server {
-	s := grpc.NewServer(grpc.UnaryInterceptor(a.limit))
+	s := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.UnaryInterceptor(a.limit))
 	aggregatorpb.RegisterAggregatorServer(s, a)
 
 	return s

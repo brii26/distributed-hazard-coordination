@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -86,6 +88,18 @@ func logFor(ctx context.Context) *slog.Logger {
 // logCall records one outbound call (here: the User DB): target, duration_ms,
 // status, and the cause when it failed (doc/TRD_M1.md 0.3).
 func logCall(ctx context.Context, target string, start time.Time, err error) {
+	// The call is over by the time it is logged, so its span is opened with the
+	// start time it was made at. No parent (the health ping) means no span.
+	if trace.SpanContextFromContext(ctx).IsValid() {
+		_, sp := tracer.Start(ctx, target, trace.WithTimestamp(start), trace.WithSpanKind(trace.SpanKindClient))
+		if err != nil {
+			sp.RecordError(err)
+			sp.SetStatus(otelcodes.Error, err.Error())
+		}
+
+		sp.End()
+	}
+
 	l := base.Load().With("correlation_id", correlationOf(ctx))
 
 	attrs := []any{"target", target, "duration_ms", time.Since(start).Milliseconds(), "status", callStatus(err)}

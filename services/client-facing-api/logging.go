@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -185,8 +187,13 @@ func withCorrelation(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(correlationHeader)
 		if !validCorrelation.MatchString(id) {
-			id = newCorrelationID()
+			// With tracing on, the trace ID is the ID, so logs and Jaeger match.
+			if id = traceIDOf(r.Context()); id == "" {
+				id = newCorrelationID()
+			}
 		}
+
+		trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("correlation_id", id))
 
 		w.Header().Set(correlationHeader, id)
 

@@ -93,6 +93,8 @@ func callStatus(err error) string {
 // logCall records one outbound call: target, duration_ms, status, and the cause
 // when it failed (doc/TRD_M1.md 0.3).
 func logCall(ctx context.Context, target string, start time.Time, err error) {
+	endCall(ctx, err)
+
 	attrs := []any{"target", target, "duration_ms", time.Since(start).Milliseconds(), "status", callStatus(err)}
 
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 )
 
@@ -192,6 +193,13 @@ func run() error { //nolint:gocyclo // start-up wiring, one step after another
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	shutdownTracing, err := setupTracing(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer shutdownTracing()
+
 	go tokens.run(ctx)
 
 	pc, err := loadPollConfig(tokens)
@@ -252,7 +260,7 @@ func run() error { //nolint:gocyclo // start-up wiring, one step after another
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(api),
+		Handler:           otelhttp.NewHandler(newMux(api), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

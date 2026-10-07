@@ -17,6 +17,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 
 	"github.com/brii26/distributed-hazard-coordination/services/auth-service/authpb"
@@ -80,7 +82,7 @@ func startGRPC(port string, srv *authServer) error {
 		return err
 	}
 
-	g := grpc.NewServer()
+	g := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	authpb.RegisterAuthServer(g, srv)
 
 	go func() {
@@ -137,6 +139,11 @@ func newAuthServer() (*authServer, error) {
 }
 
 func main() {
+	shutdownTracing, err := setupTracing(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	grpcPort, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
 	if err != nil {
 		log.Fatal(err)
@@ -165,7 +172,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(auth.ping),
+		Handler:           otelhttp.NewHandler(newMux(auth.ping), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -174,7 +181,8 @@ func main() {
 
 	log.Printf("auth-service listening on :%d", portNum)
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	err = srv.ListenAndServe()
+	_ = shutdownTracing(context.Background()) // flush what is buffered
+
+	log.Fatal(err)
 }

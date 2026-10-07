@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -26,7 +27,7 @@ type ingest struct {
 	mapBatch func(pollResult) ([]HazardEvent, error)
 	upsert   func(context.Context, HazardEvent) (bool, error)
 	// publish hands a new or changed event, with its poll cycle's correlation ID, to the broker publisher.
-	publish             func(h HazardEvent, correlationID string)
+	publish             func(ctx context.Context, h HazardEvent, correlationID string)
 	retryBase, retryMax time.Duration
 }
 
@@ -40,6 +41,10 @@ func (i *ingest) run(ctx context.Context) {
 // handle maps one poll's records and writes them in order; a rejected record is skipped.
 func (i *ingest) handle(ctx context.Context, res pollResult) {
 	start := time.Now()
+	ctx, span := tracer.Start(trace.ContextWithRemoteSpanContext(ctx, res.trace), "ingest "+i.name)
+
+	defer span.End()
+
 	ctx = withCorrelation(ctx, res.correlationID)
 	l := withID(res.correlationID)
 
@@ -65,7 +70,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		if c {
 			changed++
 
-			i.publish(h, res.correlationID)
+			i.publish(ctx, h, res.correlationID)
 		}
 	}
 
@@ -118,7 +123,7 @@ func (p pipeline) run(ctx context.Context) {
 }
 
 // newPipelines builds one pipeline per source; all share the one upsert (the store's pool).
-func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(HazardEvent, string)) []pipeline {
+func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) []pipeline {
 	m := newMapper()
 	mappers := map[string]func(pollResult) ([]HazardEvent, error){
 		sourceBMKG:  func(r pollResult) ([]HazardEvent, error) { return m.mapSeismic(r.records, r.warnings) },

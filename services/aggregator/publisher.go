@@ -10,6 +10,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
 )
 
 const (
@@ -32,6 +33,7 @@ type message struct {
 	hazardID      string
 	correlationID string
 	body          []byte
+	trace         amqpCarrier // the publishing span's context, sent as AMQP headers
 }
 
 // session is one live broker connection. publish returns only once the broker has
@@ -66,13 +68,17 @@ func newPublisher(dial func(context.Context) (session, error), capacity int) *pu
 // publish queues h and returns at once. With the buffer full the oldest message
 // is dropped and logged: its event is still safe in the Canonical Store, only
 // not re-published.
-func (p *publisher) publish(h HazardEvent, correlationID string) {
+func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID string) {
 	body, err := json.Marshal(h)
 	if err != nil {
 		withID(correlationID).Warn("publish", "hazard_id", h.HazardID, "result", "failure", "error", err.Error())
 
 		return
 	}
+
+	// The buffer outlives ctx, so the trace context travels with the message.
+	carrier := amqpCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
 
 	p.mu.Lock()
 
@@ -83,7 +89,7 @@ func (p *publisher) publish(h HazardEvent, correlationID string) {
 	}
 
 	p.nextSeq++
-	p.queue = append(p.queue, message{seq: p.nextSeq, hazardID: h.HazardID, correlationID: correlationID, body: body})
+	p.queue = append(p.queue, message{seq: p.nextSeq, hazardID: h.HazardID, correlationID: correlationID, body: body, trace: carrier})
 	p.mu.Unlock()
 
 	select {
@@ -272,15 +278,20 @@ func dialAMQP(url, exchange string) func(context.Context) (session, error) {
 // property, not in the payload, and waits for the broker's confirm.
 func (s *amqpSession) publish(ctx context.Context, m message) (err error) {
 	start := time.Now()
-	defer func() {
-		logCall(withCorrelation(ctx, m.correlationID), "rabbitmq publish exchange="+s.exchange, start, err)
-	}()
+	ctx = otel.GetTextMapPropagator().Extract(ctx, m.trace)
+	ctx = startCall(withCorrelation(ctx, m.correlationID), "rabbitmq publish exchange="+s.exchange)
+
+	defer func() { logCall(ctx, "rabbitmq publish exchange="+s.exchange, start, err) }()
+
+	headers := amqpCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, headers)
 
 	conf, err := s.ch.PublishWithDeferredConfirmWithContext(ctx, s.exchange, "", false, false, amqp.Publishing{
 		ContentType:   "application/json",
 		DeliveryMode:  amqp.Persistent,
 		CorrelationId: m.correlationID,
 		MessageId:     m.hazardID,
+		Headers:       amqp.Table(headers),
 		Timestamp:     time.Now(),
 		Body:          m.body,
 	})

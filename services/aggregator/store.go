@@ -85,6 +85,8 @@ func (s *store) close() error {
 // PVMBG never share a (source, source_ref_id).
 func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 	start := time.Now()
+	ctx = startCall(ctx, "canonical-store upsert")
+
 	defer func() { logCall(ctx, "canonical-store upsert", start, err) }()
 
 	attrs := h.Attributes
@@ -142,6 +144,8 @@ var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 // (occurred_at, hazard_id) and a pg_trgm index on area_name.
 func (s *store) listByType(ctx context.Context, q listQuery) (_ []HazardEvent, _ bool, err error) {
 	start := time.Now()
+	ctx = startCall(ctx, "canonical-store list "+q.HazardType)
+
 	defer func() { logCall(ctx, "canonical-store list "+q.HazardType, start, err) }()
 
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)

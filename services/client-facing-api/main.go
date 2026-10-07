@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -78,7 +81,7 @@ func newAuthAPI() (*authAPI, error) {
 		return nil, errors.New("JWT_SIGNING_SECRET must be set")
 	}
 
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithUnaryInterceptor(logOutbound(addr)))
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithUnaryInterceptor(logOutbound(addr)))
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +132,7 @@ func newHealthAPI() (healthAPI, error) {
 	}
 
 	// Lazy like the Auth Service connection: the service starts while the Aggregator is still coming up.
-	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithUnaryInterceptor(logOutbound(agg)))
+	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithUnaryInterceptor(logOutbound(agg)))
 	if err != nil {
 		return healthAPI{}, err
 	}
@@ -143,6 +146,11 @@ func newHealthAPI() (healthAPI, error) {
 
 func main() {
 	port, err := resolvePort(os.Getenv("PORT"))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	shutdownTracing, err := setupTracing(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,7 +190,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           withCorrelation(capInflight(maxInflight, mux)),
+		Handler:           otelhttp.NewHandler(withCorrelation(capInflight(maxInflight, mux)), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -191,7 +199,8 @@ func main() {
 
 	log.Printf("client-facing-api listening on :%d", portNum)
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	err = srv.ListenAndServe()
+	_ = shutdownTracing(context.Background()) // flush what is buffered
+
+	log.Fatal(err)
 }
