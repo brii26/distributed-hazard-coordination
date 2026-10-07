@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// HazardEvent is the canonical record the Aggregator publishes (doc/TRD_M1.md
-// 3.2). Only the fields this service reads are typed; the log keeps the message
-// as received, so a field the Aggregator adds later is recorded too.
+// Canonical hazard record from the Aggregator. Only the fields this service reads are typed, the log keeps the message as received.
 type HazardEvent struct {
 	HazardID string  `json:"hazard_id"`
 	Severity *string `json:"severity"`
@@ -24,15 +22,14 @@ func orDash(s *string) string {
 	return *s
 }
 
-// entry is one line of the audit log.
+// One line of the audit log.
 type entry struct {
 	ReceivedAt    time.Time       `json:"received_at"`
 	CorrelationID string          `json:"correlation_id"`
 	Event         json.RawMessage `json:"event"`
 }
 
-// auditLog is the append-only record of every HazardEvent received (doc/TRD_M1.md
-// 8.3): one JSON object per line, never rewritten.
+// Append-only record of every HazardEvent received, one JSON object per line.
 type auditLog struct {
 	mu   sync.Mutex
 	file *os.File
@@ -52,7 +49,7 @@ func openAuditLog(path string) (*auditLog, error) {
 	return &auditLog{file: f, now: time.Now}, nil
 }
 
-// append writes one entry and syncs it, so an acked message is always on disk.
+// Writes one entry and syncs it, so an acked message is always on disk.
 func (l *auditLog) append(correlationID string, event []byte) error {
 	line, err := json.Marshal(entry{ReceivedAt: l.now().UTC(), CorrelationID: correlationID, Event: event})
 	if err != nil {
@@ -71,16 +68,13 @@ func (l *auditLog) append(correlationID string, event []byte) error {
 
 func (l *auditLog) close() error { return l.file.Close() }
 
-// auditor logs each (hazard_id, severity) once, with the same dedup scheme as the
-// Notifier (doc/TRD_M1.md 8.3).
+// Logs each (hazard_id, severity) once, same dedup scheme as the Notifier.
 type auditor struct {
 	log   *auditLog
 	dedup *dedupStore
 }
 
-// handle appends a new (hazard_id, severity) to the audit log and acks a repeat
-// without logging it again. The entry, then the dedup record, are on disk before
-// the ack. A crash between the two can log one entry twice; it is never lost.
+// Appends a new (hazard_id, severity) and acks a repeat without logging it again. Entry, then dedup record, hit disk before the ack. A crash between them can log an entry twice, never lose one.
 func (a *auditor) handle(m message) outcome {
 	var e HazardEvent
 	if err := json.Unmarshal(m.body, &e); err != nil || e.HazardID == "" {
