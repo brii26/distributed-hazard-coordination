@@ -125,12 +125,12 @@ func newAuthServer() (*authServer, error) {
 	}
 
 	return &authServer{
-		ping:        ping,
-		store:       pgStore{db: db},
-		salt:        salt,
-		secret:      []byte(secret),
-		lapanganTTL: time.Duration(ttl) * time.Second,
-		now:         time.Now,
+		ping:      ping,
+		store:     pgStore{db: db},
+		salt:      salt,
+		secret:    []byte(secret),
+		accessTTL: time.Duration(ttl) * time.Second,
+		now:       time.Now,
 	}, nil
 }
 

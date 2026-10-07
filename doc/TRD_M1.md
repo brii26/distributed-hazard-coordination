@@ -411,7 +411,7 @@ Base64HeaderAndPayload = Base64(Header) + "." + Base64(Payload)
 Signature = HMACSHA256(Base64HeaderAndPayload)
 Token = Base64HeaderAndPayload + "." + Signature
 ```
-`exp` bergantung role — Tim Lapangan: `iat + 60` detik (default, configurable).
+`exp` = `iat + ACCESS_TOKEN_TTL_S` untuk semua role (default 60 detik, configurable).
 
 **Verifikasi per request** (semua endpoint bercookie JWT): signature HMAC-SHA256 + klaim `exp` diverifikasi lokal di Client-Facing API, tanpa call ke Auth Service. Valid → request diteruskan ke Aggregator. Invalid dan `exp` kedaluwarsa → lihat §4.2. Invalid karena sebab lain (signature salah) → `401`. Setiap `401` dari verifikasi JWT untuk request yang membawa cookie sesi juga menghapus kedua cookie (`jwt`, `refresh_token`) lewat `Set-Cookie` dengan `Max-Age=0`, karena browser tidak bisa menghapus cookie HttpOnly sendiri; frontend lalu langsung mengarahkan ke `/login`.
 
