@@ -49,7 +49,7 @@ func TestDatabaseCallsLogTargetDurationAndStatus(t *testing.T) {
 	start := time.Now().Add(-10 * time.Millisecond)
 
 	logDB(ctx, "user-db select user", start, nil)
-	logDB(ctx, "user-db select user", start, errNotFound) // an answer, not a failure
+	logDB(ctx, "user-db select user", start, errNotFound)
 	logDB(ctx, "user-db insert user", start, errors.New("connection refused"))
 	logCall(context.Background(), "user-db ping", start, context.DeadlineExceeded)
 

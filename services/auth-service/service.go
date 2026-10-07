@@ -31,9 +31,7 @@ const (
 
 var validRoles = map[string]bool{roleMedia: true, roleLapangan: true, roleOperator: true}
 
-// otherRolesTTL applies to Media and Operator. The TRD only fixes Tim
-// Lapangan's short TTL (ACCESS_TOKEN_TTL_S); keeping it short is what makes the
-// transparent-refresh flow demoable.
+// TTL for Media and Operator. Only Tim Lapangan's short TTL is fixed (ACCESS_TOKEN_TTL_S), keeping it short makes transparent refresh demoable.
 const otherRolesTTL = 15 * time.Minute
 
 type authServer struct {
@@ -47,8 +45,7 @@ type authServer struct {
 	now         func() time.Time
 }
 
-// hashPassword is hex(sha256(password + salt)), matching the Operator seed in
-// migrations/002_seed_operator.sh and doc/TRD_M1.md section 4.1.
+// hex(sha256(password + salt)), matching the Operator seed in migrations/002_seed_operator.sh.
 func hashPassword(password, salt string) string {
 	sum := sha256.Sum256([]byte(password + salt))
 
@@ -72,12 +69,11 @@ func (s *authServer) ttlFor(role string) time.Duration {
 	return otherRolesTTL
 }
 
-// tokenResponse signs a JWT for u; the caller supplies the refresh token.
+// Signs a JWT for u, the caller supplies the refresh token.
 func (s *authServer) tokenResponse(ctx context.Context, u user, refreshToken string) (*authpb.TokenResponse, error) {
 	iat := s.now()
 	exp := iat.Add(s.ttlFor(u.Role))
 
-	// The schema has no display name, so the email doubles as the name claim.
 	jwt, err := signJWT(s.secret, jwtClaims{Name: u.Email, Email: u.Email, Role: u.Role, Iat: iat.Unix(), Exp: exp.Unix()})
 	if err != nil {
 		return nil, err
@@ -88,11 +84,10 @@ func (s *authServer) tokenResponse(ctx context.Context, u user, refreshToken str
 	return &authpb.TokenResponse{Jwt: jwt, RefreshToken: refreshToken, ExpiresIn: int64(exp.Sub(iat).Seconds())}, nil
 }
 
-// normalizeEmail lowercases, so an email that differs only by case is the same
-// account on register and on login.
+// Lowercases, so an email that differs only by case is the same account on register and login.
 func normalizeEmail(email string) string { return strings.ToLower(email) }
 
-// validEmail is a plain address (no display name, no NUL, which Postgres rejects).
+// A plain address: no display name, no NUL (Postgres rejects it).
 func validEmail(email string) bool {
 	if len(email) > maxEmailLen || strings.ContainsRune(email, 0) {
 		return false
@@ -107,7 +102,7 @@ var errInvalidCredentials = status.Error(codes.Unauthenticated, "invalid credent
 
 func (s *authServer) Login(ctx context.Context, req *authpb.LoginRequest) (*authpb.TokenResponse, error) {
 	email := normalizeEmail(req.GetEmail())
-	if !validEmail(email) { // can never match an account; also keeps NUL away from Postgres
+	if !validEmail(email) {
 		return nil, errInvalidCredentials
 	}
 
@@ -118,8 +113,6 @@ func (s *authServer) Login(ctx context.Context, req *authpb.LoginRequest) (*auth
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	// Always hash and compare, so an unknown email costs the same as a wrong
-	// password, and return one error for both so neither leaks.
 	got := hashPassword(req.GetPassword(), s.salt)
 	if err != nil || subtle.ConstantTimeCompare([]byte(got), []byte(u.PasswordHash)) != 1 {
 		log.Print("login: result=failed")
@@ -189,7 +182,7 @@ func (s *authServer) Logout(ctx context.Context, req *authpb.LogoutRequest) (*em
 	return &emptypb.Empty{}, nil
 }
 
-// newUserID returns a random (version 4) UUID.
+// A random UUID v4.
 func newUserID() (string, error) {
 	var b [16]byte
 
@@ -203,8 +196,7 @@ func newUserID() (string, error) {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
 }
 
-// create validates the input and inserts the account; Register and CreateAccount
-// both go through it, so a duplicate email is rejected the same way on either path.
+// Validates the input and inserts the account. Register and CreateAccount both use it, so a duplicate email is rejected the same on either path.
 func (s *authServer) create(ctx context.Context, email, password, role string) error {
 	email = normalizeEmail(email)
 	if !validEmail(email) || len(password) < minPasswordLen {
@@ -236,8 +228,7 @@ func (s *authServer) create(ctx context.Context, email, password, role string) e
 	return nil
 }
 
-// Register creates a Media account. The request has no role, so there is nothing
-// to escalate.
+// Creates a Media account. The request has no role, so nothing to escalate.
 func (s *authServer) Register(ctx context.Context, req *authpb.RegisterRequest) (*emptypb.Empty, error) {
 	if err := s.create(ctx, req.GetEmail(), req.GetPassword(), roleMedia); err != nil {
 		return nil, err
@@ -246,8 +237,7 @@ func (s *authServer) Register(ctx context.Context, req *authpb.RegisterRequest) 
 	return &emptypb.Empty{}, nil
 }
 
-// CreateAccount creates an account with the requested role. It trusts its caller:
-// the Operator check happens in the Client-Facing API (doc/TRD_M1.md section 5).
+// Creates an account with the requested role. Trusts its caller, the Operator check lives in the Client-Facing API.
 func (s *authServer) CreateAccount(ctx context.Context, req *authpb.CreateAccountRequest) (*emptypb.Empty, error) {
 	if err := s.create(ctx, req.GetEmail(), req.GetPassword(), req.GetRole()); err != nil {
 		return nil, err

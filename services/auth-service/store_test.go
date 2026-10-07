@@ -1,8 +1,6 @@
 package main
 
-// The Auth Service store against a real User DB. Run them with
-// tests/integration/storage.sh; without USER_DB_TEST_URL they skip, so
-// `go test ./...` stays offline.
+// The Auth Service store against a real User DB. Run with tests/integration/storage.sh, without USER_DB_TEST_URL they skip.
 
 import (
 	"context"
@@ -22,9 +20,7 @@ var (
 	seq        atomic.Int64
 )
 
-// testStore connects to USER_DB_TEST_URL and makes sure the schema exists. The
-// migration runs once per test binary: parallel CREATE TABLEs on an empty
-// database race each other in Postgres.
+// Connects to USER_DB_TEST_URL and makes sure the schema exists. The migration runs once per test binary, parallel CREATE TABLEs on an empty database race in Postgres.
 func testStore(t *testing.T) pgStore {
 	t.Helper()
 
@@ -54,8 +50,7 @@ func testStore(t *testing.T) pgStore {
 	return pgStore{db: db}
 }
 
-// newUser inserts a user unique to this test and removes it, and its refresh
-// tokens, afterwards.
+// Inserts a user unique to this test and removes it and its refresh tokens afterwards.
 func newUser(t *testing.T, s pgStore, role string) user {
 	t.Helper()
 
@@ -111,8 +106,7 @@ func TestStoreLoginLookup(t *testing.T) {
 	}
 }
 
-// TestStoreSeededOperatorMatchesLogin checks the seed script and the Login RPC
-// hash passwords the same way, so the seeded Operator can actually log in.
+// Checks the seed script and the Login RPC hash passwords the same way, so the seeded Operator can log in.
 func TestStoreSeededOperatorMatchesLogin(t *testing.T) {
 	t.Parallel()
 
