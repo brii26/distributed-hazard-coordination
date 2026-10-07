@@ -1,8 +1,7 @@
-// Problem 2 load test (doc/TRD_M1.md 12): run by tests/load/run.sh with k6.
+// Problem 2 load test, run by tests/load/run.sh with k6.
 //
 //   bmkg_only  p95 latency of /hazards?type=SEISMIC (BMKG data) while PVMBG answers after 3 s
-//   mixed      >= 50 concurrent connections for 60 s over a mixed workload; the error
-//              rate leaves out 429, which is the controlled load shedding
+// mixed      >= 50 concurrent connections for 60 s of mixed traffic, errors exclude the controlled 429
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate } from 'k6/metrics';
@@ -11,7 +10,7 @@ const BASE = __ENV.BASE_URL;
 const VUS = Number(__ENV.MIXED_VUS || 50);
 const DURATION = __ENV.MIXED_DURATION || '60s';
 
-// Failed = anything but 200 or the controlled 429.
+// Failed is anything but 200 or the controlled 429.
 const failed = new Rate('failed');
 
 const statuses = [200, 401, 429, 500, 502, 503, 504];
@@ -20,7 +19,7 @@ export const options = {
   scenarios: {
     bmkg_only: {
       executor: 'constant-arrival-rate',
-      rate: 20, // under RATE_LIMIT_RPS, so this measures latency, not the limiter
+      rate: 20,
       timeUnit: '1s',
       duration: '30s',
       preAllocatedVUs: 10,
@@ -41,13 +40,12 @@ export const options = {
       'failed{scenario:mixed}': ['rate<0.01'],
       'failed{scenario:bmkg_only}': ['rate<0.01'],
     },
-    // Empty thresholds only make k6 list a count per status code in the summary.
     ...statuses.map((s) => ({ [`http_reqs{scenario:mixed,status:${s}}`]: ['count>=0'] })),
   ),
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
 };
 
-// One login for the whole run; the token outlives it (run.sh sets ACCESS_TOKEN_TTL_S).
+// One login for the whole run, the token outlives it.
 export function setup() {
   const res = http.post(`${BASE}/auth/login`, JSON.stringify({ email: __ENV.EMAIL, password: __ENV.PASSWORD }), {
     headers: { 'Content-Type': 'application/json' },
@@ -75,8 +73,7 @@ const mix = [
   '/health',
 ];
 
-// About a second of think time per connection: 50 connections then ask for roughly
-// RATE_LIMIT_RPS (50) in total, so the limiter sheds only the excess.
+// About a second of think time per connection, so 50 connections ask for roughly RATE_LIMIT_RPS in total.
 export function mixed(data) {
   get(mix[Math.floor(Math.random() * mix.length)], data);
   sleep(0.8 + Math.random() * 0.4);

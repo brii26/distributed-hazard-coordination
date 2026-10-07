@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Full-stack smoke test: brings up the whole docker-compose stack in an isolated
-# project, checks every service's /health, runs the golden path (seeded Operator
-# logs in, polls /hazards until data from the mocks has flowed through the
-# Aggregator), then restarts one consumer and checks nothing else moved
-# (doc/TRD_M1.md 0.0, 12: independent restart, P4).
+# Full-stack smoke test in an isolated compose project: every /health, the golden path, then one consumer restart that must not move anything else.
 #
 #   tests/smoke/run.sh
 #
@@ -18,11 +14,8 @@ compose="docker compose -p hazard-smoke --env-file $root/.env.example -f $root/d
 # shellcheck disable=SC1091
 set -a; . ./.env.example; set +a
 
-# Host ports clear of a normal `docker compose up` running next to this.
 export CLIENT_FACING_API_PORT=28080 BMKG_PORT=28081 PVMBG_PORT=28082 RABBITMQ_MANAGEMENT_PORT=25672 WEB_FRONTEND_PORT=23000
-# The cookie jar below talks plain HTTP.
 export COOKIE_SECURE=false
-# Fast polling and event arrival, so data shows within seconds.
 export POLL_INTERVAL_MS=500 BMKG_EVENT_INTERVAL_S=3 PVMBG_EVENT_INTERVAL_S=3
 
 jar=$(mktemp)
@@ -31,10 +24,8 @@ trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; $compose ps >&2 || true; exit 1; }
 
-# service:port for every container's /health (all listen on their own port inside).
 services="bmkg-mock:8081 pvmbg-mock:8082 aggregator:8091 auth-service:8092 client-facing-api:8080 dashboard-updater:8093 notifier:8094 audit-logger:8095"
 
-# The consumers publish no host port, so every /health is asked from inside its container.
 healthy() { $compose exec -T "${1%%:*}" wget -qO- "http://localhost:${1##*:}/health" >/dev/null 2>&1; }
 
 wait_until() { # wait_until <seconds> <description> <command...>
