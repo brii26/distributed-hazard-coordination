@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -232,7 +233,7 @@ func TestNewTokenThatDoesNotVerifyIsNotForwarded(t *testing.T) {
 	}
 }
 
-// Twenty requests sharing one expired session refresh it together. Auth sees one exchange, every request gets the same new pair and is forwarded, and nothing corrupts state (-race).
+// Twenty requests sharing one expired session refresh it together. Auth sees one exchange, every request gets the same new pair and is forwarded, and the old token is rejected afterwards (-race).
 func TestConcurrentRefreshesOfOneTokenAllSucceedWithOneExchange(t *testing.T) {
 	t.Parallel()
 
@@ -272,12 +273,54 @@ func TestConcurrentRefreshesOfOneTokenAllSucceedWithOneExchange(t *testing.T) {
 		}
 	}
 
-	// A request that arrives after the exchange, still with the old cookies, gets the same pair.
-	if rec, _ := runOn(t, api, sessionCookie(cookieJWT, expiredToken(t)), sessionCookie(cookieRefresh, oldRefresh)); rec.Code != http.StatusOK {
-		t.Fatalf("late request got %d, want 200", rec.Code)
-	}
-
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("Auth Service saw %d refreshes, want 1", got)
 	}
+
+	rec, s := runOn(t, api, sessionCookie(cookieJWT, expiredToken(t)), sessionCookie(cookieRefresh, oldRefresh))
+	if rec.Code != http.StatusUnauthorized || s.reached || len(rec.Result().Cookies()) != 2 {
+		t.Fatalf("replaying the old token got %d reached=%v cookies=%d, want 401 with both cookies cleared", rec.Code, s.reached, len(rec.Result().Cookies()))
+	}
+}
+
+// A client that disconnects while its request leads a shared refresh must not fail the requests waiting on it.
+func TestCancelledLeaderDoesNotFailTheFollowers(t *testing.T) {
+	t.Parallel()
+
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		fresh := freshToken(t)
+		f := fakeAuth{refresh: func(in *authpb.RefreshRequest) (*authpb.TokenResponse, error) {
+			<-release
+
+			return refreshReturning(fresh, newRefresh, nil)(in)
+		}}
+		api := &authAPI{auth: f, timeout: time.Second, secure: true}
+
+		leaderCtx, cancelLeader := context.WithCancel(context.Background())
+		errs := make(chan error, 2)
+
+		go func() { _, _ = api.exchange(leaderCtx, oldRefresh) }()
+
+		synctest.Wait()
+
+		for range 2 {
+			go func() {
+				_, err := api.exchange(context.Background(), oldRefresh)
+				errs <- err
+			}()
+		}
+
+		synctest.Wait()
+		cancelLeader()
+		synctest.Wait()
+		close(release)
+		synctest.Wait()
+
+		for range 2 {
+			if err := <-errs; err != nil {
+				t.Errorf("a follower failed because the leader was cancelled: %v", err)
+			}
+		}
+	})
 }

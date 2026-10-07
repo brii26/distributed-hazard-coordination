@@ -425,7 +425,7 @@ Refresh token bersifat stateful, disimpan di tabel `refresh_tokens` milik Auth S
 | Processing | Request asli ditahan di memory. Client-Facing API memanggil RPC `Refresh(refresh_token)` ke Auth Service. Auth Service mencari `refresh_token` di tabel `refresh_tokens` (join `users`); ditemukan → baris dirotasi (refresh token lama diganti baru), JWT baru diterbitkan. Client-Facing API meng-inject JWT baru ke request yang ditahan, meneruskan ke Aggregator. |
 | Response (sukses) | Response dari Aggregator diteruskan ke client, disertai `Set-Cookie` JWT dan refresh token baru |
 | Response (refresh token tidak ditemukan/invalid) | `401`, cookie JWT dan refresh token dihapus |
-| Batasan diketahui | Permintaan paralel dengan refresh token sama dapat saling bertabrakan — hanya satu yang berhasil merotasi; permintaan yang kalah menerima `401` dan cookie JWT/refresh token dihapus (client login ulang, atau mengulang dengan cookie baru bila cookie dari pemenang sudah diterima). Single-flight per refresh token dapat menghindarinya, tetapi belum dibangun di M1 |
+| Permintaan paralel | Permintaan dengan refresh token sama yang tiba selagi rotasi berjalan berbagi satu panggilan ke Auth Service (single-flight, per instance) dan semuanya mendapat pasangan token baru. Pemanggilan itu tidak terikat ke satu request, jadi client yang putus tidak menggagalkan yang lain. Setelah rotasi selesai, refresh token lama ditolak `401` dan kedua cookie dihapus, sesuai kriteria P3 |
 
 ### 4.3 Pembatasan konkurensi
 
@@ -689,7 +689,7 @@ Service membaca nama di kolom kedua. `docker-compose.yml` mengisinya dari `.env.
 - Hasil load testing bergantung pada lingkungan pengujian.
 
 **Auth & Trust (P3):**
-- Permintaan paralel dengan refresh token sama dapat saling bertabrakan karena hanya satu yang berhasil melakukan rotasi.
+- Berbagi satu rotasi refresh hanya bekerja di dalam satu instance Client-Facing API, dan hanya untuk permintaan yang tiba selagi rotasi berjalan. Permintaan yang tiba sesudahnya dengan cookie lama mendapat `401`.
 
 **Microservice & Storage (P4):**
 - Restart Auth/Token Service berdampak pada login dan refresh (503 sementara); permintaan dengan token valid tetap dilayani.
