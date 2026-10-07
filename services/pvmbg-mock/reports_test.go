@@ -62,7 +62,6 @@ func TestGeneratorAddsReportsAndHonoursSchemaFlag(t *testing.T) {
 		s.run(ctx, 5*time.Millisecond, func() bool { return true })
 	}()
 
-	// Read concurrently with the generator so -race exercises the lock.
 	deadline := time.Now().Add(2 * time.Second)
 	for len(s.since(time.Time{})) < 25 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -90,7 +89,7 @@ func TestSinceFilters(t *testing.T) {
 
 	s := &reportStore{}
 	base := time.Now()
-	s.seed(10, time.Minute, base, false) // oldest is 10 min ago, newest 1 min ago
+	s.seed(10, time.Minute, base, false)
 
 	if n := len(s.since(base.Add(-5*time.Minute - time.Second))); n != 5 {
 		t.Fatalf("expected the 5 newest reports, got %d", n)
@@ -106,8 +105,6 @@ func getReports(t *testing.T, tokens *tokenStore, reports *reportStore, minD, ma
 	}
 
 	rec := httptest.NewRecorder()
-	// Bypasses newMux so the package-global outage flag, which other parallel
-	// tests toggle, cannot turn these into 503s.
 	requireBearer(tokens, reportsHandler(reports, minD, maxD)).ServeHTTP(rec, req)
 
 	return rec
@@ -133,7 +130,6 @@ func TestReportsRequireCurrentBearerToken(t *testing.T) {
 		t.Fatalf("valid token: expected 200, got %d", rec.Code)
 	}
 
-	// Rotation supersedes the old access token: one valid token per client.
 	if _, errCode := tokens.exchange(grantRefreshToken, "", first.refresh); errCode != "" {
 		t.Fatal(errCode)
 	}
@@ -152,7 +148,7 @@ func TestReportsSinceAndShape(t *testing.T) {
 
 	reports := &reportStore{}
 	base := time.Now().UTC()
-	reports.seed(10, time.Minute, base, true) // oldest 10 min ago, newest 1 min ago
+	reports.seed(10, time.Minute, base, true)
 
 	since := url.QueryEscape(base.Add(-5*time.Minute - time.Second).Format(time.RFC3339Nano))
 
@@ -193,7 +189,6 @@ func TestReportsDelayWithinRange(t *testing.T) {
 
 		getReports(t, tokens, &reportStore{}, lo, hi, "Bearer "+pair.access, "")
 
-		// Upper bound has slack for scheduling; the lower bound is exact.
 		if d := time.Since(start); d < lo || d > hi+250*time.Millisecond {
 			t.Fatalf("latency %v outside [%v, %v]", d, lo, hi)
 		}
@@ -241,7 +236,6 @@ func TestRefreshAfterExpiryGivesFreshLifetime(t *testing.T) {
 
 	first, _ := tokens.exchange(grantAuthCode, testCode, "")
 
-	// The access token is long expired, but the refresh token still rotates.
 	clock = clock.Add(10 * time.Minute)
 
 	second, errCode := tokens.exchange(grantRefreshToken, "", first.refresh)
@@ -265,7 +259,6 @@ func TestRefreshAfterExpiryGivesFreshLifetime(t *testing.T) {
 		t.Fatal("new access token should expire after its lifetime")
 	}
 
-	// Superseded tokens stay invalid.
 	if tokens.validAccess(first.access) {
 		t.Fatal("superseded access token must stay invalid")
 	}

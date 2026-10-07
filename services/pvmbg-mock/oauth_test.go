@@ -91,7 +91,6 @@ func TestOAuthRejects(t *testing.T) {
 		t.Fatalf("refresh before any issuance: expected 400, got %d", status)
 	}
 
-	// A wrong code must not burn the real one.
 	if status, _ := postToken(t, store, testClientSecret, codeForm("bad")); status != http.StatusBadRequest {
 		t.Fatalf("wrong code: expected 400, got %d", status)
 	}

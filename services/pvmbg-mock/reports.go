@@ -19,13 +19,12 @@ const (
 	defaultDelayMaxMS    = 3000
 )
 
-// volcanoIDs is the fixed list new reports draw from.
+// The fixed list new reports draw from.
 var volcanoIDs = []string{"MERAPI", "SEMERU", "BROMO", "SINABUNG", "KRAKATAU", "AGUNG", "RINJANI", "KELUD"}
 
 var alertLevels = []string{"Normal", "Waspada", "Siaga", "Awas"}
 
-// VolcanicReport is the PVMBG report from doc/TRD_M1.md section 2.
-// ConfidenceLevel is only present once the schema is extended (#9).
+// The PVMBG report. ConfidenceLevel is only present once the schema is extended.
 type VolcanicReport struct {
 	ReportID         string    `json:"report_id"`
 	VolcanoID        string    `json:"volcano_id"`
@@ -36,20 +35,19 @@ type VolcanicReport struct {
 	ConfidenceLevel  *float64  `json:"confidence_level,omitempty"`
 }
 
-// reportStore is the mock's in-memory dataset: the generator appends while the
-// /volcanic-reports handler (#7) reads, so access goes through the RWMutex.
+// The mock's in-memory dataset. The generator appends while the handler reads, so access goes through the RWMutex.
 type reportStore struct {
 	mu      sync.RWMutex
 	reports []VolcanicReport
 	seq     int
 }
 
-// randInt returns a value in [lo, hi].
+// A value in [lo, hi].
 func randInt(lo, hi int) int {
 	return lo + rand.IntN(hi-lo+1) //nolint:gosec // mock data, not security-sensitive
 }
 
-// add generates one report stamped with the given time and appends it.
+// Generates one report stamped with the given time and appends it.
 func (s *reportStore) add(at time.Time, extended bool) VolcanicReport {
 	level := randInt(0, len(alertLevels)-1)
 
@@ -77,8 +75,7 @@ func (s *reportStore) add(at time.Time, extended bool) VolcanicReport {
 	return r
 }
 
-// seed backfills n reports spaced interval apart, ending now, using the
-// schema that is current at startup.
+// Backfills n reports spaced interval apart, ending now, with the schema current at startup.
 func (s *reportStore) seed(n int, interval time.Duration, now time.Time, extended bool) {
 	for i := n; i > 0; i-- {
 		s.add(now.Add(-time.Duration(i)*interval), extended)
@@ -87,9 +84,7 @@ func (s *reportStore) seed(n int, interval time.Duration, now time.Time, extende
 	log.Printf("seeded %d volcanic reports", n)
 }
 
-// run appends one report every interval until ctx is done. It never looks at
-// outage state: an outage only changes what /volcanic-reports returns, so data
-// keeps accumulating and is available the moment the outage ends.
+// Appends one report every interval until ctx is done. It ignores outage state, so data keeps accumulating and is there the moment the outage ends.
 func (s *reportStore) run(ctx context.Context, interval time.Duration, extended func() bool) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -105,7 +100,7 @@ func (s *reportStore) run(ctx context.Context, interval time.Duration, extended 
 	}
 }
 
-// since returns a copy of the reports with ReportedAt after t.
+// A copy of the reports with ReportedAt after t.
 func (s *reportStore) since(t time.Time) []VolcanicReport {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -121,8 +116,7 @@ func (s *reportStore) since(t time.Time) []VolcanicReport {
 	return out
 }
 
-// requireBearer guards a handler with the OAuth access token this mock issued.
-// Missing, malformed or superseded tokens are 401; the token itself is never logged.
+// Guards a handler with the OAuth access token this mock issued. Missing, malformed or superseded tokens get 401, the token is never logged.
 func requireBearer(tokens *tokenStore, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -138,10 +132,7 @@ func requireBearer(tokens *tokenStore, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// reportsHandler serves GET /volcanic-reports?since=<ISO8601>. Every served
-// request first sleeps a random time in [minDelay, maxDelay] (the slow legacy
-// system the Aggregator has to cope with); a client that gives up mid-delay
-// frees the handler immediately.
+// GET /volcanic-reports?since=<ISO8601>. Every served request first sleeps a random time in [minDelay, maxDelay] (the slow legacy system), and a client that gives up mid-delay frees the handler at once.
 func reportsHandler(s *reportStore, minDelay, maxDelay time.Duration) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var since time.Time

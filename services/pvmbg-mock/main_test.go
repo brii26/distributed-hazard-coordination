@@ -79,7 +79,6 @@ func TestOutageToggle(t *testing.T) {
 func TestSchemaVersionToggle(t *testing.T) {
 	t.Parallel()
 
-	// Only test touching schemaExtended, so parallel is safe.
 	for _, want := range []string{"extended", "legacy"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/schema-version", nil)
 		req.Header.Set("X-Admin-Key", testAdminKey)
