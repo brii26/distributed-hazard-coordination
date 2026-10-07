@@ -8,7 +8,6 @@
 
   let { children } = $props();
 
-  // Cookies survive a reload, so one request tells whether the session is still good.
   onMount(loadSession);
 
   async function logout() {

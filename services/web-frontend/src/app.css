@@ -1,7 +1,4 @@
-/* A hazard bulletin: serif headings and a double rule, like a printed notice, over a
-   quiet paper-and-graphite page with one forest-green accent. System fonts only, the
-   containers load nothing external. Severity is the one multi-color element: a
-   four-step data scale that always carries its name in text. */
+/* Hazard bulletin look: serif headings, double rule, one green accent, system fonts only. Severity is the one multi-color element and always carries its name in text. */
 :root {
   color-scheme: light dark;
   --paper: #f3f0e8;
@@ -55,7 +52,7 @@ a { color: var(--accent); }
 
 .shell { max-width: 62rem; margin: 0 auto; padding: 0 1.25rem 4rem; }
 
-/* The masthead: name on the left, one double rule under it, the identity of the page. */
+/* Masthead. */
 .masthead {
   display: flex;
   flex-wrap: wrap;
@@ -86,7 +83,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 button.quiet { background: transparent; color: var(--ink); border-color: var(--rule); font-weight: 500; }
 button.quiet:not(:disabled):hover { border-color: var(--muted); }
 
-/* Sign in / register: a short statement of what this is, then the form. */
+/* Sign in and register. */
 .split { display: grid; gap: 2.5rem; }
 @media (min-width: 52rem) { .split { grid-template-columns: 1.1fr 1fr; gap: 4rem; align-items: start; } }
 .lede p { font: 1.25rem/1.5 var(--serif); color: var(--muted); margin-top: 1rem; max-width: 26rem; }
@@ -115,7 +112,7 @@ input[type='email'], input[type='password'], input[type='search'], select {
 .role strong { display: block; font-weight: 600; }
 .role span span { color: var(--muted); font-size: .9rem; }
 
-/* Hazards */
+/* Hazards. */
 .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1rem 2rem; }
 .status { color: var(--muted); font-size: .92rem; margin-top: .5rem; }
 .seg { display: inline-flex; border: 1px solid var(--ink); border-radius: 3px; overflow: hidden; }
