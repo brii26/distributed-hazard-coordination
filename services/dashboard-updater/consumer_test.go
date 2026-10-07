@@ -12,7 +12,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// The consumer against a real RabbitMQ at RABBITMQ_TEST_URL; skipped otherwise.
+// The consumer against a real RabbitMQ at RABBITMQ_TEST_URL, skipped otherwise.
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -52,7 +52,6 @@ func TestRealBrokerConsumesAcksAndCatchesUpAfterARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Another consumer's queue on the same exchange, standing in for the Notifier.
 	if _, err := ch.QueueDeclare(other, false, true, false, false, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -90,10 +89,9 @@ func TestRealBrokerConsumesAcksAndCatchesUpAfterARestart(t *testing.T) {
 	publish(event("b", "VOLCANIC", "SIAGA"))
 	waitFor(t, "two events in the state", func() bool { return len(s.snapshot()) == 2 })
 
-	// Killed mid-stream: the queue is durable, so what arrives meanwhile waits for it.
 	stop()
 	publish(event("c", "SEISMIC", "WASPADA"))
-	publish(event("a", "SEISMIC", "NORMAL")) // a redelivery-like repeat
+	publish(event("a", "SEISMIC", "NORMAL"))
 
 	stop = start()
 	defer stop()
@@ -106,7 +104,6 @@ func TestRealBrokerConsumesAcksAndCatchesUpAfterARestart(t *testing.T) {
 		return err == nil && q.Messages == 0
 	})
 
-	// The other consumer's queue got its own copy of everything, regardless.
 	if q, err := ch.QueueDeclarePassive(other, false, true, false, false, nil); err != nil || q.Messages != 4 {
 		t.Fatalf("the other queue must hold all 4 messages, got %d %v", q.Messages, err)
 	}

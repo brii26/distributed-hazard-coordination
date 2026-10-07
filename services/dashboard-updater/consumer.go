@@ -22,25 +22,22 @@ const (
 	heartbeatTime = 10 * time.Second
 )
 
-// message is one delivery as the handler sees it.
+// One delivery as the handler sees it.
 type message struct {
 	body          []byte
-	correlationID string // the AMQP correlation_id property, set by the Aggregator
+	correlationID string
 }
 
-// outcome is what to tell the broker about a message once it is handled.
+// What to tell the broker about a message once handled.
 type outcome int
 
 const (
 	ack     outcome = iota // fully processed
-	requeue                // failed for now: deliver it again
-	drop                   // can never be processed (malformed): do not redeliver
+	requeue                // failed for now, deliver again
+	drop                   // can never be processed, don't redeliver
 )
 
-// consumer keeps one subscription alive (doc/TRD_M1.md 7, 8): its own durable
-// queue bound to the fanout exchange, manual ack only after handle is done, and
-// a lost connection redialled with a growing delay. The Aggregator never learns
-// this consumer exists: it only publishes to the exchange.
+// Keeps one subscription alive: its own durable queue bound to the fanout exchange, manual ack after handle, reconnect with a growing delay. The Aggregator never knows it exists.
 type consumer struct {
 	url, exchange, queue string
 	handle               func(message) outcome
@@ -48,10 +45,10 @@ type consumer struct {
 	up atomic.Bool
 }
 
-// connected reports the broker connection state, for /health.
+// Broker connection state, for /health.
 func (c *consumer) connected() bool { return c.up.Load() }
 
-// run consumes until ctx is done, reconnecting whenever the connection is lost.
+// Consumes until ctx is done, reconnecting when the connection is lost.
 func (c *consumer) run(ctx context.Context) {
 	failures := 0
 
@@ -78,8 +75,7 @@ func (c *consumer) run(ctx context.Context) {
 	}
 }
 
-// session runs one connection until it fails or ctx ends. established reports
-// whether it got as far as consuming, so the retry delay resets after a real session.
+// Runs one connection until it fails or ctx ends. established says whether it got as far as consuming, so the retry delay resets after a real session.
 func (c *consumer) session(ctx context.Context) (established bool, err error) {
 	conn, err := amqp.DialConfig(c.url, amqp.Config{Heartbeat: heartbeatTime, Dial: amqp.DefaultDial(dialTimeout)})
 	if err != nil {
@@ -93,8 +89,6 @@ func (c *consumer) session(ctx context.Context) (established bool, err error) {
 		return false, err
 	}
 
-	// The queue is ours and durable; the exchange belongs to the broker's own
-	// definitions (infra/rabbitmq), so it is only bound to, never declared here.
 	if _, err := ch.QueueDeclare(c.queue, true, false, false, false, nil); err != nil {
 		return false, err
 	}
@@ -129,9 +123,8 @@ func (c *consumer) session(ctx context.Context) (established bool, err error) {
 	}
 }
 
-// dispatch hands a delivery to handle, then acks or nacks it as handle decided.
+// Hands a delivery to handle, then acks or nacks as handle decided.
 func (c *consumer) dispatch(d amqp.Delivery) {
-	// The publisher's span context rides in the message headers, so this joins its trace.
 	_, span := tracer.Start(otel.GetTextMapPropagator().Extract(context.Background(), amqpCarrier(d.Headers)),
 		"consume "+c.queue, trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(attribute.String("correlation_id", d.CorrelationId)))
@@ -144,7 +137,7 @@ func (c *consumer) dispatch(d amqp.Delivery) {
 		err = d.Ack(false)
 		withID(d.CorrelationId).Info("ack sent", "delivery_tag", d.DeliveryTag)
 	case requeue:
-		time.Sleep(requeueDelay) // a short pause so a persistent failure does not spin
+		time.Sleep(requeueDelay)
 
 		err = d.Nack(false, true)
 		withID(d.CorrelationId).Warn("nack sent", "requeue", "true", "delivery_tag", d.DeliveryTag)

@@ -66,7 +66,7 @@ func TestPublishDropsASlowSubscriberWithoutBlocking(t *testing.T) {
 	h := newHub()
 	slow, fast := h.subscribe(), h.subscribe()
 
-	for range subBuffer + 1 { // the slow one never reads
+	for range subBuffer + 1 {
 		h.publish([]byte("x"))
 
 		<-fast
@@ -83,7 +83,7 @@ func TestPublishDropsASlowSubscriberWithoutBlocking(t *testing.T) {
 	}
 }
 
-// drain empties a closed channel's backlog and returns it closed.
+// Empties a closed channel's backlog and returns it closed.
 func drain(ch chan []byte) chan []byte {
 	for len(ch) > 0 {
 		<-ch
