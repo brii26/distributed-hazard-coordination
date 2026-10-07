@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# Integration tests for one service plus its own storage or broker: starts a real
-# User DB, Canonical Store (both with the project's migrations) and RabbitMQ,
-# runs the suites that need them, then removes the containers.
+# Starts a real User DB, Canonical Store and RabbitMQ, runs the suites that need them, then removes the containers.
 #
 #   tests/integration/storage.sh
 #
-# Suites: the Auth Service store against the User DB, the Aggregator store against
-# the Canonical Store, and the Aggregator publisher against RabbitMQ. Each one skips
-# when its env var is unset, so a plain `go test ./...` stays offline.
+# Suites: Auth store against the User DB, Aggregator store against the Canonical Store, publisher against RabbitMQ. Each skips when its env var is unset.
 #
 # Needs Docker and Go. Values come from .env.example, so no .env is needed.
 set -euo pipefail
@@ -36,7 +32,6 @@ docker run -d --name $prefix-canonical -p 127.0.0.1:$canonical_port:5432 \
 
 docker run -d --name $prefix-rabbitmq -p 127.0.0.1:$rabbit_port:5672 rabbitmq:3.13-management-alpine >/dev/null
 
-# Postgres only listens on TCP once its init scripts (the migrations) are done.
 wait_for() {
   local what=$1
   shift

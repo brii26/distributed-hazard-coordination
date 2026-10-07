@@ -15,5 +15,5 @@ RUN npm run build
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/build /usr/share/nginx/html
-# COPY keeps the build stage's modes; nginx's worker needs to read them.
+# Keep the build stage's modes so the nginx worker can read the files.
 RUN chmod -R a+rX /usr/share/nginx/html

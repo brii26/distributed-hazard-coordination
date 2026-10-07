@@ -34,7 +34,7 @@ Closes #17
 Closes #18
 ```
 
-**Reviews:** every PR needs ≥1 approval before merge (branch protection enforces this). There is no CI: run the "Before you push" checks from `README.md` (`gofmt`, `go vet`, `go build`, `go test -race`, `golangci-lint`, plus `docker build` when a Dockerfile or dependencies change) before pushing; reviewers can re-run them.
+**Reviews:** every PR needs ≥1 approval before merge (branch protection enforces this). `.github/CODEOWNERS` requests a review from every collaborator automatically, so you don't need to add reviewers by hand. There is no CI: run the "Before you push" checks from `README.md` (`gofmt`, `go vet`, `go build`, `go test -race`, `golangci-lint`, plus `docker build` when a Dockerfile or dependencies change) before pushing; reviewers can re-run them.
 
 ## Dependency order
 

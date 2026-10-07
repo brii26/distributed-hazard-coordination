@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Service-to-service integration tests: starts only the two services of a pair
-# (plus the storage or broker they need) in an isolated compose project, runs the
-# suite against the real network path, then tears everything down.
+# Service-to-service integration tests in an isolated compose project, torn down after.
 #
 #   tests/integration/run.sh cfa-auth    Client-Facing API + Auth Service
 #   tests/integration/run.sh agg-bmkg    Aggregator + BMKG mock
 #   tests/integration/run.sh agg-pvmbg   Aggregator + PVMBG mock
 #   tests/integration/run.sh all         the three, one after the other
-#   tests/integration/run.sh abuse       the whole stack, pushed through restarts, outages,
-#                                        crashes, load and malformed input (about 8 minutes; not in "all")
+#   tests/integration/run.sh abuse       the whole stack under abuse, about 8 minutes, not in "all"
 #
 # Needs docker compose and Go. Values come from .env.example, so no .env is needed.
 set -euo pipefail
@@ -21,16 +18,11 @@ compose="docker compose -p $project --env-file $root/.env.example -f $root/docke
 
 # shellcheck disable=SC1091
 set -a; . ./.env.example; set +a
-
-# These come after .env.example is read, which would otherwise reset every one of them.
-# Host ports that stay clear of a normal `docker compose up` running next to this.
 export CLIENT_FACING_API_PORT=18080 BMKG_PORT=18081 PVMBG_PORT=18082
 
-# Fast timings so outages and recoveries show within seconds, not minutes.
 export POLL_INTERVAL_MS=500 POLL_TIMEOUT_MS=2000 CB_FAILURE_THRESHOLD=2 CB_OPEN_DURATION_MS=2000
 export BMKG_DELAY_MIN_MS=10 BMKG_DELAY_MAX_MS=50 PVMBG_DELAY_MIN_MS=10 PVMBG_DELAY_MAX_MS=50
 
-# The suite logs in and registers from one address all the time; the login throttle is not what it tests.
 export AUTH_RATE_LIMIT_RPS=1000
 export IT_COMPOSE="$compose"
 
@@ -39,7 +31,6 @@ cleanup() { $compose down -v --remove-orphans >/dev/null 2>&1 || true; }
 up() {
   cleanup
   trap cleanup EXIT
-  # --no-deps: start exactly the services listed, not what compose says they depend on.
   $compose up -d --build --wait --no-deps "$@"
 }
 
@@ -49,7 +40,6 @@ run_go() {
 }
 
 suite_cfa_auth() {
-  # A 2 s access token lets the suite see a session expire and refresh.
   export ACCESS_TOKEN_TTL_S=2
   up user-db auth-service client-facing-api
   IT_CFA_URL="http://127.0.0.1:$CLIENT_FACING_API_PORT" \
@@ -81,11 +71,8 @@ suite_agg_pvmbg() {
 }
 
 suite_abuse() {
-  # The spec's own numbers: PVMBG answers in 3 s, so a slow source is really slow.
   export PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 POLL_TIMEOUT_MS=5000
-  # New records keep arriving, so "ingest resumed" is something a test can see.
   export BMKG_EVENT_INTERVAL_S=2 PVMBG_EVENT_INTERVAL_S=2
-  # Every test starts from a fresh stack, so the whole suite takes about 8 minutes.
   export GO_TEST_TIMEOUT=45m
   up bmkg-mock pvmbg-mock canonical-store user-db rabbitmq aggregator auth-service client-facing-api \
     dashboard-updater notifier audit-logger

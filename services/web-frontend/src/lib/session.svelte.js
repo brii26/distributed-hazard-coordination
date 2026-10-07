@@ -1,8 +1,6 @@
 import { api } from './api.js';
 
-// The page cannot read the HttpOnly cookies, so it asks the API who the session
-// belongs to (GET /me). The role only decides what the page shows; the API still
-// enforces every role check itself.
+// Asks the API who the session belongs to (GET /me), since HttpOnly cookies can't be read. The role only decides what is shown, the API enforces it.
 export const session = $state({ checked: false, loggedIn: false, role: '', email: '' });
 
 export async function loadSession() {
