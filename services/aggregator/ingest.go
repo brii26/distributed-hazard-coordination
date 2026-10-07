@@ -45,6 +45,14 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	ctx = withCorrelation(ctx, res.correlationID)
 	l := withID(res.correlationID)
 
+	for _, d := range describeFields(i.name, res.records) {
+		l.Info("unknown field", "source", i.name, "field", d.field, "decision", d.decision)
+	}
+
+	for _, d := range describeFields(i.name+" warnings", res.warnings) {
+		l.Info("unknown field", "source", i.name, "field", d.field, "decision", d.decision)
+	}
+
 	events, err := i.mapBatch(res)
 	if err != nil {
 		l.Warn("ingest rejected records", "source", i.name, "error", err.Error())

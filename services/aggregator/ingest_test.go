@@ -435,3 +435,31 @@ func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 		}
 	}
 }
+
+//nolint:paralleltest // swaps the global logger
+func TestIngestLogsTheMappingDecisionForAnUnknownField(t *testing.T) {
+	buf := captureLogs(t)
+
+	var rec recorder
+
+	in, ch := volcanicIngest(rec.upsert(always), rec.publish)
+	batch := reports("R1")
+	batch.records[0]["confidence_level"] = 0.8
+
+	ch <- batch
+
+	close(ch)
+	in.run(context.Background())
+
+	var got []string
+
+	for _, l := range jsonLines(t, buf.String()) {
+		if l["message"] == "unknown field" {
+			got = append(got, l["field"].(string)+"="+l["decision"].(string))
+		}
+	}
+
+	if !slices.Equal(got, []string{"confidence_level=to_attributes"}) {
+		t.Fatalf("decisions logged = %v", got)
+	}
+}
