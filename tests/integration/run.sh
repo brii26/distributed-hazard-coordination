@@ -71,6 +71,8 @@ suite_agg_pvmbg() {
 }
 
 suite_abuse() {
+  local pattern
+  pattern=$(abuse_pattern "${1:-all}") || exit 2 # a typo should fail before the stack is built
   export PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 POLL_TIMEOUT_MS=5000
   export BMKG_EVENT_INTERVAL_S=2 PVMBG_EVENT_INTERVAL_S=2
   export GO_TEST_TIMEOUT=45m
@@ -82,14 +84,25 @@ suite_abuse() {
     IT_PVMBG_URL="http://127.0.0.1:$PVMBG_PORT" IT_PVMBG_ADMIN_KEY="$PVMBG_ADMIN_KEY" \
     IT_CANONICAL_USER="$CANONICAL_DB_USER" IT_CANONICAL_DB="$CANONICAL_DB_NAME" \
     IT_LOAD_SECONDS="${IT_LOAD_SECONDS:-15}" \
-    run_go client-facing-api "${ABUSE_RUN:-^TestAbuse}"
+    run_go client-facing-api "${ABUSE_RUN:-$pattern}"
+}
+
+# The abuse tests that need no stack reset (input, auth, limits) run in about a minute, the rest restart or wipe the stack.
+abuse_pattern() {
+  case $1 in
+    input) echo '^TestAbuse(CredentialsDoNotCrossDomains|MediaCannotReachRawFields|AuthInputIsRejectedCleanly|QueryParametersAreValidatedAlike|CorrelationIDIsSane|RateLimitIsPerAccount|OneAccountCannotHoldEveryStream|EveryServiceHasARestartPolicy)$' ;;
+    resilience) echo '^TestAbuse(DownUp|DownVolumes|RestartEachServiceAlone|BrokerStoreAndUserDBDown|ConsumerDownCatchesUp|PVMBGOutageToggle|SchemaVersionToggle|KillAggregatorMidPoll|PoisonMessages)' ;;
+    load) echo '^TestAbuseSustainedLoad' ;;
+    all) echo '^TestAbuse' ;;
+    *) echo "unknown abuse set: $1 (input|resilience|load|all)" >&2; exit 2 ;;
+  esac
 }
 
 case "${1:-}" in
   cfa-auth) suite_cfa_auth ;;
   agg-bmkg) suite_agg_bmkg ;;
   agg-pvmbg) suite_agg_pvmbg ;;
-  abuse) suite_abuse ;;
+  abuse) suite_abuse "${2:-all}" ;;
   all) (suite_cfa_auth) && (suite_agg_bmkg) && (suite_agg_pvmbg) ;;
-  *) echo "usage: $0 cfa-auth|agg-bmkg|agg-pvmbg|abuse|all" >&2; exit 2 ;;
+  *) echo "usage: $0 cfa-auth|agg-bmkg|agg-pvmbg|abuse [input|resilience|load|all]|all" >&2; exit 2 ;;
 esac
