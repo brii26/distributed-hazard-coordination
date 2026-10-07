@@ -21,6 +21,8 @@ const (
 	lapEmail   = "lap@x.example"
 	testSalt   = "salt"
 	testSecret = "jwt-secret"
+
+	testPassword = "pw-12345"
 )
 
 var testNow = time.Unix(1_700_000_000, 0)
@@ -248,11 +250,11 @@ func TestRegisterAlwaysCreatesMedia(t *testing.T) {
 
 	s := newTestServer()
 
-	if _, err := s.Register(context.Background(), &authpb.RegisterRequest{Email: "new@x.example", Password: "pw"}); err != nil {
+	if _, err := s.Register(context.Background(), &authpb.RegisterRequest{Email: "new@x.example", Password: testPassword}); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := loginRole(t, s, "new@x.example", "pw"); got != roleMedia {
+	if got := loginRole(t, s, "new@x.example", testPassword); got != roleMedia {
 		t.Fatalf("Register must create a Media account, got %q", got)
 	}
 }
@@ -265,11 +267,11 @@ func TestCreateAccountCanCreateEveryRole(t *testing.T) {
 	for _, role := range []string{roleMedia, roleLapangan, roleOperator} {
 		email := role + "@x.example"
 
-		if _, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: email, Password: "pw", Role: role}); err != nil {
+		if _, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: email, Password: testPassword, Role: role}); err != nil {
 			t.Fatalf("create %s: %v", role, err)
 		}
 
-		if got := loginRole(t, s, email, "pw"); got != role {
+		if got := loginRole(t, s, email, testPassword); got != role {
 			t.Fatalf("created %s but logged in as %q", role, got)
 		}
 	}
@@ -281,7 +283,7 @@ func TestCreateAccountRejectsUnknownRole(t *testing.T) {
 	s := newTestServer()
 
 	for _, role := range []string{"", "admin", "operator"} { // roles are case-sensitive
-		_, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: "r@x.example", Password: "pw", Role: role})
+		_, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: "r@x.example", Password: testPassword, Role: role})
 		if status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("role %q: expected InvalidArgument, got %v", role, err)
 		}
@@ -299,8 +301,8 @@ func TestDuplicateEmailIsRejectedOnBothPaths(t *testing.T) {
 	ctx := context.Background()
 
 	// lapEmail is seeded by newTestServer.
-	_, errRegister := s.Register(ctx, &authpb.RegisterRequest{Email: lapEmail, Password: "other"})
-	_, errCreate := s.CreateAccount(ctx, &authpb.CreateAccountRequest{Email: lapEmail, Password: "other", Role: roleOperator})
+	_, errRegister := s.Register(ctx, &authpb.RegisterRequest{Email: lapEmail, Password: "other-pass"})
+	_, errCreate := s.CreateAccount(ctx, &authpb.CreateAccountRequest{Email: lapEmail, Password: "other-pass", Role: roleOperator})
 
 	for _, err := range []error{errRegister, errCreate} {
 		if status.Code(err) != codes.AlreadyExists {
@@ -313,7 +315,7 @@ func TestDuplicateEmailIsRejectedOnBothPaths(t *testing.T) {
 		t.Fatalf("existing account changed: role %q", got)
 	}
 
-	if _, err := s.Login(ctx, &authpb.LoginRequest{Email: lapEmail, Password: "other"}); err == nil {
+	if _, err := s.Login(ctx, &authpb.LoginRequest{Email: lapEmail, Password: "other-pass"}); err == nil {
 		t.Fatal("a rejected duplicate must not overwrite the password")
 	}
 }
@@ -324,11 +326,39 @@ func TestCreateRejectsEmptyOrOversizedInput(t *testing.T) {
 	s := newTestServer()
 
 	for _, c := range []struct{ email, password string }{
-		{"", "pw"}, {"a@x.example", ""}, {strings.Repeat("a", maxEmailLen) + "@x.example", "pw"},
+		{"", testPassword},
+		{"a@x.example", ""},
+		{"a@x.example", "short"},
+		{strings.Repeat("a", maxEmailLen) + "@x.example", testPassword},
+		{"notanemail", testPassword},
+		{"' OR '1'='1", testPassword},
+		{"a\x00b@x.example", testPassword},
+		{"Name <a@x.example>", testPassword},
 	} {
 		_, err := s.Register(context.Background(), &authpb.RegisterRequest{Email: c.email, Password: c.password})
 		if status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("email %.12q password %q: expected InvalidArgument, got %v", c.email, c.password, err)
 		}
+	}
+}
+
+func TestEmailIsCaseInsensitiveAndNULNeverReachesTheStore(t *testing.T) {
+	t.Parallel()
+
+	s := newTestServer()
+	ctx := context.Background()
+
+	_, err := s.Register(ctx, &authpb.RegisterRequest{Email: strings.ToUpper(lapEmail), Password: testPassword})
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("same email in upper case: expected AlreadyExists, got %v", err)
+	}
+
+	if got := loginRole(t, s, strings.ToUpper(lapEmail), "pw-lap"); got != roleLapangan {
+		t.Fatalf("upper-case login: role %q", got)
+	}
+
+	// A NUL byte is a plain failed login (401), not an internal error (502).
+	if _, err := s.Login(ctx, &authpb.LoginRequest{Email: "a\x00b", Password: "x"}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("NUL in login email: expected Unauthenticated, got %v", err)
 	}
 }

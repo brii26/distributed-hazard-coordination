@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/mail"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -23,7 +25,8 @@ const (
 	roleLapangan = "Lapangan"
 	roleOperator = "Operator"
 
-	maxEmailLen = 255 // users.email is VARCHAR(255)
+	maxEmailLen    = 255 // users.email is VARCHAR(255)
+	minPasswordLen = 8
 )
 
 var validRoles = map[string]bool{roleMedia: true, roleLapangan: true, roleOperator: true}
@@ -85,10 +88,30 @@ func (s *authServer) tokenResponse(ctx context.Context, u user, refreshToken str
 	return &authpb.TokenResponse{Jwt: jwt, RefreshToken: refreshToken, ExpiresIn: int64(exp.Sub(iat).Seconds())}, nil
 }
 
+// normalizeEmail lowercases, so an email that differs only by case is the same
+// account on register and on login.
+func normalizeEmail(email string) string { return strings.ToLower(email) }
+
+// validEmail is a plain address (no display name, no NUL, which Postgres rejects).
+func validEmail(email string) bool {
+	if len(email) > maxEmailLen || strings.ContainsRune(email, 0) {
+		return false
+	}
+
+	a, err := mail.ParseAddress(email)
+
+	return err == nil && a.Address == email
+}
+
 var errInvalidCredentials = status.Error(codes.Unauthenticated, "invalid credentials")
 
 func (s *authServer) Login(ctx context.Context, req *authpb.LoginRequest) (*authpb.TokenResponse, error) {
-	u, err := s.store.UserByEmail(ctx, req.GetEmail())
+	email := normalizeEmail(req.GetEmail())
+	if !validEmail(email) { // can never match an account; also keeps NUL away from Postgres
+		return nil, errInvalidCredentials
+	}
+
+	u, err := s.store.UserByEmail(ctx, email)
 	if err != nil && !errors.Is(err, errNotFound) {
 		logFor(ctx).Warn("login store error", "error", err)
 
@@ -183,8 +206,9 @@ func newUserID() (string, error) {
 // create validates the input and inserts the account; Register and CreateAccount
 // both go through it, so a duplicate email is rejected the same way on either path.
 func (s *authServer) create(ctx context.Context, email, password, role string) error {
-	if email == "" || len(email) > maxEmailLen || password == "" {
-		return status.Error(codes.InvalidArgument, "email and password are required")
+	email = normalizeEmail(email)
+	if !validEmail(email) || len(password) < minPasswordLen {
+		return status.Error(codes.InvalidArgument, "a valid email and a password of at least 8 characters are required")
 	}
 
 	if !validRoles[role] {
