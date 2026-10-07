@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ubah record mentah source jadi HazardEvent dari map generik. Clock dan ID generator berupa field biar test bisa pin.
+// Turns raw source records into HazardEvents, working on generic maps. Clock and ID generator are fields so tests can pin them.
 type mapper struct {
 	now   func() time.Time
 	newID func() string
@@ -16,13 +16,13 @@ func newMapper() *mapper {
 	return &mapper{now: time.Now, newID: newHazardID}
 }
 
-// satu baris table referensi gunung, PVMBG cuma kirim volcano_id.
+// One row of the volcano reference table. PVMBG only sends volcano_id.
 type volcano struct {
 	name     string
 	lat, lon float64
 }
 
-// volcano_id yang dipakai mock PVMBG.
+// The volcano_id values the PVMBG mock draws from.
 var volcanoRef = map[string]volcano{
 	"MERAPI":   {"Gunung Merapi", -7.5407, 110.4457},
 	"SEMERU":   {"Gunung Semeru", -8.1080, 112.9220},
@@ -52,9 +52,9 @@ func num(r map[string]any, k string) (float64, bool) {
 	return f, ok
 }
 
-// field policy: field source yang dipakai canonical nggak diulang di attributes, sisanya masuk attributes pake key sendiri, canonical yang hilang jadi null.
+// Field policy: a source field that feeds a canonical field is consumed, every other field goes to attributes under its own key, and a missing canonical field stays null.
 
-// isi field yang dipakai semua source, record tanpa id atau waktu valid ditolak.
+// Fills what every source shares. A record without an id or a usable time is rejected.
 func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKey string, used map[string]bool) (HazardEvent, error) {
 	id, ok := str(r, idKey)
 	if !ok {
@@ -81,7 +81,7 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	}, nil
 }
 
-// mapping semua record, yang ditolak dilaporkan bareng biar satu record rusak nggak bikin gagal poll.
+// Maps every record and reports rejected ones together, so one bad record never fails the whole poll.
 func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, error)) ([]HazardEvent, error) {
 	var (
 		out  []HazardEvent
@@ -102,7 +102,7 @@ func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, erro
 	return out, errors.Join(errs...)
 }
 
-// mapping satu poll BMKG: event seismik plus tsunami warning, dikorelasi lewat related_event_id.
+// Maps one BMKG poll: seismic events plus tsunami warnings, correlated through related_event_id.
 func (m *mapper) mapSeismic(events, warnings []map[string]any) ([]HazardEvent, error) {
 	byEvent := map[string][]map[string]any{}
 
@@ -153,7 +153,7 @@ func (m *mapper) seismic(r map[string]any, warnings map[string][]map[string]any)
 	return h, nil
 }
 
-// warning terkait paling parah beserta severity-nya, kalau nggak ada level yang dikenal warning pertama di-return pake severity kosong.
+// The most severe related warning and its severity. If no warning has a known level, the first one comes back with an empty severity.
 func topWarning(related []map[string]any) (map[string]any, string) {
 	var (
 		best map[string]any
@@ -175,7 +175,7 @@ func topWarning(related []map[string]any) (map[string]any, string) {
 	return best, sev
 }
 
-// severity dari magnitude kalau nggak ada warning yang nentuin.
+// Severity from magnitude when no warning decides it.
 func magnitudeSeverity(r map[string]any) *string {
 	mag, ok := num(r, "magnitude")
 	if !ok {
@@ -194,7 +194,7 @@ func magnitudeSeverity(r map[string]any) *string {
 	return &s
 }
 
-// mapping satu poll PVMBG.
+// Maps one PVMBG poll.
 func (m *mapper) mapVolcanic(reports []map[string]any) ([]HazardEvent, error) {
 	return mapAll(reports, m.volcanic)
 }
@@ -224,7 +224,7 @@ func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
 	return h, nil
 }
 
-// masukin field yang belum dipakai ke attributes.
+// Puts every unconsumed field into attributes.
 func (h *HazardEvent) addLeftovers(r map[string]any, used map[string]bool) {
 	for k, v := range r {
 		if !used[k] {

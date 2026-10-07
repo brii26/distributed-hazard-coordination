@@ -14,14 +14,14 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// pengganti RabbitMQ: nyatet yang di-confirm dan bisa disuruh nolak connection atau gagal publish.
+// Stands in for RabbitMQ: records what it confirmed and can refuse connections or fail publishes.
 type fakeBroker struct {
 	mu            sync.Mutex
 	got           []message
-	failDials     int // tolak sekian connection dulu
-	failPublishes int // gagalkan sekian publish dulu, kayak connection putus
+	failDials     int // refuse this many connections first
+	failPublishes int // fail this many publishes first, like a lost connection
 	dials         int
-	dead          bool // broker hilang: session terbuka lapor closed, connection baru ditolak
+	dead          bool // the broker is gone: open sessions report closed, new connections are refused
 }
 
 type fakeSession struct{ b *fakeBroker }
@@ -100,7 +100,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// jalankan p sampai test selesai, return fungsi buat stop dan nunggu.
+// Runs p until the test ends and returns a func that stops it and waits.
 func start(t *testing.T, p *publisher) (stop func()) {
 	t.Helper()
 
@@ -280,7 +280,7 @@ func TestShutdownFlushesWhatIsBuffered(t *testing.T) {
 	}
 }
 
-// butuh RabbitMQ di RABBITMQ_TEST_URL, skip kalau nggak ada. Cek message persistent, correlation ID jadi property, dan di-confirm broker.
+// Needs RabbitMQ at RABBITMQ_TEST_URL, skips otherwise. Checks the message is persistent, carries the correlation ID as a property and is confirmed.
 func TestRealBroker(t *testing.T) { //nolint:gocyclo // one broker scenario read top to bottom
 	t.Parallel()
 

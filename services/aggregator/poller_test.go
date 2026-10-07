@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// catat kapan tiap call mulai dan berapa yang jalan bareng.
+// Records when each call started and how many ran at once.
 type starts struct {
 	mu       sync.Mutex
 	at       []time.Time
@@ -19,7 +19,7 @@ type starts struct {
 	maxSeen  atomic.Int32
 }
 
-// fetch func yang makan d per call dan nyatet.
+// A fetch func that takes d per call and records it.
 func (s *starts) fetch(d time.Duration) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, _ time.Time) (pollResult, error) {
 		s.mu.Lock()
@@ -45,7 +45,7 @@ func (s *starts) fetch(d time.Duration) func(context.Context, time.Time) (pollRe
 	}
 }
 
-// jarak antar start call yang tercatat.
+// Start-to-start spacing of the recorded calls.
 func (s *starts) gaps() []time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,12 +58,12 @@ func (s *starts) gaps() []time.Duration {
 	return out
 }
 
-// channel yang cukup besar biar poller test nggak pernah nunggu.
+// A channel big enough that a test poller never waits on it.
 func sink() chan pollResult {
 	return make(chan pollResult, 256)
 }
 
-// breaker yang nggak pernah trip, buat test soal hal lain.
+// A breaker that never trips, for tests about something else.
 func testBreaker() *breaker {
 	return newBreaker("test", 1000, time.Hour)
 }

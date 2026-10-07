@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// clock palsu, waktu digeser manual.
+// A clock tests move by hand.
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -187,7 +187,7 @@ func TestSourceStatusJSONShape(t *testing.T) {
 	}
 }
 
-// poller dan breaker jalan bareng: gagal berulang stop call, trial abis open duration recover, breaker source lain nggak tersentuh.
+// Poller and breaker together: repeated failures stop the calls, a trial after the open duration brings it back, the other source's breaker is untouched.
 func TestPollerStopsCallingAnOpenSourceAndRecovers(t *testing.T) {
 	t.Parallel()
 

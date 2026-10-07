@@ -18,7 +18,7 @@ import (
 
 var tracer = otel.Tracer(serviceName)
 
-// kirim span ke OTLP kalau TRACING_ENABLED=true, kalau nggak no-op. Export batch dan async, jadi Jaeger mati nggak ganggu request.
+// Sends spans to OTLP when TRACING_ENABLED=true, otherwise a no-op. Export is batched and async, so a Jaeger that is down costs a request nothing.
 func setupTracing(ctx context.Context) (shutdown func(), err error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
@@ -46,7 +46,7 @@ func setupTracing(ctx context.Context) (shutdown func(), err error) {
 	}, nil
 }
 
-// trace ID di ctx (32 hex) atau "", dan jadi correlation ID kalau tracing nyala.
+// Trace ID in ctx (32 hex) or "". With tracing on it is also the correlation ID.
 func traceIDOf(ctx context.Context) string {
 	if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
 		return sc.TraceID().String()
@@ -57,7 +57,7 @@ func traceIDOf(ctx context.Context) string {
 
 type callKey struct{}
 
-// buka client span buat satu outbound call, ditutup logCall.
+// Opens a client span for one outbound call, logCall ends it.
 func startCall(ctx context.Context, target string) context.Context {
 	ctx, sp := tracer.Start(ctx, target, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("correlation_id", correlationOf(ctx))))
@@ -79,7 +79,7 @@ func endCall(ctx context.Context, err error) {
 	sp.End()
 }
 
-// carrier biar propagator bisa baca dan tulis header AMQP.
+// Lets the propagator read and write AMQP headers.
 type amqpCarrier map[string]any
 
 func (c amqpCarrier) Get(k string) string { s, _ := c[k].(string); return s }

@@ -13,12 +13,12 @@ import (
 
 const serviceName = "aggregator"
 
-// logger JSON yang dipakai semua log, atomic karena setupLogging bisa swap saat goroutine lain nulis.
+// The JSON logger every log line goes through. Atomic because setupLogging may swap it while other goroutines log.
 var base atomic.Pointer[slog.Logger]
 
 func init() { setupLogging(os.Stdout) }
 
-// logger JSON pake nama field sesuai spec logging.
+// JSON logger with the required field names.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -42,14 +42,14 @@ func newLogger(w io.Writer) *slog.Logger {
 	return slog.New(h).With("service", serviceName)
 }
 
-// jadiin w satu-satunya output log, log stdlib ikut lewat sini pake correlation_id "-".
+// Makes w the one log output. The stdlib log routes through it too, with correlation_id "-".
 func setupLogging(w io.Writer) {
 	l := newLogger(w)
 	base.Store(l)
 	slog.SetDefault(l.With("correlation_id", "-"))
 }
 
-// logger buat satu correlation ID ("-" kalau belum ada).
+// Logger for one correlation ID ("-" if none yet).
 func withID(id string) *slog.Logger {
 	if id == "" {
 		id = "-"
@@ -60,7 +60,7 @@ func withID(id string) *slog.Logger {
 
 type correlationKey struct{}
 
-// bawa correlation ID satu poll cycle ke call-call di bawahnya.
+// Carries a poll cycle's correlation ID down to the calls it makes.
 func withCorrelation(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, correlationKey{}, id)
 }
@@ -71,7 +71,7 @@ func correlationOf(ctx context.Context) string {
 	return id
 }
 
-// klasifikasi hasil outbound call (success, timeout, failure) sesuai spec logging.
+// Classifies an outbound call result as success, timeout or failure.
 func callStatus(err error) string {
 	var t interface{ Timeout() bool }
 
@@ -85,7 +85,7 @@ func callStatus(err error) string {
 	}
 }
 
-// log satu outbound call: target, duration_ms, status, dan penyebab kalau gagal.
+// Logs one outbound call: target, duration_ms, status, and the cause on failure.
 func logCall(ctx context.Context, target string, start time.Time, err error) {
 	endCall(ctx, err)
 

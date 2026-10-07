@@ -19,7 +19,7 @@ const (
 	severityAwas    = "AWAS"
 )
 
-// canonical record hazard, field yang nggak disediakan source jadi pointer biar keluar null.
+// Canonical hazard record. Fields a source may not provide are pointers so they serialize as null.
 type HazardEvent struct {
 	HazardID    string         `json:"hazard_id"`
 	Source      string         `json:"source"`
@@ -34,7 +34,7 @@ type HazardEvent struct {
 	Attributes  map[string]any `json:"attributes"`
 }
 
-// UUID v4 random, tanpa dependency.
+// Random UUID v4, no dependency.
 func newHazardID() string {
 	var b [16]byte
 

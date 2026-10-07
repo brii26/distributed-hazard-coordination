@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// connect ke CANONICAL_DB_TEST_URL, skip kalau kosong. Skema dari migrasi project.
+// Connects to CANONICAL_DB_TEST_URL, skips if unset. The schema comes from the project's migration.
 func testStore(t *testing.T, poolSize int) *store {
 	t.Helper()
 
@@ -42,7 +42,7 @@ func testStore(t *testing.T, poolSize int) *store {
 	return s
 }
 
-// source_ref_id unik per test, row-nya dihapus abis itu.
+// A source_ref_id unique to this test, its rows are removed afterwards.
 func ref(t *testing.T, s *store) string {
 	t.Helper()
 
@@ -169,7 +169,7 @@ func TestChangedRecordUpdatesTheRowAndKeepsItsIdentity(t *testing.T) {
 	}
 }
 
-// record sebelum dan sesudah perubahan schema hidup berdampingan di satu table dan terbaca utuh tanpa migrasi.
+// Records from before and after a schema change sit side by side in one table and read back unchanged, no migration.
 func TestAttributesRoundTripBeforeAndAfterSchemaChange(t *testing.T) {
 	t.Parallel()
 

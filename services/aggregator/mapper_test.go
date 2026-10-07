@@ -382,7 +382,7 @@ func TestSchemaToggleDoesNotNeedACodeChange(t *testing.T) {
 	}
 }
 
-// nggak boleh ada field source yang hilang: dipakai canonical atau ada di attributes.
+// No source field may disappear: each one is either consumed by a canonical field or kept in attributes.
 func TestNoSourceFieldIsDropped(t *testing.T) {
 	t.Parallel()
 

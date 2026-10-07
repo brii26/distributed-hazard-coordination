@@ -116,12 +116,11 @@ Earning a place says what may stay, never how long it may run. A workaround note
 
 Applies to every file under the repo root.
 
-- Write comments in casual Indonesian mixed with English technical terms, at most one or two sentences. Say what the thing is for, e.g. `// payload buat polling ke PVMBG`.
-- Describe the mechanism once, in the doc comment on top of the function, e.g. `// function buat polling BMKG tiap N detik, breaker-nya ada di fungsi terpisah`.
+- Write comments in plain, casual English. Short sentences, at most two, saying what the thing is for, e.g. `// Payload for polling PVMBG.`
+- Describe the mechanism once, in the doc comment on top of the function, e.g. `// Polls BMKG every N seconds. The circuit breaker lives in its own type.`
 - No comments inside a function body that explain the flow. Exceptions: `ponytail:` notes, `//nolint` reasons, and TODOs that name a task.
-- Keep the Indonesian casual and spoken, not formal: no affixed formal verbs ("stop callnya", not "menghentikan call"), "udah", "buat", "cuma", "abis", "pake", "kayak", "nggak" instead of "sudah", "untuk", "hanya", "setelah", "dengan", "seperti", "tidak". Technical verbs stay in English (stop, retry, return, drain).
-- Software engineering terms stay English, never translated: canonical record, connection, message, queue, page, table, schema, pipeline, buffer, handler. No "kanonik", "koneksi", "pesan", "antrean", "halaman".
 - Never point at docs or trackers in a comment (no "TRD 3.2", "doc/TRD_M1.md", "#19", "P4"). Write the fact itself.
+- Use the standard software terms as they are (canonical record, connection, message, queue, page, schema, pipeline). Don't dress them up.
 - A block of 3 or more lines (history, race essay, design notes) is too long. Keep the one line reason and move the rest to the PR body or `doc/TRD_M1.md`.
 
 ## Code Comment Checklist
@@ -139,4 +138,4 @@ Run these alongside the core Delivery Gate when the task touches comments. All a
 - [ ] Do the remaining comments read short, natural, and in sentence case?
 - [ ] Is the scope guardrail held: only comments changed, the code untouched?
 - [ ] No comment cites the TRD, an issue number or a problem code, the fact is written out?
-- [ ] House style held: casual Indonesian-English, one or two sentences, mechanism only in the doc comment above the function, none inside the body?
+- [ ] House style held: plain casual English, one or two short sentences, mechanism only in the doc comment above the function, none inside the body?

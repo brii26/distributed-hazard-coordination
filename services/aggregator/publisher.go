@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	// ponytail: fixed, bukan config. Satu event ~1 KB jadi total ~1 MB, jadiin config kalau broker diperkirakan down lama.
+	// ponytail: fixed, not config. At ~1 KB an event that is ~1 MB. Make it config if the broker may stay down for long.
 	defaultPublishBuffer = 1000
 
 	defaultExchange = "hazard.events"
@@ -26,32 +26,32 @@ const (
 
 var errNacked = errors.New("broker nacked the message")
 
-// satu HazardEvent yang nunggu dipublish, udah di-encode.
+// One HazardEvent waiting to be published, already encoded.
 type message struct {
 	seq           uint64
 	hazardID      string
 	correlationID string
 	body          []byte
-	trace         amqpCarrier // context span publisher, dikirim sebagai header AMQP
+	trace         amqpCarrier // the publishing span's context, sent as AMQP headers
 }
 
-// satu connection broker aktif, publish baru return abis broker confirm.
+// One live broker connection. publish returns only after the broker confirms.
 type session interface {
 	publish(ctx context.Context, m message) error
 	alive() bool
 	close()
 }
 
-// kirim event ke broker tanpa nahan caller: publish cuma append ke buffer terbatas, run drain urut pake confirm dan reconnect pake delay naik.
+// Gets events to the broker without holding up the caller. publish only appends to a bounded buffer, run drains it in order with confirms and reconnects with a growing delay.
 type publisher struct {
 	dial                func(ctx context.Context) (session, error)
 	capacity            int
 	retryBase, retryMax time.Duration
 
 	mu      sync.Mutex
-	queue   []message // yang paling lama di depan
+	queue   []message // oldest first
 	nextSeq uint64
-	wake    chan struct{} // signal ke run kalau queue terisi
+	wake    chan struct{} // tells run the queue is no longer empty
 
 	up atomic.Bool
 }
@@ -60,7 +60,7 @@ func newPublisher(dial func(context.Context) (session, error), capacity int) *pu
 	return &publisher{dial: dial, capacity: capacity, retryBase: retryBase, retryMax: retryMax, wake: make(chan struct{}, 1)}
 }
 
-// queue h dan langsung return, buffer penuh buang yang paling lama (event-nya tetap aman di Canonical Store).
+// Queues h and returns at once. A full buffer drops the oldest message (its event is still in the Canonical Store).
 func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID string) {
 	body, err := json.Marshal(h)
 	if err != nil {
@@ -90,7 +90,7 @@ func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID st
 	}
 }
 
-// connection broker lagi terbuka atau nggak, buat health check.
+// Whether a broker connection is open right now, for the health check.
 func (p *publisher) connected() bool {
 	return p.up.Load()
 }
@@ -106,7 +106,7 @@ func (p *publisher) front() (message, bool) {
 	return p.queue[0], true
 }
 
-// hapus m abis confirm, kalau udah terbuang dari buffer nggak ada yang dihapus.
+// Removes m once confirmed. If the buffer already dropped it, nothing is removed.
 func (p *publisher) done(m message) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -116,8 +116,8 @@ func (p *publisher) done(m message) {
 	}
 }
 
-// publish message paling lama dan log hasilnya.
-// ponytail: satu message in flight sekali, throughput dibatasi confirm round trip. Cukup buat interval polling, batch confirm kalau nggak cukup.
+// Publishes the oldest message and logs the result.
+// ponytail: one message in flight at a time, so throughput is bounded by the confirm round trip. Fine at polling rates, batch confirms if not.
 func (p *publisher) send(ctx context.Context, s session, m message) error {
 	if err := s.publish(ctx, m); err != nil {
 		withID(m.correlationID).Warn("publish", "hazard_id", m.hazardID, "result", "failure", "error", err.Error())
@@ -131,7 +131,7 @@ func (p *publisher) send(ctx context.Context, s session, m message) error {
 	return nil
 }
 
-// publish sampai ctx selesai lalu satu flush terbatas, connection gagal di-redial pake delay naik dan message yang sama dicoba lagi.
+// Publishes until ctx is done, then one bounded flush. A failed connection is redialed with a growing delay and the same message is retried.
 func (p *publisher) run(ctx context.Context) {
 	var s session
 
@@ -198,7 +198,7 @@ func (p *publisher) run(ctx context.Context) {
 	}
 }
 
-// buang connection yang gagal atau hilang.
+// Drops a connection that failed or went away.
 func (p *publisher) lose(s session) session {
 	s.close()
 	p.up.Store(false)
@@ -207,7 +207,7 @@ func (p *publisher) lose(s session) session {
 	return nil
 }
 
-// tidur selama delay retry, atau lebih singkat kalau ctx selesai.
+// Sleeps the growing retry delay, or less if ctx ends.
 func (p *publisher) wait(ctx context.Context, failures int) {
 	select {
 	case <-ctx.Done():
@@ -215,7 +215,7 @@ func (p *publisher) wait(ctx context.Context, failures int) {
 	}
 }
 
-// coba kirim sisa buffer saat shutdown maksimal flushWait, sisanya aman di Canonical Store.
+// Tries to send what is left in the buffer at shutdown, for at most flushWait. The rest stays safe in the Canonical Store.
 func (p *publisher) flush(s session) {
 	ctx, cancel := context.WithTimeout(context.Background(), flushWait)
 	defer cancel()
@@ -228,14 +228,14 @@ func (p *publisher) flush(s session) {
 	}
 }
 
-// session di atas connection AMQP asli pake publisher confirms.
+// A session over a real AMQP connection with publisher confirms on.
 type amqpSession struct {
 	conn     *amqp.Connection
 	ch       *amqp.Channel
 	exchange string
 }
 
-// dial function ke broker di url, publish ke exchange (fanout-nya dideklarasi definitions broker).
+// Dial func for the broker at url, publishing to exchange. The fanout exchange itself comes from the broker's definitions.
 func dialAMQP(url, exchange string) func(context.Context) (session, error) {
 	return func(context.Context) (session, error) {
 		conn, err := amqp.DialConfig(url, amqp.Config{Heartbeat: 10 * time.Second, Dial: amqp.DefaultDial(rabbitDialWait)})
@@ -258,7 +258,7 @@ func dialAMQP(url, exchange string) func(context.Context) (session, error) {
 	}
 }
 
-// kirim m persistent (delivery_mode=2), correlation ID jadi AMQP property bukan payload, lalu tunggu confirm.
+// Sends m persistent (delivery_mode=2) with the correlation ID as an AMQP property, not in the payload, then waits for the confirm.
 func (s *amqpSession) publish(ctx context.Context, m message) (err error) {
 	start := time.Now()
 	ctx = otel.GetTextMapPropagator().Extract(ctx, m.trace)

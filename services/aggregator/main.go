@@ -1,4 +1,4 @@
-// Command aggregator: polling BMKG dan PVMBG, simpan ke Canonical Store, publish ke broker.
+// Command aggregator polls BMKG and PVMBG, stores to the Canonical Store and publishes to the broker.
 package main
 
 import (
@@ -27,7 +27,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// sisi REST di port sendiri misah dari gRPC, biar healthcheck nggak ikut kena concurrency cap.
+// REST side on its own port, apart from gRPC, so the healthcheck never hits the concurrency cap.
 func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.healthHandler)
@@ -35,7 +35,7 @@ func newMux(api *readAPI) *http.ServeMux {
 	return mux
 }
 
-// validasi port dari env, pakai def kalau kosong.
+// Validates a port from env, def if empty.
 func resolvePort(raw, def string) (string, error) {
 	if raw == "" {
 		raw = def
@@ -48,7 +48,7 @@ func resolvePort(raw, def string) (string, error) {
 	return raw, nil
 }
 
-// baca env integer positif, pakai def kalau kosong.
+// Reads a positive integer env var, def if unset.
 func envPositiveInt(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -63,7 +63,7 @@ func envPositiveInt(name string, def int) (int, error) {
 	return n, nil
 }
 
-// baca setting polling dan circuit breaker dari env, kredensial PVMBG dari token manager.
+// Reads polling and circuit breaker settings from env, PVMBG credentials from the token manager.
 func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 	var firstErr error
 
@@ -105,7 +105,7 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 
 const defaultDBPoolSize = 20
 
-// buka Canonical Store dari DATABASE_URL, DB unreachable stop service saat start.
+// Opens the Canonical Store from DATABASE_URL. An unreachable database stops the service at start.
 func loadStore() (*store, error) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -120,7 +120,7 @@ func loadStore() (*store, error) {
 	return openStore(url, poolSize)
 }
 
-// bind gRPC read API di GRPC_PORT, port terpakai stop service saat start.
+// Binds the gRPC read API on GRPC_PORT. A taken port stops the service at start.
 func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*readAPI, *grpc.Server, net.Listener, error) {
 	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
 	if err != nil {
@@ -152,7 +152,7 @@ func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*rea
 	return api, newGRPCServer(api), lis, nil
 }
 
-// jalanin Aggregator sampai berhenti atau gagal start.
+// Runs the Aggregator until it stops or fails to start.
 func run() error { //nolint:gocyclo // start-up wiring, one step after another
 	port, err := resolvePort(os.Getenv("HEALTH_PORT"), defaultPort)
 	if err != nil {

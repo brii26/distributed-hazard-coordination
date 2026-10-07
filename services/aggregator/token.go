@@ -26,7 +26,7 @@ const (
 	maxTokenResponse    = 4096
 )
 
-// isi PVMBG_TOKEN_VOLUME_PATH, ExpiresAt absolut biar restart nggak perlu catatan waktu terima.
+// Contents of the token volume file. ExpiresAt is absolute, so a restart needs no record of when it was received.
 type tokenFile struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
@@ -39,7 +39,7 @@ type tokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// pegang token OAuth PVMBG: bootstrap pake one-time code, rotate pake refresh token, dan simpan ke volume biar restart nggak butuh code lagi.
+// Owns the PVMBG OAuth token: bootstrap with the one-time code, rotate with the refresh token, persist to the volume so a restart never needs the code again.
 type tokenManager struct {
 	baseURL      string
 	clientID     string
@@ -68,7 +68,7 @@ func newTokenManager(baseURL, clientID, clientSecret, oneTimeCode, path string) 
 	}
 }
 
-// access token saat ini, atau "" kalau belum ada.
+// Current access token, or "" if none yet.
 func (m *tokenManager) Token() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -76,7 +76,7 @@ func (m *tokenManager) Token() string {
 	return m.cur.AccessToken
 }
 
-// error bootstrap atau rotasi terakhir (nil abis sukses), dihitung circuit breaker PVMBG.
+// Last bootstrap or rotation error (nil after a success). The PVMBG breaker counts it as a failed poll.
 func (m *tokenManager) LastError() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -84,7 +84,7 @@ func (m *tokenManager) LastError() error {
 	return m.lastErr
 }
 
-// baca token tersimpan, atau bootstrap kalau belum ada. File nggak terbaca dianggap hilang.
+// Reads the stored token, or bootstraps if there is none. An unreadable file counts as missing.
 func (m *tokenManager) load() error {
 	b, err := os.ReadFile(m.path) //nolint:gosec // path is operator config (PVMBG_TOKEN_VOLUME_PATH), not request input
 	if err == nil {
@@ -106,7 +106,7 @@ func (m *tokenManager) load() error {
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
-// tukar refresh token pake pasangan baru. errInvalidGrant berarti PVMBG nolak grant (refresh token nggak dikenal).
+// Swaps the refresh token for a new pair. errInvalidGrant means PVMBG rejected the grant itself (unknown refresh token).
 var errInvalidGrant = errors.New("invalid_grant")
 
 func (m *tokenManager) rotate() error {
@@ -124,7 +124,7 @@ func (m *tokenManager) rotate() error {
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
-// panggil token endpoint PVMBG dan simpan pasangan baru sebelum diekspos lewat Token().
+// Calls PVMBG's token endpoint and persists the new pair before exposing it through Token().
 func (m *tokenManager) obtain(grant string, form url.Values) error {
 	err := m.exchange(grant, form)
 
@@ -198,7 +198,7 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	}, ttl/3)
 }
 
-// simpan f (temp file lalu rename) baru jadikan current, jadi volume nggak pernah tertinggal.
+// Persists f (temp file, then rename) and only then makes it current, so the volume never lags behind.
 func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
 	b, err := json.Marshal(f) //nolint:gosec // persisting the token to the volume is the point
 	if err != nil {
@@ -236,7 +236,7 @@ func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
 	return nil
 }
 
-// tunggu sampai token waktunya rotate, atau retryDelay kalau belum ada token atau percobaan terakhir gagal.
+// Waits until the token is due for rotation, or retryDelay if there is no token or the last attempt failed.
 func (m *tokenManager) nextWait() time.Duration {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -248,7 +248,7 @@ func (m *tokenManager) nextWait() time.Duration {
 	return max(time.Until(m.cur.ExpiresAt)-m.margin, 0)
 }
 
-// jaga token tetap fresh sampai ctx selesai, gagal di-log dan di-retry.
+// Keeps the token fresh until ctx is done. Failures are logged and retried.
 func (m *tokenManager) run(ctx context.Context) {
 	for {
 		select {

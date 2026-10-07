@@ -1,6 +1,6 @@
 package main
 
-// suite service-to-service: Aggregator lawan mock BMKG dan PVMBG, Canonical Store, dan RabbitMQ asli. Jalankan lewat tests/integration/run.sh agg-bmkg atau agg-pvmbg, tanpa IT_AGG_GRPC_ADDR semua test skip.
+// Service-to-service suite: the Aggregator against the real BMKG and PVMBG mocks, Canonical Store and RabbitMQ. Run it with tests/integration/run.sh agg-bmkg or agg-pvmbg, without IT_AGG_GRPC_ADDR every test skips.
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func aggIntegration(t *testing.T) itAgg {
 	}
 }
 
-// polling cond sampai benar atau timeout.
+// Polls cond until it holds or the timeout passes.
 func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool) {
 	t.Helper()
 
@@ -70,7 +70,7 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool)
 	t.Fatalf("timed out after %v waiting for %s", timeout, what)
 }
 
-// panggil read API Aggregator kayak Client-Facing API.
+// Calls the Aggregator's read API like the Client-Facing API does.
 func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -78,7 +78,7 @@ func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 	return e.read.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{HazardType: typ})
 }
 
-// isi Canonical Store buat satu tipe hazard.
+// What the Canonical Store holds for a hazard type.
 func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	t.Helper()
 
@@ -90,7 +90,7 @@ func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	return events
 }
 
-// satu HTTP call pake header opsional, return status dan body.
+// One HTTP call with an optional header, returns status and body.
 func send(t *testing.T, method, url, headerKey, headerValue string) (int, []byte) {
 	t.Helper()
 
@@ -115,7 +115,7 @@ func send(t *testing.T, method, url, headerKey, headerValue string) (int, []byte
 	return resp.StatusCode, body
 }
 
-// jalankan docker compose buat project suite ini.
+// Runs a docker compose command against the suite's project.
 func itCompose(t *testing.T, args ...string) string {
 	t.Helper()
 
@@ -212,7 +212,7 @@ func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.
 	}
 }
 
-// aturan severity ditulis ulang misah dari mapper.
+// Severity rule written out separately from the mapper.
 func wantSeverity(magnitude float64, warnings []map[string]any) string {
 	rank := map[string]int{"Waspada": 1, "Siaga": 2, "Awas": 3}
 	best := ""
@@ -316,7 +316,7 @@ func TestIntegrationBMKGEventsAndWarningsAreMappedAndStored(t *testing.T) { //no
 	}
 }
 
-// flip satu admin switch mock dan return JSON jawabannya.
+// Flips one of the mock's admin switches and returns its JSON answer.
 func (e itAgg) toggle(t *testing.T, path string) map[string]any {
 	t.Helper()
 
@@ -333,7 +333,7 @@ func (e itAgg) toggle(t *testing.T, path string) map[string]any {
 	return out
 }
 
-// status PVMBG di read API, atau "" kalau call gagal.
+// PVMBG state as the read API reports it, or "" if the call fails.
 func (e itAgg) pvmbgStatus() string {
 	resp, err := e.hazards(typeVolcanic)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestIntegrationPVMBGSchemaChangeAddsConfidenceLevelWithoutARestart(t *testi
 	}
 }
 
-// baca token PVMBG di volume Aggregator.
+// Reads the PVMBG token the Aggregator keeps on its volume.
 func tokenFileOf(t *testing.T) tokenFile {
 	t.Helper()
 

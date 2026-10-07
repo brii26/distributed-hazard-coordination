@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	// ponytail: fixed, jadiin config kalau database lambat mulai jadi masalah.
+	// ponytail: fixed. Make it config if a slow database ever makes it matter.
 	ingestBuffer = 16
 	retryBase    = 200 * time.Millisecond
 	retryMax     = 5 * time.Second
 )
 
-// tahap kedua per source: mapping record dari poller, upsert, lalu publish yang baru atau berubah.
+// Second stage per source: map the poller's records, upsert them, publish the new or changed ones.
 type ingest struct {
 	name                string
 	in                  <-chan pollResult
@@ -28,14 +28,14 @@ type ingest struct {
 	retryBase, retryMax time.Duration
 }
 
-// jalan sampai poller nutup channel, jadi record yang queue tetap ditulis saat shutdown.
+// Runs until the poller closes the channel, so queued records are still written on shutdown.
 func (i *ingest) run(ctx context.Context) {
 	for res := range i.in {
 		i.handle(ctx, res)
 	}
 }
 
-// mapping satu poll lalu tulis urut, record yang ditolak di-skip.
+// Maps one poll and writes it in order. Rejected records are skipped.
 func (i *ingest) handle(ctx context.Context, res pollResult) {
 	start := time.Now()
 	ctx, span := tracer.Start(trace.ContextWithRemoteSpanContext(ctx, res.trace), "ingest "+i.name)
@@ -75,7 +75,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		"rejected", len(res.records)-len(events), "changed", changed, "duration_ms", time.Since(start).Milliseconds())
 }
 
-// upsert h. Outage di-retry pake delay naik dan nahan batch (poller ikut nunggu), error data langsung di-return.
+// Upserts h. An outage is retried with a growing delay and holds the batch (the poller waits too), a data error returns at once.
 func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	for attempt := 0; ; attempt++ {
 		changed, err := i.upsert(context.WithoutCancel(ctx), h)
@@ -93,20 +93,20 @@ func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	}
 }
 
-// error data Postgres (class 22) atau constraint violation (23), nggak ada gunanya di-retry.
+// A Postgres data exception (class 22) or constraint violation (23), pointless to retry.
 func isPermanent(err error) bool {
 	var pg *pgconn.PgError
 
 	return errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23"))
 }
 
-// pipeline satu source: poller, channel, ingest.
+// One source's whole path: poller, channel, ingest.
 type pipeline struct {
 	poller *poller
 	ingest *ingest
 }
 
-// jalanin dua tahap sampai ctx selesai dan ingest drain.
+// Runs both stages until ctx is done and ingest has drained.
 func (p pipeline) run(ctx context.Context) {
 	var wg sync.WaitGroup
 
@@ -116,7 +116,7 @@ func (p pipeline) run(ctx context.Context) {
 	wg.Wait()
 }
 
-// satu pipeline per source, semuanya share upsert yang sama.
+// One pipeline per source, all sharing the same upsert.
 func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) []pipeline {
 	m := newMapper()
 	mappers := map[string]func(pollResult) ([]HazardEvent, error){

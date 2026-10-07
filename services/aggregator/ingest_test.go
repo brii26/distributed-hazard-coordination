@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// catat apa yang dikerjain ingest, urut.
+// Records what an ingest did, in order.
 type recorder struct {
 	mu        sync.Mutex
 	upserts   []string
@@ -48,7 +48,7 @@ func (r *recorder) snapshot() (upserts, published []string) {
 
 func always(string) bool { return true }
 
-// ingest pake mapping asli dan upsert yang diberikan.
+// An ingest over real mapping with the given upsert.
 func volcanicIngest(upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) (*ingest, chan pollResult) {
 	ch := make(chan pollResult, 8)
 	m := testMapper()
@@ -355,7 +355,7 @@ func TestShutdownDuringAnOutageDoesNotHang(t *testing.T) {
 	}
 }
 
-// flow penuh ke Postgres asli: dua source masuk hazard_events, poll berulang nggak nambah duplikat, tiap record dipublish sekali.
+// Full flow against a real Postgres: both sources land in hazard_events, repeated polls add no duplicates, each record is published once.
 func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 	t.Parallel()
 
