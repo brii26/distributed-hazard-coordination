@@ -19,7 +19,7 @@ type starts struct {
 	maxSeen  atomic.Int32
 }
 
-// fetch func yang memakan d per call dan mencatatnya.
+// fetch func yang makan d per call dan nyatet.
 func (s *starts) fetch(d time.Duration) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, _ time.Time) (pollResult, error) {
 		s.mu.Lock()
@@ -58,12 +58,12 @@ func (s *starts) gaps() []time.Duration {
 	return out
 }
 
-// channel yang cukup besar supaya poller test nggak pernah menunggu.
+// channel yang cukup besar biar poller test nggak pernah nunggu.
 func sink() chan pollResult {
 	return make(chan pollResult, 256)
 }
 
-// breaker yang nggak pernah trip, untuk test soal hal lain.
+// breaker yang nggak pernah trip, buat test soal hal lain.
 func testBreaker() *breaker {
 	return newBreaker("test", 1000, time.Hour)
 }

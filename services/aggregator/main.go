@@ -27,7 +27,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// sisi REST di port sendiri terpisah dari gRPC, biar healthcheck nggak ikut kena concurrency cap.
+// sisi REST di port sendiri misah dari gRPC, biar healthcheck nggak ikut kena concurrency cap.
 func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.healthHandler)
@@ -105,7 +105,7 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 
 const defaultDBPoolSize = 20
 
-// buka Canonical Store dari DATABASE_URL, DB unreachable menghentikan service saat start.
+// buka Canonical Store dari DATABASE_URL, DB unreachable stop service saat start.
 func loadStore() (*store, error) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -120,7 +120,7 @@ func loadStore() (*store, error) {
 	return openStore(url, poolSize)
 }
 
-// bind gRPC read API di GRPC_PORT, port terpakai menghentikan service saat start.
+// bind gRPC read API di GRPC_PORT, port terpakai stop service saat start.
 func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*readAPI, *grpc.Server, net.Listener, error) {
 	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
 	if err != nil {

@@ -35,7 +35,7 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// arahkan semua log ke buffer selama test, balik ke stdout sesudahnya.
+// arahkan semua log ke buffer selama test, balik ke stdout abis itu.
 func captureLogs(t *testing.T) *syncBuffer {
 	t.Helper()
 
@@ -47,7 +47,7 @@ func captureLogs(t *testing.T) *syncBuffer {
 	return &buf
 }
 
-// parse tiap baris, gagal kalau bukan JSON dengan field wajib.
+// parse tiap baris, gagal kalau bukan JSON pake field wajib.
 func jsonLines(t *testing.T, out string) []map[string]any {
 	t.Helper()
 

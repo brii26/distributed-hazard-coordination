@@ -14,7 +14,7 @@ import (
 // batas waktu tiap call ke Canonical Store.
 const dbQueryTimeout = 2 * time.Second
 
-// upsert per (source, source_ref_id), hanya mengembalikan row kalau baru atau berubah. hazard_id dan ingested_at sengaja nggak di-UPDATE biar id stabil dan repeat nggak kelihatan berubah.
+// upsert per (source, source_ref_id), cuma return row kalau baru atau berubah. hazard_id dan ingested_at sengaja nggak di-UPDATE biar id stabil dan repeat nggak kelihatan berubah.
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
@@ -37,12 +37,12 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
        EXCLUDED.attributes)
 RETURNING hazard_id`
 
-// satu-satunya pintu ke Canonical Store, pool *sql.DB sudah aman dipakai concurrent.
+// satu-satunya pintu ke Canonical Store, pool *sql.DB udah aman dipakai concurrent.
 type store struct {
 	db *sql.DB
 }
 
-// connect dengan pool maksimal poolSize dan ping, jadi URL salah gagal saat start.
+// connect pake pool maksimal poolSize dan ping, jadi URL salah gagal saat start.
 func openStore(url string, poolSize int) (*store, error) {
 	db, err := sql.Open("pgx", url)
 	if err != nil {

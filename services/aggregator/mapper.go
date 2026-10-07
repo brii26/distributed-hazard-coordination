@@ -52,7 +52,7 @@ func num(r map[string]any, k string) (float64, bool) {
 	return f, ok
 }
 
-// field policy: field source yang dipakai canonical nggak diulang di attributes, sisanya masuk attributes dengan key sendiri, canonical yang hilang jadi null.
+// field policy: field source yang dipakai canonical nggak diulang di attributes, sisanya masuk attributes pake key sendiri, canonical yang hilang jadi null.
 
 // isi field yang dipakai semua source, record tanpa id atau waktu valid ditolak.
 func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKey string, used map[string]bool) (HazardEvent, error) {
@@ -81,7 +81,7 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	}, nil
 }
 
-// mapping semua record, yang ditolak dilaporkan bareng supaya satu record rusak nggak menggagalkan poll.
+// mapping semua record, yang ditolak dilaporkan bareng biar satu record rusak nggak bikin gagal poll.
 func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, error)) ([]HazardEvent, error) {
 	var (
 		out  []HazardEvent
@@ -153,7 +153,7 @@ func (m *mapper) seismic(r map[string]any, warnings map[string][]map[string]any)
 	return h, nil
 }
 
-// warning terkait paling parah beserta severity-nya, kalau nggak ada level yang dikenal warning pertama dikembalikan dengan severity kosong.
+// warning terkait paling parah beserta severity-nya, kalau nggak ada level yang dikenal warning pertama di-return pake severity kosong.
 func topWarning(related []map[string]any) (map[string]any, string) {
 	var (
 		best map[string]any
@@ -175,7 +175,7 @@ func topWarning(related []map[string]any) (map[string]any, string) {
 	return best, sev
 }
 
-// severity dari magnitude kalau nggak ada warning yang menentukan.
+// severity dari magnitude kalau nggak ada warning yang nentuin.
 func magnitudeSeverity(r map[string]any) *string {
 	mag, ok := num(r, "magnitude")
 	if !ok {

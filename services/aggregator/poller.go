@@ -40,11 +40,11 @@ type poller struct {
 	out      chan<- pollResult
 
 	// since cuma disentuh goroutine run.
-	// ponytail: cursor ada di memory, restart baca ulang semuanya sekali (upsert dedup bikin aman) dan mengasumsikan timestamp source nggak mundur.
+	// ponytail: cursor ada di memory, restart baca ulang semuanya sekali (upsert dedup bikin aman) dan asumsi timestamp source nggak mundur.
 	since time.Time
 }
 
-// sisa interval setelah call, atau nol kalau call sudah memakan semuanya.
+// sisa interval abis call, atau nol kalau call udah makan semuanya.
 func nextWait(interval, elapsed time.Duration) time.Duration {
 	return max(interval-elapsed, 0)
 }
@@ -66,7 +66,7 @@ func (p *poller) run(ctx context.Context) {
 	}
 }
 
-// satu call, log hasilnya, serahkan record. Error apa pun termasuk timeout dihitung gagal dan cursor baru maju setelah record diserahkan.
+// satu call, log hasilnya, serahin record. Error apa pun termasuk timeout dihitung gagal dan cursor baru maju abis record diserahin.
 func (p *poller) pollOnce(ctx context.Context) {
 	if !p.breaker.allow() {
 		return
@@ -107,7 +107,7 @@ func (p *poller) pollOnce(ctx context.Context) {
 	}
 }
 
-// kirim record ke ingest dan menunggu kalau channel penuh, karena batch yang dibuang nggak akan diambil lagi.
+// kirim record ke ingest dan nunggu kalau channel penuh, karena batch yang dibuang nggak akan diambil lagi.
 func (p *poller) handoff(ctx context.Context, res pollResult) {
 	if len(res.records)+len(res.warnings) == 0 {
 		return
@@ -122,7 +122,7 @@ func (p *poller) handoff(ctx context.Context, res pollResult) {
 	}
 }
 
-// GET terautentikasi per source dengan timeout eksplisit tiap call.
+// GET terautentikasi per source pake timeout eksplisit tiap call.
 type sourceClient struct {
 	baseURL string
 	timeout time.Duration
@@ -130,7 +130,7 @@ type sourceClient struct {
 	auth    func(*http.Request) error
 }
 
-// GET path (dengan ?since kalau ada) dan decode JSON array of object.
+// GET path (pake ?since kalau ada) dan decode JSON array of object.
 func (c *sourceClient) records(ctx context.Context, path string, since time.Time) (_ []map[string]any, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "GET "+c.baseURL+path)
@@ -193,7 +193,7 @@ func newest(recs []map[string]any, key string) time.Time {
 	return latest
 }
 
-// poll BMKG: seismik dan tsunami warning dua endpoint, dibaca bareng. Cursor mengikuti seismik.
+// poll BMKG: seismik dan tsunami warning dua endpoint, dibaca bareng. Cursor ngikutin seismik.
 func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
 		events, err := c.records(ctx, "/seismic-events", since)
@@ -260,7 +260,7 @@ type pollConfig struct {
 	tokenErr          func() error
 }
 
-// bangun poller BMKG dan PVMBG, masing-masing dengan circuit breaker sendiri.
+// bangun poller BMKG dan PVMBG, masing-masing pake circuit breaker sendiri.
 func newPollers(c pollConfig) []*poller {
 	client := &http.Client{}
 

@@ -113,7 +113,7 @@ func (b *breaker) success() {
 	}
 }
 
-// poll gagal (error atau timeout). Trial yang gagal reopen breaker, selain itu open setelah threshold gagal berturut-turut.
+// poll gagal (error atau timeout). Trial yang gagal reopen breaker, selain itu open abis threshold gagal berturut-turut.
 func (b *breaker) failure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -125,7 +125,7 @@ func (b *breaker) failure() {
 	}
 }
 
-// copy status yang konsisten buat read API dan /health. DEGRADED artinya poll gagal tapi breaker belum trip.
+// copy status yang konsisten buat read API dan /health. DEGRADED berarti poll gagal tapi breaker belum trip.
 func (b *breaker) snapshot() sourceStatus {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

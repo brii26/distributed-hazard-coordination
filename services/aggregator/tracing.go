@@ -57,7 +57,7 @@ func traceIDOf(ctx context.Context) string {
 
 type callKey struct{}
 
-// buka client span untuk satu outbound call, ditutup logCall.
+// buka client span buat satu outbound call, ditutup logCall.
 func startCall(ctx context.Context, target string) context.Context {
 	ctx, sp := tracer.Start(ctx, target, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("correlation_id", correlationOf(ctx))))
@@ -79,7 +79,7 @@ func endCall(ctx context.Context, err error) {
 	sp.End()
 }
 
-// carrier supaya propagator bisa baca dan tulis header AMQP.
+// carrier biar propagator bisa baca dan tulis header AMQP.
 type amqpCarrier map[string]any
 
 func (c amqpCarrier) Get(k string) string { s, _ := c[k].(string); return s }

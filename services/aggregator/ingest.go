@@ -35,7 +35,7 @@ func (i *ingest) run(ctx context.Context) {
 	}
 }
 
-// mapping satu poll lalu tulis berurutan, record yang ditolak di-skip.
+// mapping satu poll lalu tulis urut, record yang ditolak di-skip.
 func (i *ingest) handle(ctx context.Context, res pollResult) {
 	start := time.Now()
 	ctx, span := tracer.Start(trace.ContextWithRemoteSpanContext(ctx, res.trace), "ingest "+i.name)
@@ -75,7 +75,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		"rejected", len(res.records)-len(events), "changed", changed, "duration_ms", time.Since(start).Milliseconds())
 }
 
-// upsert h. Outage di-retry dengan delay naik dan menahan batch (poller ikut nunggu), error data langsung dikembalikan.
+// upsert h. Outage di-retry pake delay naik dan nahan batch (poller ikut nunggu), error data langsung di-return.
 func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	for attempt := 0; ; attempt++ {
 		changed, err := i.upsert(context.WithoutCancel(ctx), h)

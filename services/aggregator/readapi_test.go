@@ -25,7 +25,7 @@ import (
 
 var errBoom = errors.New("boom")
 
-// readAPI dengan store berisi events dan semua breaker UP, plus client lewat gRPC in-memory.
+// readAPI pake store berisi events dan semua breaker UP, plus client lewat gRPC in-memory.
 func testAPI(t *testing.T, events map[string][]HazardEvent, maxInflight int) (*readAPI, aggregatorpb.AggregatorClient) {
 	t.Helper()
 
@@ -61,7 +61,7 @@ func testAPI(t *testing.T, events map[string][]HazardEvent, maxInflight int) (*r
 	return api, aggregatorpb.NewAggregatorClient(conn)
 }
 
-// buka breaker satu source (threshold 1) seperti poll gagal.
+// buka breaker satu source (threshold 1) kayak poll gagal.
 func trip(api *readAPI, source string) {
 	api.breakers[source].success()
 	api.breakers[source].failure()
@@ -285,7 +285,7 @@ func TestHealthReportsConnectivityFlags(t *testing.T) {
 	}
 }
 
-// panggil REST /health seperti healthcheck compose.
+// panggil REST /health kayak healthcheck compose.
 func getHealth(t *testing.T, api *readAPI) (int, restHealth) {
 	t.Helper()
 

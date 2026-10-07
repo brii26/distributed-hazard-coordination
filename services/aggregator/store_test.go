@@ -42,7 +42,7 @@ func testStore(t *testing.T, poolSize int) *store {
 	return s
 }
 
-// source_ref_id unik per test, row-nya dihapus sesudahnya.
+// source_ref_id unik per test, row-nya dihapus abis itu.
 func ref(t *testing.T, s *store) string {
 	t.Helper()
 

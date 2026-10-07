@@ -28,7 +28,7 @@ const (
 	metaClientRole    = "x-client-role"
 )
 
-// tipe hazard ke satu source yang mengisinya.
+// tipe hazard ke satu source yang ngisinya.
 var typeSources = map[string]string{typeSeismic: sourceBMKG, typeVolcanic: sourcePVMBG}
 
 // urutan source di laporan health.
@@ -137,7 +137,7 @@ func pageQuery(req *aggregatorpb.GetHazardsRequest) (listQuery, error) {
 	}, nil
 }
 
-// layani satu tipe hazard dari Canonical Store plus status source-nya. Source down tetap melayani data tersimpan, UNAVAILABLE hanya kalau down dan kosong.
+// layani satu tipe hazard dari Canonical Store plus status source-nya. Source down tetap layani data tersimpan, UNAVAILABLE cuma kalau down dan kosong.
 func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRequest) (*aggregatorpb.GetHazardsResponse, error) {
 	id, role := caller(ctx)
 	withID(id).Info("read api request", "method", "GetHazards", "role", role, "hazard_type", req.GetHazardType())
@@ -182,7 +182,7 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 	return &aggregatorpb.GetHazardsResponse{Data: data, Meta: metaOf(snap), HasMore: more}, nil
 }
 
-// health tiap source, Canonical Store, dan RabbitMQ. Hanya store tak terjangkau yang "down", sisanya "degraded".
+// health tiap source, Canonical Store, dan RabbitMQ. Cuma store nggak kejangkau yang "down", sisanya "degraded".
 func (a *readAPI) GetHealth(ctx context.Context, _ *emptypb.Empty) (*aggregatorpb.HealthStatus, error) {
 	r := a.health(ctx)
 	h := &aggregatorpb.HealthStatus{
@@ -270,7 +270,7 @@ func (a *readAPI) health(ctx context.Context) healthReport {
 	return r
 }
 
-// GET /health, hanya "down" yang 503 dan "degraded" tetap 200.
+// GET /health, cuma "down" yang 503 dan "degraded" tetap 200.
 func (a *readAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	rep := a.health(r.Context())
 

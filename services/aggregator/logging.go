@@ -18,7 +18,7 @@ var base atomic.Pointer[slog.Logger]
 
 func init() { setupLogging(os.Stdout) }
 
-// logger JSON dengan nama field sesuai spec logging.
+// logger JSON pake nama field sesuai spec logging.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -42,14 +42,14 @@ func newLogger(w io.Writer) *slog.Logger {
 	return slog.New(h).With("service", serviceName)
 }
 
-// jadiin w satu-satunya output log, log stdlib ikut lewat sini dengan correlation_id "-".
+// jadiin w satu-satunya output log, log stdlib ikut lewat sini pake correlation_id "-".
 func setupLogging(w io.Writer) {
 	l := newLogger(w)
 	base.Store(l)
 	slog.SetDefault(l.With("correlation_id", "-"))
 }
 
-// logger untuk satu correlation ID ("-" kalau belum ada).
+// logger buat satu correlation ID ("-" kalau belum ada).
 func withID(id string) *slog.Logger {
 	if id == "" {
 		id = "-"

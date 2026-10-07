@@ -39,7 +39,7 @@ type tokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// pegang token OAuth PVMBG: bootstrap dengan one-time code, rotate dengan refresh token, dan simpan ke volume biar restart nggak butuh code lagi.
+// pegang token OAuth PVMBG: bootstrap pake one-time code, rotate pake refresh token, dan simpan ke volume biar restart nggak butuh code lagi.
 type tokenManager struct {
 	baseURL      string
 	clientID     string
@@ -76,7 +76,7 @@ func (m *tokenManager) Token() string {
 	return m.cur.AccessToken
 }
 
-// error bootstrap atau rotasi terakhir (nil setelah sukses), dihitung circuit breaker PVMBG.
+// error bootstrap atau rotasi terakhir (nil abis sukses), dihitung circuit breaker PVMBG.
 func (m *tokenManager) LastError() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -84,7 +84,7 @@ func (m *tokenManager) LastError() error {
 	return m.lastErr
 }
 
-// baca token tersimpan, atau bootstrap kalau belum ada. File tak terbaca dianggap hilang.
+// baca token tersimpan, atau bootstrap kalau belum ada. File nggak terbaca dianggap hilang.
 func (m *tokenManager) load() error {
 	b, err := os.ReadFile(m.path) //nolint:gosec // path is operator config (PVMBG_TOKEN_VOLUME_PATH), not request input
 	if err == nil {
@@ -106,7 +106,7 @@ func (m *tokenManager) load() error {
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
-// tukar refresh token dengan pasangan baru. errInvalidGrant artinya PVMBG menolak grant (refresh token tak dikenal).
+// tukar refresh token pake pasangan baru. errInvalidGrant berarti PVMBG nolak grant (refresh token nggak dikenal).
 var errInvalidGrant = errors.New("invalid_grant")
 
 func (m *tokenManager) rotate() error {

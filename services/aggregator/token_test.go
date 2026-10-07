@@ -18,7 +18,7 @@ const (
 	firstRefresh = "refresh-1"
 )
 
-// /oauth/token minimal yang menghitung grant, code hanya diterima sekali dan hanya refresh token terbaru.
+// /oauth/token minimal yang ngitung grant, code cuma diterima sekali dan cuma refresh token terbaru.
 type fakePVMBG struct {
 	mu        sync.Mutex
 	codeCalls int
@@ -78,14 +78,14 @@ func (f *fakePVMBG) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// jawab seperti writeOAuthError mock asli.
+// jawab kayak writeOAuthError mock asli.
 func invalidGrant(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 }
 
-// restart melupakan semua token dan status code terpakai, seperti mock asli.
+// restart melupakan semua token dan status code terpakai, kayak mock asli.
 func (f *fakePVMBG) restart() {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -14,12 +14,12 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// pengganti RabbitMQ: mencatat yang di-confirm dan bisa disuruh menolak koneksi atau gagal publish.
+// pengganti RabbitMQ: nyatet yang di-confirm dan bisa disuruh nolak koneksi atau gagal publish.
 type fakeBroker struct {
 	mu            sync.Mutex
 	got           []message
 	failDials     int // tolak sekian koneksi dulu
-	failPublishes int // gagalkan sekian publish dulu, seperti koneksi putus
+	failPublishes int // gagalkan sekian publish dulu, kayak koneksi putus
 	dials         int
 	dead          bool // broker hilang: session terbuka lapor closed, koneksi baru ditolak
 }
@@ -100,7 +100,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// jalankan p sampai test selesai, return fungsi untuk menghentikan dan menunggu.
+// jalankan p sampai test selesai, return fungsi buat stop dan nunggu.
 func start(t *testing.T, p *publisher) (stop func()) {
 	t.Helper()
 

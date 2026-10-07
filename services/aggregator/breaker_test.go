@@ -187,7 +187,7 @@ func TestSourceStatusJSONShape(t *testing.T) {
 	}
 }
 
-// poller dan breaker jalan bareng: gagal berulang menghentikan call, trial setelah open duration memulihkan, breaker source lain nggak tersentuh.
+// poller dan breaker jalan bareng: gagal berulang stop call, trial abis open duration recover, breaker source lain nggak tersentuh.
 func TestPollerStopsCallingAnOpenSourceAndRecovers(t *testing.T) {
 	t.Parallel()
 

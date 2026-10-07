@@ -70,7 +70,7 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool)
 	t.Fatalf("timed out after %v waiting for %s", timeout, what)
 }
 
-// panggil read API Aggregator seperti Client-Facing API.
+// panggil read API Aggregator kayak Client-Facing API.
 func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -78,7 +78,7 @@ func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 	return e.read.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{HazardType: typ})
 }
 
-// isi Canonical Store untuk satu tipe hazard.
+// isi Canonical Store buat satu tipe hazard.
 func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	t.Helper()
 
@@ -90,7 +90,7 @@ func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	return events
 }
 
-// satu HTTP call dengan header opsional, return status dan body.
+// satu HTTP call pake header opsional, return status dan body.
 func send(t *testing.T, method, url, headerKey, headerValue string) (int, []byte) {
 	t.Helper()
 
@@ -115,7 +115,7 @@ func send(t *testing.T, method, url, headerKey, headerValue string) (int, []byte
 	return resp.StatusCode, body
 }
 
-// jalankan docker compose untuk project suite ini.
+// jalankan docker compose buat project suite ini.
 func itCompose(t *testing.T, args ...string) string {
 	t.Helper()
 
@@ -212,7 +212,7 @@ func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.
 	}
 }
 
-// aturan severity ditulis ulang terpisah dari mapper.
+// aturan severity ditulis ulang misah dari mapper.
 func wantSeverity(magnitude float64, warnings []map[string]any) string {
 	rank := map[string]int{"Waspada": 1, "Siaga": 2, "Awas": 3}
 	best := ""

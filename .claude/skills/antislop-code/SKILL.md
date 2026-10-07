@@ -119,6 +119,7 @@ Applies to every file under the repo root.
 - Write comments in casual Indonesian mixed with English technical terms, at most one or two sentences. Say what the thing is for, e.g. `// payload buat polling ke PVMBG`.
 - Describe the mechanism once, in the doc comment on top of the function, e.g. `// function buat polling BMKG tiap N detik, breaker-nya ada di fungsi terpisah`.
 - No comments inside a function body that explain the flow. Exceptions: `ponytail:` notes, `//nolint` reasons, and TODOs that name a task.
+- Keep the Indonesian casual and spoken, not formal: no affixed formal verbs ("stop callnya", not "menghentikan call"), "udah", "buat", "cuma", "abis", "pake", "kayak", "nggak" instead of "sudah", "untuk", "hanya", "setelah", "dengan", "seperti", "tidak". Technical verbs stay in English (stop, retry, return, drain).
 - Never point at docs or trackers in a comment (no "TRD 3.2", "doc/TRD_M1.md", "#19", "P4"). Write the fact itself.
 - A block of 3 or more lines (history, race essay, design notes) is too long. Keep the one line reason and move the rest to the PR body or `doc/TRD_M1.md`.
 
