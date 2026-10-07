@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ubah record mentah source jadi HazardEvent (TRD 3.2) dari map generik. Clock dan ID generator berupa field biar test bisa pin.
+// ubah record mentah source jadi HazardEvent dari map generik. Clock dan ID generator berupa field biar test bisa pin.
 type mapper struct {
 	now   func() time.Time
 	newID func() string
@@ -52,7 +52,7 @@ func num(r map[string]any, k string) (float64, bool) {
 	return f, ok
 }
 
-// field policy (TRD 3.2, #19): field source yang dipakai canonical nggak diulang di attributes, sisanya masuk attributes dengan key sendiri, canonical yang hilang jadi null.
+// field policy: field source yang dipakai canonical nggak diulang di attributes, sisanya masuk attributes dengan key sendiri, canonical yang hilang jadi null.
 
 // isi field yang dipakai semua source, record tanpa id atau waktu valid ditolak.
 func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKey string, used map[string]bool) (HazardEvent, error) {

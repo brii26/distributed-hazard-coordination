@@ -169,7 +169,7 @@ func TestChangedRecordUpdatesTheRowAndKeepsItsIdentity(t *testing.T) {
 	}
 }
 
-// record sebelum dan sesudah perubahan skema hidup berdampingan di satu tabel dan terbaca utuh tanpa migrasi (P4 kriteria 2).
+// record sebelum dan sesudah perubahan skema hidup berdampingan di satu tabel dan terbaca utuh tanpa migrasi.
 func TestAttributesRoundTripBeforeAndAfterSchemaChange(t *testing.T) {
 	t.Parallel()
 

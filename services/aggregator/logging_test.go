@@ -47,7 +47,7 @@ func captureLogs(t *testing.T) *syncBuffer {
 	return &buf
 }
 
-// parse tiap baris, gagal kalau bukan JSON dengan field TRD 0.3.
+// parse tiap baris, gagal kalau bukan JSON dengan field wajib.
 func jsonLines(t *testing.T, out string) []map[string]any {
 	t.Helper()
 

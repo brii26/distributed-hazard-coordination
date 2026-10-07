@@ -18,7 +18,7 @@ var base atomic.Pointer[slog.Logger]
 
 func init() { setupLogging(os.Stdout) }
 
-// logger JSON dengan nama field sesuai TRD 0.3.
+// logger JSON dengan nama field sesuai spec logging.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -71,7 +71,7 @@ func correlationOf(ctx context.Context) string {
 	return id
 }
 
-// klasifikasi hasil outbound call (success, timeout, failure) sesuai TRD 0.3.
+// klasifikasi hasil outbound call (success, timeout, failure) sesuai spec logging.
 func callStatus(err error) string {
 	var t interface{ Timeout() bool }
 

@@ -28,13 +28,13 @@ const (
 	metaClientRole    = "x-client-role"
 )
 
-// tipe hazard ke satu source yang mengisinya (TRD 3.3).
+// tipe hazard ke satu source yang mengisinya.
 var typeSources = map[string]string{typeSeismic: sourceBMKG, typeVolcanic: sourcePVMBG}
 
 // urutan source di laporan health.
 var healthSources = []string{sourceBMKG, sourcePVMBG}
 
-// gRPC read API internal Aggregator (TRD 3.4).
+// gRPC read API internal Aggregator.
 type readAPI struct {
 	aggregatorpb.UnimplementedAggregatorServer
 
@@ -182,7 +182,7 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 	return &aggregatorpb.GetHazardsResponse{Data: data, Meta: metaOf(snap), HasMore: more}, nil
 }
 
-// health tiap source, Canonical Store, dan RabbitMQ. Hanya store tak terjangkau yang "down", sisanya "degraded" (TRD 0.2, 3.5).
+// health tiap source, Canonical Store, dan RabbitMQ. Hanya store tak terjangkau yang "down", sisanya "degraded".
 func (a *readAPI) GetHealth(ctx context.Context, _ *emptypb.Empty) (*aggregatorpb.HealthStatus, error) {
 	r := a.health(ctx)
 	h := &aggregatorpb.HealthStatus{
@@ -203,7 +203,7 @@ const (
 	disconnected = "disconnected"
 )
 
-// health Aggregator (TRD 0.2, 3.5), dipakai gRPC GetHealth dan REST /health.
+// health Aggregator, dipakai gRPC GetHealth dan REST /health.
 type healthReport struct {
 	Status   string `json:"status"` // ok, degraded, atau down
 	Database string `json:"database"`

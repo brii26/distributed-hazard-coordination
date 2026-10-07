@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	// ponytail: fixed; make it config if a slow database ever makes it matter.
+	// ponytail: fixed, jadiin config kalau database lambat mulai jadi masalah.
 	ingestBuffer = 16
 	retryBase    = 200 * time.Millisecond
 	retryMax     = 5 * time.Second
 )
 
-// tahap kedua per source (TRD 3.5): mapping record dari poller, upsert, lalu publish yang baru atau berubah.
+// tahap kedua per source: mapping record dari poller, upsert, lalu publish yang baru atau berubah.
 type ingest struct {
 	name                string
 	in                  <-chan pollResult

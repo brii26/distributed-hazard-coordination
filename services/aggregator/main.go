@@ -1,4 +1,4 @@
-// Command aggregator: polling BMKG dan PVMBG, simpan ke Canonical Store, publish ke broker (doc/TRD_M1.md).
+// Command aggregator: polling BMKG dan PVMBG, simpan ke Canonical Store, publish ke broker.
 package main
 
 import (
@@ -27,7 +27,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// sisi REST di port sendiri terpisah dari gRPC (TRD 0.0), biar healthcheck nggak ikut kena concurrency cap.
+// sisi REST di port sendiri terpisah dari gRPC, biar healthcheck nggak ikut kena concurrency cap.
 func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.healthHandler)

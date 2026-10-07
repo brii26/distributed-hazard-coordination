@@ -212,7 +212,7 @@ func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.
 	}
 }
 
-// aturan severity TRD 3.2 ditulis ulang terpisah dari mapper.
+// aturan severity ditulis ulang terpisah dari mapper.
 func wantSeverity(magnitude float64, warnings []map[string]any) string {
 	rank := map[string]int{"Waspada": 1, "Siaga": 2, "Awas": 3}
 	best := ""

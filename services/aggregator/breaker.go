@@ -28,7 +28,7 @@ func (s breakerState) String() string {
 	return [...]string{"CLOSED", "OPEN", "HALF-OPEN"}[s]
 }
 
-// status source buat meta read API (TRD 3.3), waktu pakai pointer biar bisa null.
+// status source buat meta read API, waktu pakai pointer biar bisa null.
 type sourceStatus struct {
 	Source        string     `json:"source"`
 	Status        string     `json:"source_status"` // UP, DEGRADED, atau DOWN

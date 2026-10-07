@@ -11,7 +11,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // daftarin driver pgx ke database/sql
 )
 
-// batas waktu tiap call ke Canonical Store (TRD 3.4).
+// batas waktu tiap call ke Canonical Store.
 const dbQueryTimeout = 2 * time.Second
 
 // upsert per (source, source_ref_id), hanya mengembalikan row kalau baru atau berubah. hazard_id dan ingested_at sengaja nggak di-UPDATE biar id stabil dan repeat nggak kelihatan berubah.
@@ -37,7 +37,7 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
        EXCLUDED.attributes)
 RETURNING hazard_id`
 
-// satu-satunya pintu ke Canonical Store (TRD 3.5, 6), pool *sql.DB sudah aman dipakai concurrent.
+// satu-satunya pintu ke Canonical Store, pool *sql.DB sudah aman dipakai concurrent.
 type store struct {
 	db *sql.DB
 }

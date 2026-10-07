@@ -14,8 +14,7 @@ import (
 )
 
 const (
-	// ponytail: fixed, not in the TRD's config list. At ~1 KB an event this is
-	// about 1 MB; make it config if the broker is expected to stay down for long.
+	// ponytail: fixed, bukan config. Satu event ~1 KB jadi total ~1 MB, jadiin config kalau broker diperkirakan down lama.
 	defaultPublishBuffer = 1000
 
 	defaultExchange = "hazard.events"
@@ -36,14 +35,14 @@ type message struct {
 	trace         amqpCarrier // context span publisher, dikirim sebagai header AMQP
 }
 
-// satu koneksi broker aktif, publish baru return setelah broker confirm (TRD 3.5).
+// satu koneksi broker aktif, publish baru return setelah broker confirm.
 type session interface {
 	publish(ctx context.Context, m message) error
 	alive() bool
 	close()
 }
 
-// kirim event ke broker tanpa menahan caller (TRD 3.5, 8.4): publish cuma append ke buffer terbatas, run drain berurutan dengan confirm dan reconnect dengan delay naik.
+// kirim event ke broker tanpa menahan caller: publish cuma append ke buffer terbatas, run drain berurutan dengan confirm dan reconnect dengan delay naik.
 type publisher struct {
 	dial                func(ctx context.Context) (session, error)
 	capacity            int

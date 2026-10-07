@@ -26,7 +26,7 @@ const (
 	maxTokenResponse    = 4096
 )
 
-// isi PVMBG_TOKEN_VOLUME_PATH (TRD 3.0), ExpiresAt absolut biar restart nggak perlu catatan waktu terima.
+// isi PVMBG_TOKEN_VOLUME_PATH, ExpiresAt absolut biar restart nggak perlu catatan waktu terima.
 type tokenFile struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
@@ -200,7 +200,7 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 
 // simpan f (temp file lalu rename) baru jadikan current, jadi volume nggak pernah tertinggal.
 func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
-	b, err := json.Marshal(f) //nolint:gosec // persisting the token to the volume is the point (TRD 3.0)
+	b, err := json.Marshal(f) //nolint:gosec // persisting the token to the volume is the point
 	if err != nil {
 		return err
 	}

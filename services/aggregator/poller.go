@@ -31,7 +31,7 @@ type pollResult struct {
 	trace             trace.SpanContext
 }
 
-// loop polling satu source, satu goroutine satu call jadi nggak mungkin ada dua call bareng (TRD 3.1).
+// loop polling satu source, satu goroutine satu call jadi nggak mungkin ada dua call bareng.
 type poller struct {
 	name     string
 	interval time.Duration
@@ -40,7 +40,7 @@ type poller struct {
 	out      chan<- pollResult
 
 	// since cuma disentuh goroutine run.
-	// ponytail: cursor ada di memory, restart baca ulang semuanya sekali (upsert dedup #21 bikin aman) dan mengasumsikan timestamp source nggak mundur.
+	// ponytail: cursor ada di memory, restart baca ulang semuanya sekali (upsert dedup bikin aman) dan mengasumsikan timestamp source nggak mundur.
 	since time.Time
 }
 
