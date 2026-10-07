@@ -850,16 +850,15 @@ func TestAbuseAuthInputIsRejectedCleanly(t *testing.T) {
 
 // TestAbuseQueryParametersAreValidatedAlike sends bad query parameters to /hazards.
 // Expect a 400 for each, the way limit and severity already do; and no 5xx for any
-// of them, including SQL metacharacters, NUL, emoji and a 100KB search. Known
-// inconsistency (red until fixed): page=-1, page=0, page=abc and an overflowing page
-// are silently treated as page 1.
+// of them, including SQL metacharacters, NUL, emoji and a 100KB search. GET /hazards pages
+// with limit and offset; there is no page parameter.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseQueryParametersAreValidatedAlike(t *testing.T) {
 	e := abuseEnv(t)
 	jar := e.operator(t)
 
-	for _, q := range []string{"page=-1", "page=0", "page=abc", "page=99999999999999999999", "limit=0", "limit=-5", "limit=1000000", "limit=abc", "severity=EVIL"} {
+	for _, q := range []string{"offset=-1", "offset=abc", "offset=99999999999999999999", "limit=0", "limit=-5", "limit=1000000", "limit=abc", "severity=EVIL"} {
 		t.Run("400 for "+q, func(t *testing.T) {
 			if r, _ := e.hazards(t, jar, "type="+typSeismic+"&"+q); r.code != http.StatusBadRequest {
 				t.Errorf("got %d, want 400", r.code)
@@ -875,7 +874,7 @@ func TestAbuseQueryParametersAreValidatedAlike(t *testing.T) {
 
 	for _, s := range []string{"%27%20OR%201%3D1--", "%00", "%25", "_", "%F0%9F%92%A5", strings.Repeat("A", 100000), ";drop"} {
 		t.Run("no 5xx for search "+s[:min(len(s), 12)], func(t *testing.T) {
-			if r, _ := e.hazards(t, jar, "type="+typSeismic+"&search="+s); r.code >= 500 {
+			if r, _ := e.hazards(t, jar, "type="+typSeismic+"&q="+s); r.code >= 500 {
 				t.Errorf("search got %d", r.code)
 			}
 		})

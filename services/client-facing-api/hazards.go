@@ -110,8 +110,8 @@ func pageParams(v url.Values) (limit, offset int32, severity, search string, err
 	}
 
 	search = strings.TrimSpace(v.Get("q"))
-	if utf8.RuneCountInString(search) > maxQueryLen {
-		return 0, 0, "", "", fmt.Errorf("q must be at most %d characters", maxQueryLen)
+	if utf8.RuneCountInString(search) > maxQueryLen || strings.ContainsRune(search, 0) { // Postgres rejects NUL
+		return 0, 0, "", "", fmt.Errorf("q must be at most %d characters, without NUL", maxQueryLen)
 	}
 
 	return limit, offset, severity, search, nil

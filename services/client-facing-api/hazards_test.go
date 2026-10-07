@@ -300,7 +300,7 @@ func TestWithoutPagingParamsTheDefaultPageSizeIsUsed(t *testing.T) {
 func TestBadPagingParamsAreRefusedBeforeTheAggregator(t *testing.T) {
 	t.Parallel()
 
-	for _, q := range []string{"limit=0", "limit=101", "limit=abc", "offset=-1", "offset=1.5", "severity=SEVERE", "q=" + strings.Repeat("a", maxQueryLen+1)} {
+	for _, q := range []string{"limit=0", "limit=101", "limit=abc", "offset=-1", "offset=1.5", "severity=SEVERE", "q=a%00b", "q=" + strings.Repeat("a", maxQueryLen+1)} {
 		calls := 0
 
 		rec, _ := getHazards(t, fakeHazards{resp: oneEvent(t), calls: &calls}, roleOperator, "type=SEISMIC&"+q)
