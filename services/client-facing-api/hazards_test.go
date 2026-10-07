@@ -20,7 +20,7 @@ import (
 	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpb"
 )
 
-// fakeHazards stands in for the Aggregator's GetHazards and records what it was asked.
+// Stands in for the Aggregator's GetHazards and records what it was asked.
 type fakeHazards struct {
 	aggregatorpb.AggregatorClient
 
@@ -55,7 +55,7 @@ func (f fakeHazards) GetHazards(ctx context.Context, in *aggregatorpb.GetHazards
 
 var occurred = time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
 
-// oneEvent is a response with a full event and one whose severity and area are unknown.
+// A response with a full event and one whose severity and area are unknown.
 func oneEvent(t *testing.T) *aggregatorpb.GetHazardsResponse {
 	t.Helper()
 
@@ -77,7 +77,7 @@ func oneEvent(t *testing.T) *aggregatorpb.GetHazardsResponse {
 	}
 }
 
-// getHazards calls GET /hazards through the JWT middleware as a caller with role.
+// Calls GET /hazards through the JWT middleware as a caller with role.
 func getHazards(t *testing.T, f fakeHazards, role, query string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 

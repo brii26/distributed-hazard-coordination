@@ -1,8 +1,6 @@
 package main
 
-// Service-to-service suite: this Client-Facing API against the real Auth Service
-// and its User DB, over the real network. Run it with tests/integration/run.sh
-// cfa-auth; without IT_CFA_URL every test here skips, so `go test ./...` stays offline.
+// Service-to-service suite: this Client-Facing API against the real Auth Service and its User DB. Run it with tests/integration/run.sh cfa-auth, without IT_CFA_URL every test skips.
 
 import (
 	"bytes"
@@ -21,7 +19,7 @@ import (
 	"time"
 )
 
-// itEnv is where the suite talks to; set by run.sh.
+// Where the suite talks to, set by run.sh.
 type itEnv struct {
 	url, operatorEmail, operatorPassword string
 	ttl                                  time.Duration // the Auth Service's short access token TTL
@@ -48,15 +46,14 @@ func integrationEnv(t *testing.T) itEnv {
 	}
 }
 
-// reply is one HTTP response with its cookies, body read.
+// One HTTP response with its cookies, body read.
 type reply struct {
 	code    int
 	body    string
 	cookies map[string]*http.Cookie
 }
 
-// cookies is a client's cookie jar kept by hand: the cookies are Secure, which a
-// real jar would refuse to send over http, and the suite wants to see each one.
+// A cookie jar kept by hand: the cookies are Secure, which a real jar won't send over http, and the suite wants to see each one.
 type cookies map[string]string
 
 func (e itEnv) do(t *testing.T, method, path, body string, jar cookies) reply {
@@ -73,7 +70,7 @@ func (e itEnv) do(t *testing.T, method, path, body string, jar cookies) reply {
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		t.Errorf("%s %s: %v", method, path, err) // not Fatal: the race test calls this from goroutines
+		t.Errorf("%s %s: %v", method, path, err) // not Fatal, the race test calls this from goroutines
 
 		return reply{cookies: map[string]*http.Cookie{}}
 	}
@@ -90,7 +87,7 @@ func (e itEnv) do(t *testing.T, method, path, body string, jar cookies) reply {
 	return r
 }
 
-// keep stores the cookies a reply set into jar (and drops the ones it cleared).
+// Stores the cookies a reply set into jar and drops the ones it cleared.
 func (r reply) keep(jar cookies) {
 	for name, c := range r.cookies {
 		if c.MaxAge < 0 {
@@ -127,7 +124,7 @@ var uniq = struct {
 	n int
 }{}
 
-// freshEmail is unique per call and per run, so reruns never hit "already registered".
+// Unique per call and per run, so reruns never hit "already registered".
 func freshEmail(prefix string) string {
 	uniq.Lock()
 	defer uniq.Unlock()
@@ -139,8 +136,7 @@ func freshEmail(prefix string) string {
 
 var accountRPCsOnce sync.Once
 
-// requireAccountRPCs fails the test run clearly when the Auth Service lacks the
-// account RPCs (#13): the Client-Facing API turns an unimplemented RPC into a 502.
+// Fails clearly when the Auth Service lacks the account RPCs, since an unimplemented RPC becomes a 502.
 func (e itEnv) requireAccountRPCs(t *testing.T) {
 	t.Helper()
 
@@ -152,8 +148,7 @@ func (e itEnv) requireAccountRPCs(t *testing.T) {
 	})
 }
 
-// newLapangan creates a Tim Lapangan account (its access token is the short one),
-// logs it in and returns its cookies.
+// Creates a Tim Lapangan account (short access token), logs it in and returns its cookies.
 func (e itEnv) newLapangan(t *testing.T) cookies {
 	t.Helper()
 
@@ -172,10 +167,10 @@ func (e itEnv) newLapangan(t *testing.T) cookies {
 	return jar
 }
 
-// expire waits until a short-lived access token is past its exp.
+// Waits until a short-lived access token is past its exp.
 func (e itEnv) expire() { time.Sleep(e.ttl + 1500*time.Millisecond) }
 
-// claimsOf reads the payload of a JWT without checking it (the suite only inspects it).
+// Reads a JWT payload without checking it.
 func claimsOf(t *testing.T, token string) map[string]any {
 	t.Helper()
 
@@ -197,7 +192,7 @@ func claimsOf(t *testing.T, token string) map[string]any {
 	return c
 }
 
-// compose runs a docker compose command against the suite's project.
+// Runs a docker compose command against the suite's project.
 func compose(t *testing.T, args ...string) {
 	t.Helper()
 
@@ -209,7 +204,6 @@ func compose(t *testing.T, args ...string) {
 	var stderr strings.Builder
 
 	cmd := exec.CommandContext(context.Background(), base[0], append(base[1:], args...)...) //nolint:gosec // IT_COMPOSE is set by tests/integration/run.sh
-	// compose prints warnings on stderr; only stdout is the answer.
 	cmd.Stderr = &stderr
 
 	_, err := cmd.Output()
@@ -239,7 +233,6 @@ func TestIntegrationLoginSetsHttpOnlyCookiesAndRejectsGenerically(t *testing.T) 
 		t.Fatalf("tokens must travel only in cookies, body was %s", ok.body)
 	}
 
-	// A wrong password and an unknown email must be indistinguishable.
 	wrongPassword := e.do(t, http.MethodPost, "/auth/login", fmt.Sprintf(`{"email":%q,"password":"nope"}`, e.operatorEmail), nil)
 	unknownEmail := e.do(t, http.MethodPost, "/auth/login", `{"email":"nobody@it.example","password":"nope"}`, nil)
 
@@ -255,7 +248,7 @@ func TestIntegrationLogoutKillsTheRefreshToken(t *testing.T) {
 	e.requireAccountRPCs(t)
 
 	jar := e.newLapangan(t)
-	stolen := cookies{"jwt": jar["jwt"], "refresh_token": jar["refresh_token"]} // what a thief would hold
+	stolen := cookies{"jwt": jar["jwt"], "refresh_token": jar["refresh_token"]}
 
 	out := e.do(t, http.MethodPost, "/auth/logout", "", jar)
 	if out.code != http.StatusNoContent || out.cookies["jwt"] == nil || out.cookies["jwt"].MaxAge >= 0 ||
@@ -263,7 +256,6 @@ func TestIntegrationLogoutKillsTheRefreshToken(t *testing.T) {
 		t.Fatalf("logout: expected 204 with both cookies cleared, got %d %+v", out.code, out.cookies)
 	}
 
-	// With the session expired, only the refresh token could keep it alive, and it is gone.
 	e.expire()
 
 	if r := e.do(t, http.MethodPost, "/accounts", "{}", stolen); r.code != http.StatusUnauthorized {
@@ -278,7 +270,6 @@ func TestIntegrationAuthServiceTokenPassesAndSurvivesAuthServiceDown(t *testing.
 
 	jar := e.operator(t)
 
-	// A token the Auth Service signed passes the Client-Facing API's own check.
 	body := fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Media"}`, freshEmail("up"))
 	if r := e.do(t, http.MethodPost, "/accounts", body, jar); r.code != http.StatusCreated {
 		t.Fatalf("a freshly issued Operator token must pass the check, got %d %s", r.code, r.body)
@@ -290,8 +281,6 @@ func TestIntegrationAuthServiceTokenPassesAndSurvivesAuthServiceDown(t *testing.
 		waitForLogin(t, e)
 	})
 
-	// With the Auth Service gone the token is still verified locally: the request
-	// gets past the middleware and only the account RPC behind it fails.
 	body = fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Media"}`, freshEmail("down"))
 
 	r := e.do(t, http.MethodPost, "/accounts", body, jar)
@@ -300,7 +289,7 @@ func TestIntegrationAuthServiceTokenPassesAndSurvivesAuthServiceDown(t *testing.
 	}
 }
 
-// waitForLogin waits until the Auth Service answers logins again after a restart.
+// Waits until the Auth Service answers logins again after a restart.
 func waitForLogin(t *testing.T, e itEnv) {
 	t.Helper()
 
@@ -333,8 +322,6 @@ func TestIntegrationExpiredSessionRefreshesTransparently(t *testing.T) {
 
 	e.expire()
 
-	// A Lapangan session is authenticated but not allowed to create accounts: a 403
-	// (not a 401) proves the expired token was refreshed behind the request.
 	r := e.do(t, http.MethodPost, "/accounts", "{}", jar)
 	if r.code != http.StatusForbidden {
 		t.Fatalf("expected the refreshed session to reach the handler (403), got %d %s", r.code, r.body)
@@ -350,7 +337,6 @@ func TestIntegrationExpiredSessionRefreshesTransparently(t *testing.T) {
 		t.Fatalf("the refreshed token must keep the role, got %v", got)
 	}
 
-	// The rotated refresh token is the only one that works now.
 	if r := e.do(t, http.MethodPost, "/accounts", "{}", jar); r.code != http.StatusForbidden || len(r.cookies) != 0 {
 		t.Fatalf("the new session must work without another refresh, got %d with %d cookies", r.code, len(r.cookies))
 	}
@@ -365,8 +351,6 @@ func TestIntegrationLostRefreshRaceIsACleanUnauthorized(t *testing.T) {
 
 	e.expire()
 
-	// Two requests carry the same expired session. The Auth Service rotates a
-	// refresh token once, so one wins and the other must lose cleanly.
 	replies := make([]reply, 2)
 
 	var wg sync.WaitGroup
@@ -398,7 +382,6 @@ func TestIntegrationRegisterAlwaysGivesMedia(t *testing.T) {
 
 	email := freshEmail("self")
 
-	// Asking for a higher role in the body changes nothing.
 	r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Operator"}`, email), nil)
 	if r.code != http.StatusCreated {
 		t.Fatalf("register: expected 201, got %d %s", r.code, r.body)

@@ -20,7 +20,7 @@ const (
 	newEmail   = "new@x.example"
 )
 
-// seen is what the protected handler saw of a request that reached it.
+// What the protected handler saw of a request that reached it.
 type seen struct {
 	reached      bool
 	claims       jwtClaims
@@ -48,7 +48,7 @@ func freshToken(t *testing.T) string {
 	return tokenFor(t, testSecret, roleLapangan, newEmail, testNow.Add(time.Minute))
 }
 
-// run sends one request through the verifier with transparent refresh turned on.
+// Sends one request through the verifier with transparent refresh on.
 func run(t *testing.T, f fakeAuth, cookies ...*http.Cookie) (*httptest.ResponseRecorder, *seen) {
 	t.Helper()
 
@@ -114,12 +114,10 @@ func TestExpiredSessionIsRefreshedAndTheRequestForwarded(t *testing.T) {
 		t.Fatalf("expected the protected response forwarded, got %d %q reached=%v", rec.Code, rec.Body.String(), s.reached)
 	}
 
-	// The held request carries the new session, not the expired one.
 	if s.jwt != fresh || s.refresh != newRefresh || s.claims.Email != newEmail || s.claims.Role != roleLapangan {
 		t.Fatalf("the forwarded request must carry the new tokens and claims, got %+v", s)
 	}
 
-	// And the client gets both cookies re-set to the new values.
 	wantSessionCookie(t, rec, cookieJWT, fresh)
 	wantSessionCookie(t, rec, cookieRefresh, newRefresh)
 }
@@ -139,7 +137,6 @@ func TestRefreshedSessionKeepsWorkingWithoutAnotherRefresh(t *testing.T) {
 
 	rec, _ := run(t, f, sessionCookie(cookieJWT, expiredToken(t)), sessionCookie(cookieRefresh, oldRefresh))
 
-	// The client's next request carries the cookies it was just given.
 	next, s := run(t, f, sessionCookie(cookieJWT, cookie(rec, cookieJWT).Value), sessionCookie(cookieRefresh, cookie(rec, cookieRefresh).Value))
 
 	if next.Code != http.StatusOK || !s.reached || calls != 1 {
@@ -218,7 +215,6 @@ func TestForgedExpiredTokenNeverTriggersARefresh(t *testing.T) {
 func TestNewTokenThatDoesNotVerifyIsNotForwarded(t *testing.T) {
 	t.Parallel()
 
-	// An Auth Service signing with a different secret than ours.
 	bad := tokenFor(t, "another-secret", roleLapangan, newEmail, testNow.Add(time.Minute))
 
 	rec, s := run(t, fakeAuth{refresh: refreshReturning(bad, newRefresh, nil)},
@@ -229,9 +225,7 @@ func TestNewTokenThatDoesNotVerifyIsNotForwarded(t *testing.T) {
 	}
 }
 
-// Two (here twenty) requests sharing one expired session race to refresh it. The
-// Auth Service rotates a token once, so exactly one wins; the rest get the defined
-// loser outcome (401, cookies cleared). Nothing crashes or corrupts state (-race).
+// Twenty requests sharing one expired session race to refresh it. Exactly one wins, the rest get the loser outcome (401, cookies cleared), and nothing corrupts state (-race).
 func TestConcurrentRefreshesOfOneTokenHaveExactlyOneWinner(t *testing.T) {
 	t.Parallel()
 

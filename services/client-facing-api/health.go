@@ -14,18 +14,14 @@ import (
 	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpb"
 )
 
-// healthAPI answers GET /health: liveness plus whether the Aggregator and the Auth
-// Service can be reached (doc/TRD_M1.md 4). The service never reports "down" for a
-// missing dependency: a valid JWT still verifies locally and the other side may
-// still work, so that is "degraded" and stays a 200.
+// GET /health: liveness plus whether the Aggregator and Auth Service can be reached. A missing dependency is "degraded" (200), never "down", since a valid JWT still verifies locally.
 type healthAPI struct {
 	aggregator aggregatorpb.AggregatorClient
 	authAddr   string
 	timeout    time.Duration // UPSTREAM_TIMEOUT_MS, per dependency
 }
 
-// aggregatorUp asks the Aggregator for its own health, so an Aggregator that is
-// running but cannot reach its Canonical Store ("down") counts as unusable too.
+// Asks the Aggregator for its own health, so one that can't reach its Canonical Store ("down") counts as unusable.
 func (h healthAPI) aggregatorUp(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
@@ -35,9 +31,8 @@ func (h healthAPI) aggregatorUp(ctx context.Context) bool {
 	return err == nil && st.GetStatus() != "down"
 }
 
-// reachable reports whether a TCP connection to addr opens.
-// ponytail: only proves the port answers, not that gRPC serves behind it. The Auth
-// Service has no cheap health RPC; add one if a half-up Auth Service ever matters.
+// Whether a TCP connection to addr opens.
+// ponytail: only proves the port answers, not that gRPC serves behind it. Auth has no cheap health RPC, add one if a half-up Auth Service ever matters.
 func (h healthAPI) reachable(ctx context.Context, addr string) bool {
 	d := net.Dialer{Timeout: h.timeout}
 
