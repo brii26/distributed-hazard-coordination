@@ -267,3 +267,18 @@ func TestRefreshAfterExpiryGivesFreshLifetime(t *testing.T) {
 		t.Fatal("superseded refresh token must stay invalid")
 	}
 }
+
+func TestIdsAreUniqueAcrossRestarts(t *testing.T) {
+	t.Parallel()
+
+	first, second := &reportStore{startID: "20261007T100000"}, &reportStore{startID: "20261007T100500"}
+
+	a, b := first.add(time.Now(), false), second.add(time.Now(), false)
+	if a.ReportID == b.ReportID {
+		t.Fatalf("two runs issued the same id %q", a.ReportID)
+	}
+
+	if again := first.add(time.Now(), false); again.ReportID == a.ReportID {
+		t.Fatalf("one run issued %q twice", a.ReportID)
+	}
+}

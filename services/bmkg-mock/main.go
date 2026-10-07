@@ -166,7 +166,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	store := &eventStore{}
+	store := &eventStore{startID: time.Now().UTC().Format("20060102T150405")}
 
 	seedCount, err := envPositiveInt("SEED_COUNT", defaultSeedCount)
 	if err != nil {

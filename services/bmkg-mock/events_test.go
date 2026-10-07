@@ -76,3 +76,18 @@ func TestEventsSinceFilters(t *testing.T) {
 		t.Fatalf("expected the 5 newest events, got %d", n)
 	}
 }
+
+func TestIdsAreUniqueAcrossRestarts(t *testing.T) {
+	t.Parallel()
+
+	first, second := &eventStore{startID: "20261007T100000"}, &eventStore{startID: "20261007T100500"}
+
+	a, b := first.add(time.Now()), second.add(time.Now())
+	if a.EventID == b.EventID {
+		t.Fatalf("two runs issued the same id %q", a.EventID)
+	}
+
+	if again := first.add(time.Now()); again.EventID == a.EventID {
+		t.Fatalf("one run issued %q twice", a.EventID)
+	}
+}

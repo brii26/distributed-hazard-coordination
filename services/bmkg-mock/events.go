@@ -58,6 +58,16 @@ type eventStore struct {
 	events   []SeismicEvent
 	warnings []TsunamiWarning
 	seq      int
+	startID  string // makes ids unique across restarts, empty in tests
+}
+
+// The next id, with the start time of this run in it so a restart never reuses an id.
+func (s *eventStore) id(prefix string) string {
+	if s.startID == "" {
+		return fmt.Sprintf("%s-%06d", prefix, s.seq)
+	}
+
+	return fmt.Sprintf("%s-%s-%06d", prefix, s.startID, s.seq)
 }
 
 // A value in [lo, hi) rounded to one decimal.
@@ -81,7 +91,7 @@ func (s *eventStore) add(at time.Time) SeismicEvent {
 	s.seq++
 
 	e := SeismicEvent{
-		EventID:          fmt.Sprintf("BMKG-%06d", s.seq),
+		EventID:          s.id("BMKG"),
 		Magnitude:        mag,
 		DepthKm:          depth,
 		EpicenterLat:     reg.lat + randFloat(-1, 1),
@@ -101,7 +111,7 @@ func (s *eventStore) add(at time.Time) SeismicEvent {
 		}
 
 		s.warnings = append(s.warnings, TsunamiWarning{
-			WarningID:        fmt.Sprintf("TSU-%06d", s.seq),
+			WarningID:        s.id("TSU"),
 			RelatedEventID:   e.EventID,
 			ThreatLevel:      level,
 			AffectedZones:    []string{reg.name},

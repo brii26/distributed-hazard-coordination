@@ -40,6 +40,16 @@ type reportStore struct {
 	mu      sync.RWMutex
 	reports []VolcanicReport
 	seq     int
+	startID string // makes ids unique across restarts, empty in tests
+}
+
+// The next report id, with the start time of this run in it so a restart never reuses an id.
+func (s *reportStore) id() string {
+	if s.startID == "" {
+		return fmt.Sprintf("PVMBG-%06d", s.seq)
+	}
+
+	return fmt.Sprintf("PVMBG-%s-%06d", s.startID, s.seq)
 }
 
 // A value in [lo, hi].
@@ -57,7 +67,7 @@ func (s *reportStore) add(at time.Time, extended bool) VolcanicReport {
 	s.seq++
 
 	r := VolcanicReport{
-		ReportID:         fmt.Sprintf("PVMBG-%06d", s.seq),
+		ReportID:         s.id(),
 		VolcanoID:        volcanoIDs[randInt(0, len(volcanoIDs)-1)],
 		AlertLevel:       alertLevels[level],
 		EruptionCount24h: randInt(0, 10*(level+1)),
