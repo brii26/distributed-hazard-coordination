@@ -21,24 +21,21 @@ type user struct {
 	Role         string
 }
 
-// userStore is the Auth Service's view of the User DB (doc/TRD_M1.md section 5).
+// The Auth Service's view of the User DB.
 type userStore interface {
-	// UserByEmail returns errNotFound for an unknown email.
+	// errNotFound for an unknown email.
 	UserByEmail(ctx context.Context, email string) (user, error)
-	// CreateUser inserts u; an email that is already taken returns errExists.
+	// Inserts u, errExists if the email is taken.
 	CreateUser(ctx context.Context, u user) error
-	// AddRefreshToken stores a new refresh token row for userID.
+	// Stores a new refresh token row for userID.
 	AddRefreshToken(ctx context.Context, token, userID string) error
-	// RotateRefreshToken atomically replaces oldToken with newToken and returns
-	// the owning user, or errNotFound if oldToken doesn't exist (so a reused,
-	// already-rotated token fails).
+	// Atomically swaps oldToken for newToken and returns the owner, errNotFound if oldToken doesn't exist (a reused token fails).
 	RotateRefreshToken(ctx context.Context, oldToken, newToken string) (user, error)
-	// DeleteRefreshToken removes the row; deleting a missing token is not an error.
+	// Removes the row, a missing token is not an error.
 	DeleteRefreshToken(ctx context.Context, token string) error
 }
 
-// logDB logs one User DB call. "No such row" and "already exists" are answers
-// the caller acts on, not failed calls, so they log as a success.
+// Logs one User DB call. "No such row" and "already exists" are answers, not failures, so they log as success.
 func logDB(ctx context.Context, target string, start time.Time, err error) {
 	if errors.Is(err, errNotFound) || errors.Is(err, errExists) {
 		err = nil
@@ -104,8 +101,7 @@ func (s pgStore) RotateRefreshToken(ctx context.Context, oldToken, newToken stri
 
 	defer func() { _ = tx.Rollback() }()
 
-	// DELETE ... RETURNING makes concurrent reuse of one token race-safe: only
-	// one caller gets the row (doc/TRD_M1.md section 4.2 known limitation).
+	// DELETE ... RETURNING makes concurrent reuse of one token race-safe, only one caller gets the row.
 	var u user
 
 	err = tx.QueryRowContext(ctx,

@@ -222,7 +222,7 @@ func TestLogoutDeletesRefreshToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for range 2 { // second logout of the same token is a no-op, not an error
+	for range 2 {
 		if _, err := s.Logout(ctx, &authpb.LogoutRequest{RefreshToken: resp.GetRefreshToken()}); err != nil {
 			t.Fatal(err)
 		}
@@ -233,7 +233,7 @@ func TestLogoutDeletesRefreshToken(t *testing.T) {
 	}
 }
 
-// loginRole logs in with the given credentials and returns the role in the JWT.
+// Logs in with the given credentials and returns the role in the JWT.
 func loginRole(t *testing.T, s *authServer, email, password string) string {
 	t.Helper()
 
@@ -282,7 +282,7 @@ func TestCreateAccountRejectsUnknownRole(t *testing.T) {
 
 	s := newTestServer()
 
-	for _, role := range []string{"", "admin", "operator"} { // roles are case-sensitive
+	for _, role := range []string{"", "admin", "operator"} {
 		_, err := s.CreateAccount(context.Background(), &authpb.CreateAccountRequest{Email: "r@x.example", Password: testPassword, Role: role})
 		if status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("role %q: expected InvalidArgument, got %v", role, err)
@@ -300,7 +300,6 @@ func TestDuplicateEmailIsRejectedOnBothPaths(t *testing.T) {
 	s := newTestServer()
 	ctx := context.Background()
 
-	// lapEmail is seeded by newTestServer.
 	_, errRegister := s.Register(ctx, &authpb.RegisterRequest{Email: lapEmail, Password: "other-pass"})
 	_, errCreate := s.CreateAccount(ctx, &authpb.CreateAccountRequest{Email: lapEmail, Password: "other-pass", Role: roleOperator})
 
@@ -310,7 +309,6 @@ func TestDuplicateEmailIsRejectedOnBothPaths(t *testing.T) {
 		}
 	}
 
-	// The existing account is untouched: the old password still works, the new one does not.
 	if got := loginRole(t, s, lapEmail, "pw-lap"); got != roleLapangan {
 		t.Fatalf("existing account changed: role %q", got)
 	}
@@ -357,7 +355,6 @@ func TestEmailIsCaseInsensitiveAndNULNeverReachesTheStore(t *testing.T) {
 		t.Fatalf("upper-case login: role %q", got)
 	}
 
-	// A NUL byte is a plain failed login (401), not an internal error (502).
 	if _, err := s.Login(ctx, &authpb.LoginRequest{Email: "a\x00b", Password: "x"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("NUL in login email: expected Unauthenticated, got %v", err)
 	}

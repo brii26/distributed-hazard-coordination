@@ -17,8 +17,7 @@ import (
 
 const serviceName = "auth-service"
 
-// newLogger returns a JSON logger with the field names doc/TRD_M1.md 0.3
-// requires: timestamp, level, service, correlation_id, message (same as bmkg-mock).
+// JSON logger with the required field names.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -42,22 +41,19 @@ func newLogger(w io.Writer) *slog.Logger {
 	return slog.New(h).With("service", serviceName)
 }
 
-// setupLogging makes w the one log output, with the stdlib log package routed
-// through the JSON logger, so a plain log.Printf is a JSON line too, with
-// correlation_id "-" until it has one (#34).
+// Makes w the one log output, stdlib log goes through it too with correlation_id "-".
 func setupLogging(w io.Writer) {
 	l := newLogger(w)
 	base.Store(l)
 	slog.SetDefault(l.With("correlation_id", "-"))
 }
 
-// base is the logger without a correlation_id, so one can be added per call.
+// Logger without a correlation_id, so one can be added per call.
 var base atomic.Pointer[slog.Logger]
 
-// Installed at start-up, before main, so every line from the first one is JSON.
 func init() { setupLogging(os.Stdout) }
 
-// callStatus classifies an outbound call's result as doc/TRD_M1.md 0.3 asks.
+// Classifies an outbound call result as success, timeout or failure.
 func callStatus(err error) string {
 	var t interface{ Timeout() bool }
 
@@ -71,7 +67,7 @@ func callStatus(err error) string {
 	}
 }
 
-// correlationOf is the correlation ID the caller sent as gRPC metadata, or "-".
+// The correlation ID the caller sent as gRPC metadata, or "-".
 func correlationOf(ctx context.Context) string {
 	if v := metadata.ValueFromIncomingContext(ctx, "x-correlation-id"); len(v) > 0 && v[0] != "" {
 		return v[0]
@@ -80,16 +76,13 @@ func correlationOf(ctx context.Context) string {
 	return "-"
 }
 
-// logFor is the logger for one RPC, carrying the caller's correlation ID.
+// Logger for one RPC, carrying the caller's correlation ID.
 func logFor(ctx context.Context) *slog.Logger {
 	return base.Load().With("correlation_id", correlationOf(ctx))
 }
 
-// logCall records one outbound call (here: the User DB): target, duration_ms,
-// status, and the cause when it failed (doc/TRD_M1.md 0.3).
+// Logs one outbound call (the User DB): target, duration_ms, status, and the cause on failure.
 func logCall(ctx context.Context, target string, start time.Time, err error) {
-	// The call is over by the time it is logged, so its span is opened with the
-	// start time it was made at. No parent (the health ping) means no span.
 	if trace.SpanContextFromContext(ctx).IsValid() {
 		_, sp := tracer.Start(ctx, target, trace.WithTimestamp(start), trace.WithSpanKind(trace.SpanKindClient))
 		if err != nil {
