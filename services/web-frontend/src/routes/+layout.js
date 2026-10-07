@@ -1,2 +1,2 @@
-// No server-side rendering: the browser renders everything (doc/TRD_M1.md 9).
+// No server-side rendering.
 export const ssr = false;

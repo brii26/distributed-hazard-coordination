@@ -4,14 +4,14 @@
   import { api, base, pollIntervalMs } from '../../lib/api.js';
   import { clearSession, session } from '../../lib/session.svelte.js';
 
-  const SIZES = [10, 25, 50, 100]; // the API refuses more than 100 per page
+  const SIZES = [10, 25, 50, 100];
   const LEVELS = ['AWAS', 'SIAGA', 'WASPADA', 'NORMAL'];
-  const PAUSE_MS = 350; // how long typing must stop before the search runs
+  const PAUSE_MS = 350;
 
   let type = $state('SEISMIC');
   let level = $state('');
-  let search = $state(''); // what the box holds
-  let query = $state(''); // what was last searched, after the pause
+  let search = $state('');
+  let query = $state('');
   let rows = $state([]);
   let hasMore = $state(false);
   let meta = $state(null);
@@ -20,7 +20,7 @@
   let pageNo = $state(1);
   let size = $state(25);
   let now = $state(Date.now());
-  let live = $state(false); // the push stream is connected
+  let live = $state(false);
   let seq = 0;
 
   const offset = $derived((pageNo - 1) * size);
@@ -29,7 +29,6 @@
     if (session.checked && !session.loggedIn) goto('/login', { replaceState: true });
   });
 
-  // Run the search once typing has paused, not on every key.
   $effect(() => {
     const typed = search.trim();
     const timer = setTimeout(() => {
@@ -42,7 +41,6 @@
     return () => clearTimeout(timer);
   });
 
-  // Fetch whenever the tab, filter, search, page size or page changes.
   $effect(() => {
     void [type, level, query, size, pageNo];
     load();
@@ -55,7 +53,7 @@
     if (query) params.set('q', query);
 
     const { status, body } = await api(`/hazards?${params}`);
-    if (mine !== seq) return; // a newer request replaced this one
+    if (mine !== seq) return;
 
     loading = false;
     now = Date.now();
@@ -64,7 +62,7 @@
       error = '';
       meta = body.meta;
       if (body.data.length === 0 && pageNo > 1) {
-        pageNo = 1; // the page ran out, e.g. after the list changed
+        pageNo = 1;
         return;
       }
       rows = body.data;
@@ -94,10 +92,7 @@
     pageNo = 1;
   }
 
-  // Push: the server sends an event the moment it exists, and the list reloads so
-  // paging, filter and search stay right. EventSource reconnects on its own; events
-  // missed while it was down are not replayed, the reload on reconnect picks them up.
-  // Polling below stays as the fallback.
+  // Live updates over EventSource, with polling below as the fallback.
   $effect(() => {
     if (!session.loggedIn) return;
     const es = new EventSource(`${base}/hazards/stream?type=${type}`, { withCredentials: true });
@@ -193,7 +188,6 @@
             <dt>Occurred</dt><dd>{when(h.occurred_at)}</dd>
             <dt>Ingested</dt><dd>{when(h.ingested_at)}</dd>
             <dt>Hazard ID</dt><dd class="mono">{h.hazard_id}</dd>
-            <!-- The API leaves these out for Media, so they are drawn only when sent. -->
             {#if 'source_ref_id' in h}<dt>Source ref</dt><dd class="mono">{h.source_ref_id}</dd>{/if}
             {#if 'latitude' in h}
               <dt>Coordinates</dt>

@@ -16,7 +16,6 @@
   let failed = $state(false);
   let busy = $state(false);
 
-  // Only Operators may create accounts, so anyone else is sent back to the hazards.
   $effect(() => {
     if (!session.checked) return;
     if (!session.loggedIn) goto('/login', { replaceState: true });
