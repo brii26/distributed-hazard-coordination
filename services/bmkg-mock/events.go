@@ -14,7 +14,7 @@ const (
 	defaultEventInterval = 10 * time.Second
 )
 
-// SeismicEvent is the BMKG event from doc/TRD_M1.md section 1.
+// The BMKG seismic event.
 type SeismicEvent struct {
 	EventID          string    `json:"event_id"`
 	Magnitude        float64   `json:"magnitude"`
@@ -26,7 +26,7 @@ type SeismicEvent struct {
 	PotentialTsunami bool      `json:"potential_tsunami"`
 }
 
-// TsunamiWarning is generated only for events with PotentialTsunami=true.
+// Only generated for events with PotentialTsunami=true.
 type TsunamiWarning struct {
 	WarningID        string    `json:"warning_id"`
 	RelatedEventID   string    `json:"related_event_id"`
@@ -35,8 +35,7 @@ type TsunamiWarning struct {
 	EstimatedArrival time.Time `json:"estimated_arrival"`
 }
 
-// regions is the fixed list new events draw from; lat/lon is the centre that
-// each epicenter is jittered around.
+// The fixed list new events draw from. lat/lon is the center each epicenter is jittered around.
 var regions = []struct {
 	name     string
 	lat, lon float64
@@ -53,9 +52,7 @@ var regions = []struct {
 	{"Papua", -4.0, 138.0},
 }
 
-// eventStore is the mock's in-memory dataset: the generator appends while the
-// /seismic-events and /tsunami-warnings handlers (#2) read, so access goes
-// through the RWMutex.
+// The mock's in-memory dataset. The generator appends while the handlers read, so access goes through the RWMutex.
 type eventStore struct {
 	mu       sync.RWMutex
 	events   []SeismicEvent
@@ -63,14 +60,12 @@ type eventStore struct {
 	seq      int
 }
 
-// randFloat returns a value in [lo, hi) rounded to one decimal.
+// A value in [lo, hi) rounded to one decimal.
 func randFloat(lo, hi float64) float64 {
 	return float64(int((lo+rand.Float64()*(hi-lo))*10)) / 10 //nolint:gosec // mock data, not security-sensitive
 }
 
-// add generates one event stamped with the given time and appends it. When the
-// event can cause a tsunami its warning is appended under the same lock, so a
-// reader never sees an event without its warning.
+// Generates one event stamped with the given time and appends it. If it can cause a tsunami its warning is appended under the same lock, so a reader never sees an event without its warning.
 func (s *eventStore) add(at time.Time) SeismicEvent {
 	reg := regions[rand.IntN(len(regions))] //nolint:gosec // mock data, not security-sensitive
 	tsunami := rand.IntN(5) == 0            //nolint:gosec // mock data, not security-sensitive
@@ -117,7 +112,7 @@ func (s *eventStore) add(at time.Time) SeismicEvent {
 	return e
 }
 
-// seed backfills n events spaced interval apart, ending now.
+// Backfills n events spaced interval apart, ending now.
 func (s *eventStore) seed(n int, interval time.Duration, now time.Time) {
 	for i := n; i > 0; i-- {
 		s.add(now.Add(-time.Duration(i) * interval))
@@ -126,7 +121,7 @@ func (s *eventStore) seed(n int, interval time.Duration, now time.Time) {
 	log.Printf("seeded %d seismic events", n)
 }
 
-// run appends one event every interval until ctx is done.
+// Appends one event every interval until ctx is done.
 func (s *eventStore) run(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -142,7 +137,7 @@ func (s *eventStore) run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// eventsSince returns a copy of the events with OccurredAt after t.
+// A copy of the events with OccurredAt after t.
 func (s *eventStore) eventsSince(t time.Time) []SeismicEvent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -158,8 +153,7 @@ func (s *eventStore) eventsSince(t time.Time) []SeismicEvent {
 	return out
 }
 
-// warningsSince returns a copy of the warnings whose related event occurred
-// after t (a warning carries no timestamp of its own besides the arrival).
+// A copy of the warnings whose related event occurred after t.
 func (s *eventStore) warningsSince(t time.Time) []TsunamiWarning {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

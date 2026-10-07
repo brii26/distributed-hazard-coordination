@@ -16,8 +16,7 @@ func discardLogger() *slog.Logger {
 	return newLogger(io.Discard)
 }
 
-// logLines drives one request through the mux and returns every emitted log
-// line, failing the test if any line isn't valid JSON.
+// Drives one request through the mux and returns every log line, failing if any isn't valid JSON.
 func logLines(t *testing.T, path, key, correlation string) ([]map[string]any, *httptest.ResponseRecorder) {
 	t.Helper()
 
