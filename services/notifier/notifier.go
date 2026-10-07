@@ -5,8 +5,7 @@ import (
 	"time"
 )
 
-// HazardEvent is the canonical record the Aggregator publishes (doc/TRD_M1.md
-// 3.2). Kept here as this service's own copy: no Go code is shared across services.
+// Canonical hazard record from the Aggregator. This service keeps its own copy, no Go code is shared across services.
 type HazardEvent struct {
 	HazardID    string         `json:"hazard_id"`
 	Source      string         `json:"source"`
@@ -29,23 +28,19 @@ func orDash(s *string) string {
 	return *s
 }
 
-// notifier alerts field teams once per (hazard_id, severity) (doc/TRD_M1.md 8.2).
+// Alerts field teams once per (hazard_id, severity).
 type notifier struct {
 	dedup *dedupStore
-	// send delivers one alert to the field teams' devices.
+	// Delivers one alert to the field teams' devices.
 	send func(e HazardEvent, correlationID string)
 }
 
-// logAlert is the alert channel of this milestone: the TRD names no device
-// gateway, so an alert is a structured log line the demo can point at.
+// The alert channel for now: no device gateway exists, so an alert is a structured log line.
 func logAlert(e HazardEvent, correlationID string) {
 	withID(correlationID).Info("alert sent", "hazard_id", e.HazardID, "hazard_type", e.HazardType, "severity", orDash(e.Severity), "area", orDash(e.AreaName))
 }
 
-// handle alerts on a new (hazard_id, severity) and acks a repeat without alerting.
-// The dedup record is on disk before the ack: a crash before the ack only
-// reprocesses (TRD 8.2 accepts a duplicate alert if the crash comes between
-// sending and recording).
+// Alerts on a new (hazard_id, severity) and acks a repeat without alerting. The dedup record hits disk before the ack. A crash between sending and recording can alert twice.
 func (n *notifier) handle(m message) outcome {
 	var e HazardEvent
 	if err := json.Unmarshal(m.body, &e); err != nil || e.HazardID == "" {
