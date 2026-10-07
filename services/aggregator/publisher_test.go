@@ -136,7 +136,7 @@ func TestPublishNeverBlocksAndKeepsTheNewestWhenTheBrokerIsGone(t *testing.T) {
 		defer close(done)
 
 		for i := range 50 {
-			p.publish(event(strconv.Itoa(i)), "c")
+			p.publish(context.Background(), event(strconv.Itoa(i)), "c")
 		}
 	}()
 
@@ -167,7 +167,7 @@ func TestMessagesGoOutInOrderWithTheirCorrelationID(t *testing.T) {
 	start(t, p)
 
 	for _, id := range []string{"a", "b", "c"} {
-		p.publish(event(id), "cycle-"+id)
+		p.publish(context.Background(), event(id), "cycle-"+id)
 	}
 
 	eventually(t, "three confirmed messages", func() bool { return len(b.hazardIDs()) == 3 })
@@ -197,8 +197,8 @@ func TestBufferedMessagesAreRetriedOnceTheBrokerIsBack(t *testing.T) {
 	p := newPublisher(b.dial, 10)
 	start(t, p)
 
-	p.publish(event("a"), "c")
-	p.publish(event("b"), "c")
+	p.publish(context.Background(), event("a"), "c")
+	p.publish(context.Background(), event("b"), "c")
 
 	eventually(t, "both messages after the outage", func() bool { return len(b.hazardIDs()) == 2 })
 
@@ -214,8 +214,8 @@ func TestAFailedPublishIsRetriedOnANewConnectionWithoutLossOrDuplicate(t *testin
 	p := newPublisher(b.dial, 10)
 	start(t, p)
 
-	p.publish(event("a"), "c")
-	p.publish(event("b"), "c")
+	p.publish(context.Background(), event("a"), "c")
+	p.publish(context.Background(), event("b"), "c")
 
 	eventually(t, "both messages", func() bool { return len(b.hazardIDs()) == 2 })
 
@@ -231,12 +231,12 @@ func TestConfirmedMessageIsNotRemovedIfTheBufferAlreadyDroppedIt(t *testing.T) {
 	t.Parallel()
 
 	p := newPublisher((&fakeBroker{}).dial, 2)
-	p.publish(event("a"), "c")
-	p.publish(event("b"), "c")
+	p.publish(context.Background(), event("a"), "c")
+	p.publish(context.Background(), event("b"), "c")
 
 	inFlight, _ := p.front() // a is being sent...
 
-	p.publish(event("c"), "c") // ...when the full buffer drops it
+	p.publish(context.Background(), event("c"), "c") // ...when the full buffer drops it
 
 	p.done(inFlight)
 
@@ -271,7 +271,7 @@ func TestShutdownFlushesWhatIsBuffered(t *testing.T) {
 	eventually(t, "connected", p.connected)
 
 	for i := range 5 {
-		p.publish(event(strconv.Itoa(i)), "c")
+		p.publish(context.Background(), event(strconv.Itoa(i)), "c")
 	}
 
 	stop()
@@ -326,7 +326,7 @@ func TestRealBroker(t *testing.T) { //nolint:gocyclo // one broker scenario read
 
 	p := newPublisher(dialAMQP(url, exchange), 10)
 	start(t, p)
-	p.publish(event("real-1"), "cycle-9")
+	p.publish(context.Background(), event("real-1"), "cycle-9")
 
 	select {
 	case d := <-deliveries:

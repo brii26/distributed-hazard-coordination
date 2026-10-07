@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const defaultPort = "8082"
@@ -160,6 +162,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	shutdownTracing, err := setupTracing(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Reparsed as an int purely so the log line below carries a numeric
 	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
@@ -200,8 +207,8 @@ func main() {
 
 	srv := &http.Server{
 		Addr: ":" + port,
-		Handler: newMux(newTokenStore(clientID, clientSecret, oneTimeCode), adminKey, store,
-			time.Duration(delayMinMS)*time.Millisecond, time.Duration(delayMaxMS)*time.Millisecond),
+		Handler: otelhttp.NewHandler(newMux(newTokenStore(clientID, clientSecret, oneTimeCode), adminKey, store,
+			time.Duration(delayMinMS)*time.Millisecond, time.Duration(delayMaxMS)*time.Millisecond), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -210,7 +217,8 @@ func main() {
 
 	log.Printf("pvmbg-mock listening on :%d", portNum)
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	err = srv.ListenAndServe()
+	_ = shutdownTracing(context.Background()) // flush what is buffered
+
+	log.Fatal(err)
 }

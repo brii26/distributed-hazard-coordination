@@ -10,6 +10,11 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -29,6 +34,8 @@ type pollResult struct {
 	// correlationID names the poll cycle (doc/TRD_M1.md 0.1); it follows the
 	// records into ingest and out on the broker message.
 	correlationID string
+	// trace is the poll cycle's span, so ingest and the publisher continue its trace.
+	trace trace.SpanContext
 }
 
 // poller runs one source's polling loop. The loop is a single goroutine that
@@ -83,15 +90,26 @@ func (p *poller) pollOnce(ctx context.Context) {
 		return
 	}
 
-	id := newHazardID() // a random UUID is as good a correlation ID as any
+	ctx, span := tracer.Start(ctx, "poll "+p.name)
+	defer span.End()
+
+	// With tracing on, the trace ID is the correlation ID; otherwise a random UUID is as good as any.
+	id := traceIDOf(ctx)
+	if id == "" {
+		id = newHazardID()
+	}
+
 	l := withID(id)
 
 	start := time.Now()
 	res, err := p.fetch(withCorrelation(ctx, id), p.since)
 	elapsed := time.Since(start).Milliseconds()
 	res.correlationID = id
+	res.trace = span.SpanContext()
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		p.breaker.failure()
 	} else {
 		p.breaker.success()
@@ -138,6 +156,8 @@ type sourceClient struct {
 // records GETs path (with ?since when set) and decodes a JSON array of objects.
 func (c *sourceClient) records(ctx context.Context, path string, since time.Time) (_ []map[string]any, err error) {
 	start := time.Now()
+	ctx = startCall(ctx, "GET "+c.baseURL+path)
+
 	defer func() { logCall(ctx, "GET "+c.baseURL+path, start, err) }()
 
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
@@ -152,6 +172,8 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 	if err != nil {
 		return nil, err
 	}
+
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
 	// The source logs the poll cycle's ID it receives (doc/TRD_M1.md 1, 0.1).
 	if id := correlationOf(ctx); id != "" {

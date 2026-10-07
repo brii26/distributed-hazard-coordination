@@ -8,6 +8,9 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -128,6 +131,12 @@ func (c *consumer) session(ctx context.Context) (established bool, err error) {
 
 // dispatch hands a delivery to handle, then acks or nacks it as handle decided.
 func (c *consumer) dispatch(d amqp.Delivery) {
+	// The publisher's span context rides in the message headers, so this joins its trace.
+	_, span := tracer.Start(otel.GetTextMapPropagator().Extract(context.Background(), amqpCarrier(d.Headers)),
+		"consume "+c.queue, trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(attribute.String("correlation_id", d.CorrelationId)))
+	defer span.End()
+
 	var err error
 
 	switch c.handle(message{body: d.Body, correlationID: d.CorrelationId}) {

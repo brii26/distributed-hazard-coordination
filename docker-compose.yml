@@ -1,11 +1,31 @@
 # See doc/TRD_M1.md for the full specification each service implements.
 
+# Tracing (#116): every Go service exports spans here when TRACING_ENABLED=true.
+# Jaeger is not a dependency; with it down, services keep serving.
+x-tracing: &tracing
+  TRACING_ENABLED: ${TRACING_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+
 services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      QUERY_UI_CONFIG: /etc/jaeger/ui-config.json
+    # Inline, so there is no host file whose permissions a container uid could trip on.
+    # themes.enabled shows the dark/light toggle; off, the UI is always light.
+    configs:
+      - source: jaeger_ui_config
+        target: /etc/jaeger/ui-config.json
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+
   bmkg-mock:
     build: ./services/bmkg-mock
     ports:
       - "${BMKG_PORT:-8081}:8081"
     environment:
+      <<: *tracing
       PORT: 8081
       BMKG_API_KEY: ${BMKG_API_KEY}
       SEED_COUNT: ${BMKG_SEED_COUNT:-20}
@@ -23,6 +43,7 @@ services:
     ports:
       - "${PVMBG_PORT:-8082}:8082"
     environment:
+      <<: *tracing
       PORT: 8082
       OAUTH_CLIENT_ID: ${PVMBG_OAUTH_CLIENT_ID}
       OAUTH_CLIENT_SECRET: ${PVMBG_OAUTH_CLIENT_SECRET}
@@ -105,6 +126,7 @@ services:
       pvmbg-mock:
         condition: service_healthy
     environment:
+      <<: *tracing
       GRPC_PORT: 9091
       HEALTH_PORT: 8091
       POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-3000}
@@ -140,6 +162,7 @@ services:
       user-db:
         condition: service_healthy
     environment:
+      <<: *tracing
       GRPC_PORT: 9092
       HEALTH_PORT: 8092
       USER_DB_URL: postgres://${USER_DB_USER:-auth}:${USER_DB_PASSWORD}@user-db:5432/${USER_DB_NAME:-user_db}?sslmode=disable
@@ -164,6 +187,7 @@ services:
     ports:
       - "${CLIENT_FACING_API_PORT:-8080}:8080"
     environment:
+      <<: *tracing
       PORT: 8080
       AGGREGATOR_GRPC_ADDR: aggregator:9091
       AUTH_SERVICE_GRPC_ADDR: auth-service:9092
@@ -203,6 +227,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: *tracing
       HEALTH_PORT: 8093
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
@@ -214,6 +239,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: *tracing
       HEALTH_PORT: 8094
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
@@ -228,6 +254,7 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
+      <<: *tracing
       HEALTH_PORT: 8095
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
@@ -245,6 +272,11 @@ networks:
     internal: true
   userdb-net:
     internal: true
+
+configs:
+  jaeger_ui_config:
+    content: |
+      {"themes": {"enabled": true}}
 
 volumes:
   canonical_store_data:

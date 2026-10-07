@@ -96,6 +96,18 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	shutdownTracing, err := setupTracing(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_ = shutdownTracing(flush)
+	}()
+
 	c := &consumer{url: url, exchange: envOr("RABBITMQ_EXCHANGE", defaultExchange), queue: envOr("QUEUE_NAME", defaultQueue)}
 	done := make(chan struct{})
 
