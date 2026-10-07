@@ -41,3 +41,7 @@ services/web-frontend/node_modules/
 services/web-frontend/.svelte-kit/
 services/web-frontend/build/
 tests/load/results/
+
+# graphify: generated graph, caches and ignore rules
+/graphify-out/
+.graphify*
