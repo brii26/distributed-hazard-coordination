@@ -16,7 +16,7 @@ func newMapper() *mapper {
 	return &mapper{now: time.Now, newID: newHazardID}
 }
 
-// satu baris tabel referensi gunung, PVMBG cuma kirim volcano_id.
+// satu baris table referensi gunung, PVMBG cuma kirim volcano_id.
 type volcano struct {
 	name     string
 	lat, lon float64

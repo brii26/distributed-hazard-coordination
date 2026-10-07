@@ -19,7 +19,7 @@ const (
 	severityAwas    = "AWAS"
 )
 
-// record kanonik hazard, field yang nggak disediakan source jadi pointer biar keluar null.
+// canonical record hazard, field yang nggak disediakan source jadi pointer biar keluar null.
 type HazardEvent struct {
 	HazardID    string         `json:"hazard_id"`
 	Source      string         `json:"source"`

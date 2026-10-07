@@ -28,7 +28,7 @@ type ingest struct {
 	retryBase, retryMax time.Duration
 }
 
-// jalan sampai poller nutup channel, jadi record yang antre tetap ditulis saat shutdown.
+// jalan sampai poller nutup channel, jadi record yang queue tetap ditulis saat shutdown.
 func (i *ingest) run(ctx context.Context) {
 	for res := range i.in {
 		i.handle(ctx, res)
@@ -100,7 +100,7 @@ func isPermanent(err error) bool {
 	return errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23"))
 }
 
-// jalur satu source: poller, channel, ingest.
+// pipeline satu source: poller, channel, ingest.
 type pipeline struct {
 	poller *poller
 	ingest *ingest

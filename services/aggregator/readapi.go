@@ -63,7 +63,7 @@ func newGRPCServer(a *readAPI) *grpc.Server {
 	return s
 }
 
-// concurrency cap, nggak pernah antre: lewat batas langsung RESOURCE_EXHAUSTED.
+// concurrency cap, nggak pernah queue: lewat batas langsung RESOURCE_EXHAUSTED.
 func (a *readAPI) limit(ctx context.Context, req any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
 	select {
 	case a.sem <- struct{}{}:
@@ -93,7 +93,7 @@ func caller(ctx context.Context) (correlationID, role string) {
 	return first(metaCorrelationID), first(metaClientRole)
 }
 
-// ukuran halaman: default kalau caller nggak kirim, dan batas maksimal.
+// ukuran page: default kalau caller nggak kirim, dan batas maksimal.
 const (
 	defaultPageLimit = 50
 	maxPageLimit     = 200

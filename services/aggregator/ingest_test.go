@@ -355,7 +355,7 @@ func TestShutdownDuringAnOutageDoesNotHang(t *testing.T) {
 	}
 }
 
-// jalur penuh ke Postgres asli: dua source masuk hazard_events, poll berulang nggak nambah duplikat, tiap record dipublish sekali.
+// flow penuh ke Postgres asli: dua source masuk hazard_events, poll berulang nggak nambah duplikat, tiap record dipublish sekali.
 func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 	t.Parallel()
 

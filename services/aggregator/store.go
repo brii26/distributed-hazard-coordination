@@ -110,7 +110,7 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 	return changed, tx.Commit()
 }
 
-// satu halaman satu tipe hazard, Search itu substring case-insensitive dari area_name.
+// satu page satu tipe hazard, Search itu substring case-insensitive dari area_name.
 type listQuery struct {
 	HazardType string
 	Severity   string
@@ -122,7 +122,7 @@ type listQuery struct {
 // bikin teks search jadi literal di LIKE.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// satu halaman tipe hazard dari yang terbaru, plus apakah ada halaman berikutnya (minta satu row ekstra).
+// satu page tipe hazard dari yang terbaru, plus apakah ada page berikutnya (minta satu row ekstra).
 // ponytail: OFFSET masih nelusuri row yang di-skip dan search itu scan per tipe, di jutaan row pindah ke keyset paging (occurred_at, hazard_id) dan index pg_trgm di area_name.
 func (s *store) listByType(ctx context.Context, q listQuery) (_ []HazardEvent, _ bool, err error) {
 	start := time.Now()

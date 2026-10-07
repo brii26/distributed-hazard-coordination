@@ -35,7 +35,7 @@ type message struct {
 	trace         amqpCarrier // context span publisher, dikirim sebagai header AMQP
 }
 
-// satu koneksi broker aktif, publish baru return abis broker confirm.
+// satu connection broker aktif, publish baru return abis broker confirm.
 type session interface {
 	publish(ctx context.Context, m message) error
 	alive() bool
@@ -51,7 +51,7 @@ type publisher struct {
 	mu      sync.Mutex
 	queue   []message // yang paling lama di depan
 	nextSeq uint64
-	wake    chan struct{} // sinyal ke run kalau antrean terisi
+	wake    chan struct{} // signal ke run kalau queue terisi
 
 	up atomic.Bool
 }
@@ -60,7 +60,7 @@ func newPublisher(dial func(context.Context) (session, error), capacity int) *pu
 	return &publisher{dial: dial, capacity: capacity, retryBase: retryBase, retryMax: retryMax, wake: make(chan struct{}, 1)}
 }
 
-// antre h dan langsung return, buffer penuh buang yang paling lama (event-nya tetap aman di Canonical Store).
+// queue h dan langsung return, buffer penuh buang yang paling lama (event-nya tetap aman di Canonical Store).
 func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID string) {
 	body, err := json.Marshal(h)
 	if err != nil {
@@ -90,7 +90,7 @@ func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID st
 	}
 }
 
-// koneksi broker lagi terbuka atau nggak, buat health check.
+// connection broker lagi terbuka atau nggak, buat health check.
 func (p *publisher) connected() bool {
 	return p.up.Load()
 }
@@ -116,8 +116,8 @@ func (p *publisher) done(m message) {
 	}
 }
 
-// publish pesan paling lama dan log hasilnya.
-// ponytail: satu pesan in flight sekali, throughput dibatasi confirm round trip. Cukup buat interval polling, batch confirm kalau nggak cukup.
+// publish message paling lama dan log hasilnya.
+// ponytail: satu message in flight sekali, throughput dibatasi confirm round trip. Cukup buat interval polling, batch confirm kalau nggak cukup.
 func (p *publisher) send(ctx context.Context, s session, m message) error {
 	if err := s.publish(ctx, m); err != nil {
 		withID(m.correlationID).Warn("publish", "hazard_id", m.hazardID, "result", "failure", "error", err.Error())
@@ -131,7 +131,7 @@ func (p *publisher) send(ctx context.Context, s session, m message) error {
 	return nil
 }
 
-// publish sampai ctx selesai lalu satu flush terbatas, koneksi gagal di-redial pake delay naik dan pesan yang sama dicoba lagi.
+// publish sampai ctx selesai lalu satu flush terbatas, connection gagal di-redial pake delay naik dan message yang sama dicoba lagi.
 func (p *publisher) run(ctx context.Context) {
 	var s session
 
@@ -198,7 +198,7 @@ func (p *publisher) run(ctx context.Context) {
 	}
 }
 
-// buang koneksi yang gagal atau hilang.
+// buang connection yang gagal atau hilang.
 func (p *publisher) lose(s session) session {
 	s.close()
 	p.up.Store(false)
@@ -228,7 +228,7 @@ func (p *publisher) flush(s session) {
 	}
 }
 
-// session di atas koneksi AMQP asli pake publisher confirms.
+// session di atas connection AMQP asli pake publisher confirms.
 type amqpSession struct {
 	conn     *amqp.Connection
 	ch       *amqp.Channel
