@@ -141,7 +141,7 @@ func (e itEnv) requireAccountRPCs(t *testing.T) {
 	t.Helper()
 
 	accountRPCsOnce.Do(func() {
-		r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-12345"}`, freshEmail("probe")), nil)
+		r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-123456785"}`, freshEmail("probe")), nil)
 		if r.code != http.StatusCreated {
 			t.Fatalf("POST /auth/register returned %d %s: the Auth Service seems to lack the Register/CreateAccount RPCs (#13)", r.code, r.body)
 		}
@@ -270,7 +270,7 @@ func TestIntegrationAuthServiceTokenPassesAndSurvivesAuthServiceDown(t *testing.
 
 	jar := e.operator(t)
 
-	body := fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Media"}`, freshEmail("up"))
+	body := fmt.Sprintf(`{"email":%q,"password":"pw-12345678","role":"Media"}`, freshEmail("up"))
 	if r := e.do(t, http.MethodPost, "/accounts", body, jar); r.code != http.StatusCreated {
 		t.Fatalf("a freshly issued Operator token must pass the check, got %d %s", r.code, r.body)
 	}
@@ -281,7 +281,7 @@ func TestIntegrationAuthServiceTokenPassesAndSurvivesAuthServiceDown(t *testing.
 		waitForLogin(t, e)
 	})
 
-	body = fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Media"}`, freshEmail("down"))
+	body = fmt.Sprintf(`{"email":%q,"password":"pw-12345678","role":"Media"}`, freshEmail("down"))
 
 	r := e.do(t, http.MethodPost, "/accounts", body, jar)
 	if r.code == http.StatusUnauthorized || (r.code != http.StatusBadGateway && r.code != http.StatusGatewayTimeout) {
@@ -343,7 +343,7 @@ func TestIntegrationExpiredSessionRefreshesTransparently(t *testing.T) {
 }
 
 //nolint:paralleltest // shares the docker stack
-func TestIntegrationLostRefreshRaceIsACleanUnauthorized(t *testing.T) {
+func TestIntegrationParallelRefreshSharesOneRotationAndReplayIsRejected(t *testing.T) {
 	e := integrationEnv(t)
 	e.requireAccountRPCs(t)
 
@@ -361,17 +361,19 @@ func TestIntegrationLostRefreshRaceIsACleanUnauthorized(t *testing.T) {
 
 	wg.Wait()
 
-	won, lost := replies[0], replies[1]
-	if won.code == http.StatusUnauthorized {
-		won, lost = lost, won
+	for _, r := range replies {
+		if r.code != http.StatusForbidden {
+			t.Fatalf("both parallel requests share one refresh and get through (403), got %d and %d", replies[0].code, replies[1].code)
+		}
 	}
 
-	if won.code != http.StatusForbidden || lost.code != http.StatusUnauthorized {
-		t.Fatalf("expected one request through (403) and one clean 401, got %d and %d", replies[0].code, replies[1].code)
+	replay := e.do(t, http.MethodPost, "/accounts", "{}", jar)
+	if replay.code != http.StatusUnauthorized {
+		t.Fatalf("replaying the old refresh token must be 401, got %d", replay.code)
 	}
 
-	if lost.cookies["jwt"] == nil || lost.cookies["jwt"].MaxAge >= 0 || lost.cookies["refresh_token"] == nil || lost.cookies["refresh_token"].MaxAge >= 0 {
-		t.Fatalf("the loser must be told to clear both cookies, got %+v", lost.cookies)
+	if replay.cookies["jwt"] == nil || replay.cookies["jwt"].MaxAge >= 0 || replay.cookies["refresh_token"] == nil || replay.cookies["refresh_token"].MaxAge >= 0 {
+		t.Fatalf("a rejected replay must clear both cookies, got %+v", replay.cookies)
 	}
 }
 
@@ -382,12 +384,12 @@ func TestIntegrationRegisterAlwaysGivesMedia(t *testing.T) {
 
 	email := freshEmail("self")
 
-	r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Operator"}`, email), nil)
+	r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-12345678","role":"Operator"}`, email), nil)
 	if r.code != http.StatusCreated {
 		t.Fatalf("register: expected 201, got %d %s", r.code, r.body)
 	}
 
-	login, jar := e.login(t, email, "pw-1234")
+	login, jar := e.login(t, email, "pw-12345678")
 	if login.code != http.StatusOK {
 		t.Fatalf("the new account could not log in: %d %s", login.code, login.body)
 	}
@@ -396,7 +398,7 @@ func TestIntegrationRegisterAlwaysGivesMedia(t *testing.T) {
 		t.Fatalf("a self-registered account must be Media, got %v", got)
 	}
 
-	if dup := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-1234"}`, email), nil); dup.code != http.StatusConflict {
+	if dup := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-12345678"}`, email), nil); dup.code != http.StatusConflict {
 		t.Fatalf("registering the same email twice: expected 409, got %d", dup.code)
 	}
 }
@@ -407,7 +409,7 @@ func TestIntegrationAccountsOnlyWorkForAnOperator(t *testing.T) {
 	e.requireAccountRPCs(t)
 
 	newAccount := func() string {
-		return fmt.Sprintf(`{"email":%q,"password":"pw-1234","role":"Lapangan"}`, freshEmail("made"))
+		return fmt.Sprintf(`{"email":%q,"password":"pw-12345678","role":"Lapangan"}`, freshEmail("made"))
 	}
 
 	if r := e.do(t, http.MethodPost, "/accounts", newAccount(), nil); r.code != http.StatusUnauthorized {
@@ -415,11 +417,11 @@ func TestIntegrationAccountsOnlyWorkForAnOperator(t *testing.T) {
 	}
 
 	email := freshEmail("media")
-	if r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-1234"}`, email), nil); r.code != http.StatusCreated {
+	if r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-12345678"}`, email), nil); r.code != http.StatusCreated {
 		t.Fatalf("register: %d %s", r.code, r.body)
 	}
 
-	_, media := e.login(t, email, "pw-1234")
+	_, media := e.login(t, email, "pw-12345678")
 	if r := e.do(t, http.MethodPost, "/accounts", newAccount(), media); r.code != http.StatusForbidden {
 		t.Fatalf("a Media session must not create accounts, expected 403, got %d", r.code)
 	}

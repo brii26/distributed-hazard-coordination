@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,55 +25,52 @@ func (v *jwtVerifier) withRefresh(a *authAPI) *jwtVerifier {
 	return v
 }
 
-// refreshGrace is how long a rotated pair is kept for requests still carrying the old token: a page fires its list and stream requests together, so they all hold the same expired session.
-const refreshGrace = 5 * time.Second
-
 type refreshCall struct {
 	done chan struct{}
 	resp *authpb.TokenResponse
 	err  error
-	at   time.Time
 }
 
-// exchange rotates old at the Auth Service once; concurrent and near-simultaneous callers with the same old token share that result.
-// ponytail: per instance only, and an old token stays usable for refreshGrace after it rotated.
+// Rotates old at the Auth Service once: requests arriving while that call is in flight share its result. The call is not tied to any one request, so a client that disconnects can't fail the others, and an old token is rejected once the call is done.
+// ponytail: per instance only, two Client-Facing API copies would each rotate once and one would lose.
 func (a *authAPI) exchange(ctx context.Context, old string) (*authpb.TokenResponse, error) {
 	a.refreshMu.Lock()
 
-	for k, c := range a.refreshes {
-		if c.err != nil || (!c.at.IsZero() && time.Since(c.at) > refreshGrace) {
-			delete(a.refreshes, k)
+	c, ok := a.refreshes[old]
+	if !ok {
+		c = &refreshCall{done: make(chan struct{})}
+
+		if a.refreshes == nil {
+			a.refreshes = map[string]*refreshCall{}
 		}
+
+		a.refreshes[old] = c
+
+		go a.rotate(ctx, old, c)
 	}
 
-	if c, ok := a.refreshes[old]; ok {
-		a.refreshMu.Unlock()
-
-		select {
-		case <-c.done:
-			return c.resp, c.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-
-	c := &refreshCall{done: make(chan struct{})}
-
-	if a.refreshes == nil {
-		a.refreshes = map[string]*refreshCall{}
-	}
-
-	a.refreshes[old] = c
 	a.refreshMu.Unlock()
+
+	select {
+	case <-c.done:
+		return c.resp, c.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// The real Auth Service call behind exchange, on a context that keeps the trace but not the first caller's cancellation.
+func (a *authAPI) rotate(ctx context.Context, old string, c *refreshCall) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.timeout)
+	defer cancel()
 
 	resp, err := a.auth.Refresh(ctx, &authpb.RefreshRequest{RefreshToken: old})
 
 	a.refreshMu.Lock()
-	c.resp, c.err, c.at = resp, err, time.Now()
+	c.resp, c.err = resp, err
+	delete(a.refreshes, old)
 	a.refreshMu.Unlock()
 	close(c.done)
-
-	return c.resp, c.err
 }
 
 // Holds the request while swapping the refresh token for a new pair, puts the new JWT into it, runs next and re-sets both cookies. Requests sharing one expired session all get the same new pair.
