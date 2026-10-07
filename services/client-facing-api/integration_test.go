@@ -148,7 +148,7 @@ func (e itEnv) requireAccountRPCs(t *testing.T) {
 	})
 }
 
-// Creates a Tim Lapangan account (short access token), logs it in and returns its cookies.
+// Creates a Tim Lapangan account, logs it in and returns its cookies.
 func (e itEnv) newLapangan(t *testing.T) cookies {
 	t.Helper()
 

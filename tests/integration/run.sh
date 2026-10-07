@@ -40,7 +40,7 @@ run_go() {
 }
 
 suite_cfa_auth() {
-  export ACCESS_TOKEN_TTL_S=2
+  export ACCESS_TOKEN_TTL_S=10 # short so expiry tests are quick, long enough for an Operator token to outlive `compose stop auth-service`
   up user-db auth-service client-facing-api
   IT_CFA_URL="http://127.0.0.1:$CLIENT_FACING_API_PORT" \
     IT_OPERATOR_EMAIL="$SEED_OPERATOR_EMAIL" IT_OPERATOR_PASSWORD="$SEED_OPERATOR_PASSWORD" \
