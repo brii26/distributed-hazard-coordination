@@ -22,6 +22,7 @@
 | Dashboard Updater | RabbitMQ | masuk (consumer) | AMQP subscribe, queue sendiri |
 | Notifier | RabbitMQ | masuk (consumer) | AMQP subscribe, queue sendiri |
 | Audit Logger | RabbitMQ | masuk (consumer) | AMQP subscribe, queue sendiri |
+| Semua service Go | Jaeger | keluar | OTLP gRPC, span trace (§13), tidak pernah memengaruhi request |
 | Web Frontend (CSR) | Client-Facing API | keluar | REST/JSON via HTTPS, cookie JWT |
 | Media / Tim Lapangan / BNPB Ops (pengguna, via browser) | Web Frontend (CSR) | masuk | HTTPS, browser |
 
@@ -37,7 +38,7 @@
 - Komunikasi antar service: jaringan saja (REST/gRPC/AMQP). Tidak ada pemanggilan fungsi langsung atau shared library business-logic antar module.
 - Storage: kepemilikan tunggal per service. Canonical Store hanya boleh diakses Aggregator, ditegakkan lewat pemisahan Docker network.
 - Setiap service: Dockerfile sendiri, dapat start/stop independen tanpa mematikan atau me-restart service lain.
-- Kredensial/secrets: env var, tidak ter-commit. `.env.example` di repo root mendaftar seluruh variabel beserta nilai contoh.
+- Kredensial/secrets: env var, tidak ter-commit. `.env.example` di repo root mendaftar secrets dan nilai yang boleh diubah, dengan nama yang diberi awalan per service. Wiring internal antar container (URL, port, path) diset di `docker-compose.yml`. Tabel pemetaan nama ada di §10.1.
 
 ### 0.1 Correlation ID (wajib, lintas semua service)
 
@@ -150,7 +151,7 @@ Access token dipakai sebagai `Authorization: Bearer <access_token>` untuk mengak
 | POST | `/admin/outage` | header `X-Admin-Key` | toggle outage instan |
 | GET | `/health` | — | `{"status":"ok"}` |
 
-Endpoint `/admin/*` dilindungi header `X-Admin-Key: <PVMBG_ADMIN_KEY>` (env, wajib diset): header tidak ada → `401`, salah → `403`. Pola yang sama dengan `X-BMKG-Key` pada BMKG mock; ditambahkan agar saklar demo tidak bisa dipicu oleh pihak lain.
+Endpoint `/admin/*` dilindungi header `X-Admin-Key: <ADMIN_KEY>` (env, wajib diset; di `.env.example` bernama `PVMBG_ADMIN_KEY`): header tidak ada → `401`, salah → `403`. Pola yang sama dengan `X-BMKG-Key` pada BMKG mock; ditambahkan agar saklar demo tidak bisa dipicu oleh pihak lain.
 
 **VolcanicReport**
 ```
@@ -630,6 +631,37 @@ Seluruh consumer menggunakan manual acknowledgment — konsekuensinya, setiap co
 | `ACCESS_TOKEN_TTL_S` | Auth Service, Client-Facing API | 60 | TTL JWT |
 | `PVMBG_DELAY_MIN_MS` / `_MAX_MS` | PVMBG mock | 500 / 3000 | simulasi latensi |
 | `JWT_SIGNING_SECRET` | Auth Service, Client-Facing API | — | shared HMAC secret, internal only |
+| `TRACING_ENABLED` | semua service Go | true | ekspor span OpenTelemetry ke Jaeger (§13) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | semua service Go | http://jaeger:4317 | alamat OTLP gRPC tujuan span |
+| `JAEGER_UI_PORT` | Jaeger | 16686 | port host untuk UI Jaeger |
+| `AUTH_RATE_LIMIT_RPS` | Client-Facing API | 10 | token bucket per IP klien untuk `/auth/login` dan `/auth/register` |
+
+### 10.1 Nama variabel: yang dibaca service vs `.env.example`
+
+Service membaca nama di kolom kedua. `docker-compose.yml` mengisinya dari `.env.example` (kolom ketiga) atau dengan nilai tetap (kolom "compose").
+
+| Service | Dibaca service | Asal |
+|---|---|---|
+| BMKG mock | `SEED_COUNT`, `EVENT_INTERVAL_S` | `BMKG_SEED_COUNT`, `BMKG_EVENT_INTERVAL_S` |
+| BMKG mock | `BMKG_DELAY_MIN_MS`, `BMKG_DELAY_MAX_MS` | sama |
+| PVMBG mock | `OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET` | `PVMBG_OAUTH_CLIENT_ID`, `PVMBG_OAUTH_CLIENT_SECRET` |
+| PVMBG mock | `ADMIN_KEY` | `PVMBG_ADMIN_KEY` |
+| PVMBG mock | `SEED_COUNT`, `EVENT_INTERVAL_S` | `PVMBG_SEED_COUNT`, `PVMBG_EVENT_INTERVAL_S` |
+| Aggregator | `MAX_INFLIGHT_REQUESTS` | `AGGREGATOR_MAX_INFLIGHT_REQUESTS` |
+| Aggregator | `DATABASE_URL` | compose, disusun dari `CANONICAL_DB_USER`, `CANONICAL_DB_PASSWORD`, `CANONICAL_DB_NAME` |
+| Aggregator | `RABBITMQ_URL`, `RABBITMQ_EXCHANGE` | compose, `RABBITMQ_EXCHANGE` dari `.env.example` |
+| Aggregator | `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `GRPC_PORT`, `HEALTH_PORT`, `PVMBG_TOKEN_VOLUME_PATH` | compose |
+| Auth Service | `USER_DB_URL` | compose, disusun dari `USER_DB_USER`, `USER_DB_PASSWORD`, `USER_DB_NAME` |
+| Auth Service | `GRPC_PORT`, `HEALTH_PORT` | compose |
+| Canonical Store | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | `CANONICAL_DB_USER`, `CANONICAL_DB_PASSWORD`, `CANONICAL_DB_NAME` |
+| User DB | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | `USER_DB_USER`, `USER_DB_PASSWORD`, `USER_DB_NAME` |
+| Client-Facing API | `MAX_INFLIGHT_REQUESTS` | `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` |
+| Client-Facing API | `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`, `DASHBOARD_UPDATER_URL`, `PORT` | compose |
+| Consumer | `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`, `QUEUE_NAME`, `HEALTH_PORT` | compose |
+| Notifier, Audit Logger | `DEDUP_STORE_PATH` | compose |
+| Audit Logger | `AUDIT_LOG_PATH` | default di kode, tidak diisi compose |
+| Web Frontend | `CLIENT_FACING_API_BASE_URL`, `FRONTEND_POLL_INTERVAL_MS` | `.env.example`, di-bake saat build |
+
 
 ---
 
@@ -678,16 +710,20 @@ Seluruh consumer menggunakan manual acknowledgment — konsekuensinya, setiap co
 
 ---
 
-## 13. Observability Dashboard
+## 13. Observability
 
-**Keputusan:** tidak dibangun di M1. Health check, log terstruktur dengan correlation ID, dan pencatatan latensi per panggilan keluar (§0.1–§0.3) sudah wajib dan cukup untuk demo M1.
+**Keputusan:** tracing terdistribusi dibangun, dashboard metrik dan log terpusat tidak. Health check, log terstruktur dengan correlation ID, dan pencatatan latensi per panggilan keluar (§0.1–§0.3) tetap menjadi dasar.
 
-**Kondisi yang mengubah keputusan ini:** jumlah instance per service bertambah (>1), atau volume log/metrik tidak lagi bisa ditelusuri manual lewat `docker compose logs`.
+**Yang dibangun:**
+- Setiap service Go mengekspor span OpenTelemetry lewat OTLP gRPC ke Jaeger (container `jaeger`, all-in-one), dengan `service.name` per service.
+- Konteks trace dibawa lewat header W3C `traceparent` pada HTTP, otelgrpc pada gRPC, dan header pesan AMQP dari Aggregator ke consumer. Satu siklus polling atau satu request client menjadi satu trace lintas service, dengan satu span per panggilan keluar.
+- Bila tracing nyala, trace ID dipakai sebagai `correlation_id` di log, jadi satu ID menghubungkan log dan Jaeger. Bila mati, correlation ID tetap UUID seperti §0.1.
+- Kegagalan tracing tidak pernah memengaruhi request: ekspor bersifat batch dan asinkron, dan Jaeger yang mati tidak mengubah status `/health` service mana pun. `TRACING_ENABLED=false` mematikan seluruhnya.
+- Tab Monitor Jaeger (laju request, error, latensi per service) dibaca dari container Prometheus yang hanya terjangkau dari jaringan compose. Trace tersimpan di memori Jaeger dan hilang saat restart.
 
-**Komponen kandidat bila dibangun kemudian:**
-- Log aggregation terpusat (mis. Loki, ELK) untuk menelusuri satu correlation ID lintas service/instance.
-- Metrik time-series (mis. Prometheus + Grafana): latensi p50/p95/p99, error rate, circuit breaker state per sumber, panjang queue consumer.
-- Sinyal prioritas: status circuit breaker per sumber, `stale_since` tiap sumber, panjang queue tiap consumer, rate 429/503 dari Client-Facing API.
+**Konfigurasi:** `TRACING_ENABLED` (default `true`), `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://jaeger:4317`), `JAEGER_UI_PORT` (default `16686`).
+
+**Belum dibangun:** log aggregation terpusat (mis. Loki, ELK) dan dashboard Grafana. Kondisi yang mengubah keputusan ini: jumlah instance per service bertambah (>1), atau volume log tidak lagi bisa ditelusuri manual lewat `docker compose logs`. Sinyal prioritas bila dibangun: status circuit breaker per sumber, `stale_since` tiap sumber, panjang queue tiap consumer, rate 429/503 dari Client-Facing API.
 
 ---
 
