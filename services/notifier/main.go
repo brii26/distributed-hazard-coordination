@@ -1,5 +1,4 @@
-// Command notifier consumes HazardEvents from the fanout exchange and alerts the
-// field teams once per (hazard_id, severity) (doc/TRD_M1.md 8.2).
+// Command notifier consumes HazardEvents from the fanout exchange and alerts the field teams once per (hazard_id, severity).
 package main
 
 import (
@@ -26,10 +25,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// healthHandler is liveness, the broker connection and whether the dedup store
-// could be read at start (doc/TRD_M1.md 8). Without its dedup store the Notifier
-// does not consume at all (it could only send duplicate alerts), so that is
-// "down" and a 503; a lost broker is "degraded", it reconnects by itself.
+// Liveness, broker connection and whether the dedup store could be read. Without it the Notifier doesn't consume (it could only send duplicate alerts), so "down" (503). A lost broker is "degraded" and reconnects on its own.
 func healthHandler(dedupReadable bool, connected func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		status, code, rabbit, store := "ok", http.StatusOK, "connected", "readable"
@@ -58,8 +54,7 @@ func newMux(dedupReadable bool, connected func() bool) *http.ServeMux {
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the HEALTH_PORT env var),
-// falling back to defaultPort when raw is empty.
+// Validates a port from HEALTH_PORT, defaultPort if empty.
 func resolvePort(raw string) (string, error) {
 	if raw == "" {
 		raw = defaultPort
@@ -111,7 +106,6 @@ func run() error {
 
 	dedup, err := openDedup(envOr("DEDUP_STORE_PATH", defaultDedupPath))
 	if err != nil {
-		// Stay up and report it, rather than crash-loop: /health shows the store is unreadable.
 		log.Printf("dedup store unreadable, not consuming: %v", err)
 		close(done)
 	} else {
@@ -126,8 +120,6 @@ func run() error {
 		}()
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		return err
@@ -157,7 +149,7 @@ func run() error {
 		return err
 	}
 
-	<-done // unacked deliveries go back to the queue when the connection closes
+	<-done
 
 	return nil
 }

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// alerts records what a notifier sent.
+// Records what a notifier sent.
 type alerts struct {
 	mu   sync.Mutex
 	sent []string
@@ -93,11 +93,11 @@ func TestAnEscalationIsANewAlert(t *testing.T) {
 func TestDedupStateSurvivesARestart(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(t.TempDir(), "sub", "dedup.log") // the directory is created too
+	path := filepath.Join(t.TempDir(), "sub", "dedup.log")
 
 	first, _ := newTestNotifier(t, path)
 	first.handle(msgFor(t, "h1", "AWAS"))
-	first.handle(msgFor(t, "h2", "")) // no severity
+	first.handle(msgFor(t, "h2", ""))
 
 	restarted, a := newTestNotifier(t, path)
 
@@ -137,7 +137,7 @@ func TestADedupWriteFailureRequeuesAndForgetsNothing(t *testing.T) {
 	t.Parallel()
 
 	n, _ := newTestNotifier(t, filepath.Join(t.TempDir(), "dedup.log"))
-	_ = n.dedup.file.Close() // the disk write will fail
+	_ = n.dedup.file.Close()
 
 	if out := n.handle(msgFor(t, "h1", "AWAS")); out != requeue {
 		t.Fatalf("a message whose dedup record could not be written must be requeued, got %v", out)
