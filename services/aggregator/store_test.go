@@ -437,3 +437,38 @@ func TestListByTypePagesFiltersAndSearchesLiterally(t *testing.T) {
 		}
 	}
 }
+
+//nolint:paralleltest // swaps the global logger
+func TestUpsertLogsNewThenUpdatedAndNothingForARepeat(t *testing.T) {
+	buf := captureLogs(t)
+	s := testStore(t, 5)
+	id := ref(t, s)
+
+	if _, err := s.upsert(context.Background(), hazard(sourcePVMBG, id)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.upsert(context.Background(), hazard(sourcePVMBG, id)); err != nil {
+		t.Fatal(err)
+	}
+
+	esc := hazard(sourcePVMBG, id)
+	siaga := severitySiaga
+	esc.Severity = &siaga
+
+	if _, err := s.upsert(context.Background(), esc); err != nil {
+		t.Fatal(err)
+	}
+
+	var results []any
+
+	for _, l := range jsonLines(t, buf.String()) {
+		if l["message"] == "upsert" && l["source_ref_id"] == id {
+			results = append(results, l["result"])
+		}
+	}
+
+	if len(results) != 2 || results[0] != "new" || results[1] != "updated" {
+		t.Fatalf("upsert log results = %v, want [new updated] and nothing for the identical repeat", results)
+	}
+}

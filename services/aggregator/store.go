@@ -14,7 +14,7 @@ import (
 // Timeout for every call to the Canonical Store.
 const dbQueryTimeout = 2 * time.Second
 
-// Upserts by (source, source_ref_id) and returns a row only when something is new or changed. hazard_id and ingested_at stay out of the UPDATE so the id is stable and a repeat never looks changed.
+// Upserts by (source, source_ref_id) and returns a row only when something is new or changed, flagging which. hazard_id and ingested_at stay out of the UPDATE so the id is stable and a repeat never looks changed.
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
@@ -35,7 +35,7 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
       (EXCLUDED.hazard_type, EXCLUDED.severity, EXCLUDED.area_name,
        EXCLUDED.latitude, EXCLUDED.longitude, EXCLUDED.occurred_at,
        EXCLUDED.attributes)
-RETURNING hazard_id`
+RETURNING hazard_id, (xmax = 0) AS inserted`
 
 // The only door to the Canonical Store. *sql.DB is a pool, safe for concurrent use.
 type store struct {
@@ -95,19 +95,35 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 
 	defer func() { _ = tx.Rollback() }()
 
-	var id string
+	var (
+		id       string
+		inserted bool
+	)
 
 	err = tx.QueryRowContext(ctx, upsertSQL,
 		h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
 		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw),
-	).Scan(&id)
+	).Scan(&id, &inserted)
 
 	changed := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
 
-	return changed, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+
+	if changed {
+		result := "updated"
+		if inserted {
+			result = "new"
+		}
+
+		withID(correlationOf(ctx)).Info("upsert", "hazard_id", id, "source_ref_id", h.SourceRefID, "result", result)
+	}
+
+	return changed, nil
 }
 
 // One page of one hazard type. Search is a case-insensitive substring of area_name.
