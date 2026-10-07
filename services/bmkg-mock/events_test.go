@@ -51,7 +51,6 @@ func TestGeneratorAddsEvents(t *testing.T) {
 		s.run(ctx, 5*time.Millisecond)
 	}()
 
-	// Read concurrently with the generator so -race exercises the lock.
 	deadline := time.Now().Add(2 * time.Second)
 	for len(s.eventsSince(time.Time{})) < 25 && time.Now().Before(deadline) {
 		s.warningsSince(time.Time{})
@@ -71,7 +70,7 @@ func TestEventsSinceFilters(t *testing.T) {
 
 	s := &eventStore{}
 	base := time.Now()
-	s.seed(10, time.Minute, base) // oldest 10 min ago, newest 1 min ago
+	s.seed(10, time.Minute, base)
 
 	if n := len(s.eventsSince(base.Add(-5*time.Minute - time.Second))); n != 5 {
 		t.Fatalf("expected the 5 newest events, got %d", n)

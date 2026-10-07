@@ -20,8 +20,7 @@ const (
 
 type loggerCtxKey struct{}
 
-// newLogger returns a JSON logger with the field names doc/TRD_M1.md section
-// 0.3 requires: timestamp, level, service, correlation_id, message.
+// JSON logger with the required field names.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -45,8 +44,7 @@ func newLogger(w io.Writer) *slog.Logger {
 	return slog.New(h).With("service", serviceName)
 }
 
-// correlationID takes the Aggregator's poll ID from the request, or generates
-// one so every request log line still carries a correlation_id.
+// Takes the Aggregator's poll ID from the request, or generates one so every request log line has a correlation_id.
 func correlationID(r *http.Request) string {
 	if id := r.Header.Get(correlationHeader); id != "" {
 		return id[:min(len(id), maxCorrelationLen)]
@@ -60,7 +58,7 @@ func correlationID(r *http.Request) string {
 	return hex.EncodeToString(b)
 }
 
-// logFrom returns the request-scoped logger (already carrying correlation_id).
+// The request-scoped logger, already carrying correlation_id.
 func logFrom(ctx context.Context) *slog.Logger {
 	if l, ok := ctx.Value(loggerCtxKey{}).(*slog.Logger); ok {
 		return l
@@ -80,9 +78,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
-// withRequestLog logs one line per request and puts a correlation-scoped
-// logger in the request context for handlers (see logFrom). /health is logged
-// at debug level so the container healthcheck doesn't flood the output.
+// Logs one line per request and puts a correlation-scoped logger in the request context. /health logs at debug so the healthcheck doesn't flood the output.
 func withRequestLog(base *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := correlationID(r)
@@ -96,8 +92,6 @@ func withRequestLog(base *slog.Logger, next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, req)
 
-		// req.Pattern is set by the mux: a server-defined route, never raw
-		// client input.
 		endpoint, level := req.Pattern, slog.LevelInfo
 		if endpoint == "" {
 			endpoint = "unmatched"
