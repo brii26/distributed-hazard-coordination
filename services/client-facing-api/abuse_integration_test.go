@@ -1026,3 +1026,86 @@ func TestAbusePoisonMessagesDoNotStopTheConsumers(t *testing.T) {
 		}
 	}
 }
+
+// Every service has a restart policy, so a panic or OOM doesn't leave it down. Docker doesn't restart a container stopped by docker kill, so the suite checks the config.
+//
+//nolint:paralleltest // shares the docker stack
+func TestAbuseEveryServiceHasARestartPolicy(t *testing.T) {
+	_ = abuseEnv(t)
+
+	var cfg struct {
+		Services map[string]struct {
+			Restart string `json:"restart"`
+		} `json:"services"`
+	}
+
+	if err := json.Unmarshal([]byte(composeOut(t, "config", "--format", "json")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, svc := range cfg.Services {
+		if svc.Restart != "unless-stopped" {
+			t.Errorf("%s has restart policy %q, want unless-stopped", name, svc.Restart)
+		}
+	}
+}
+
+// One account opens live streams past its share. The extra one gets 503 and another account still gets a stream.
+//
+//nolint:paralleltest // shares the docker stack
+func TestAbuseOneAccountCannotHoldEveryStream(t *testing.T) {
+	e := abuseEnv(t)
+	e.requireAccountRPCs(t)
+
+	open := func(jar cookies) (*http.Response, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.url+"/hazards/stream?type="+typSeismic, nil)
+
+		for name, value := range jar {
+			req.AddCookie(&http.Cookie{Name: name, Value: value}) //nolint:gosec // a test client replaying the cookies it was given
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+
+		return resp, cancel
+	}
+
+	_, hog := e.login(t, e.operatorEmail, e.operatorPassword)
+
+	for i := range maxStreamsPerAccount {
+		resp, cancel := open(hog)
+
+		defer cancel()
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("stream %d inside the cap got %d", i+1, resp.StatusCode)
+		}
+	}
+
+	extra, cancelExtra := open(hog)
+
+	_ = extra.Body.Close()
+
+	cancelExtra()
+
+	if extra.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("stream past the cap got %d, want 503", extra.StatusCode)
+	}
+
+	email := freshEmail("streamer")
+	e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-123456"}`, email), nil)
+	_, other := e.login(t, email, "pw-123456")
+
+	resp, cancel := open(other)
+	defer cancel()
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("a second account got %d while the first held its streams, want 200", resp.StatusCode)
+	}
+}

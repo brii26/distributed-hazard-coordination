@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -241,4 +242,74 @@ func (h *HazardEvent) addLeftovers(r map[string]any, used map[string]bool) {
 			h.Attributes[k] = v
 		}
 	}
+}
+
+// Source fields by name and JSON type as the contract defines them, used to spot schema drift.
+var knownFields = map[string]map[string]string{
+	sourceBMKG: {
+		"event_id": "string", "magnitude": "number", "depth_km": "number", "epicenter_lat": "number", "epicenter_lon": "number",
+		"region_name": "string", "occurred_at": "string", "potential_tsunami": "bool",
+	},
+	sourceBMKG + " warnings": {
+		"warning_id": "string", "related_event_id": "string", "threat_level": "string", "affected_zones": "list", "estimated_arrival": "string",
+	},
+	sourcePVMBG: {
+		"report_id": "string", "volcano_id": "string", "alert_level": "string", "eruption_count_24h": "number",
+		"ash_column_height_m": "number", "reported_at": "string",
+	},
+}
+
+// The mapping decision for one field that drifted from the contract.
+type fieldDecision struct{ field, decision string }
+
+func jsonKind(v any) string {
+	switch v.(type) {
+	case string:
+		return "string"
+	case float64:
+		return "number"
+	case bool:
+		return "bool"
+	case []any:
+		return "list"
+	default:
+		return "other"
+	}
+}
+
+// What the mapping policy does with each field that is unknown, missing or retyped across records, once per field.
+func describeFields(kind string, records []map[string]any) []fieldDecision {
+	known := knownFields[kind]
+	seen := map[fieldDecision]bool{}
+
+	for _, r := range records {
+		for k, v := range r {
+			if want, ok := known[k]; !ok {
+				seen[fieldDecision{k, "to_attributes"}] = true
+			} else if want != jsonKind(v) {
+				seen[fieldDecision{k, "retyped"}] = true
+			}
+		}
+
+		for k := range known {
+			if _, ok := r[k]; !ok {
+				seen[fieldDecision{k, "null"}] = true
+			}
+		}
+	}
+
+	out := make([]fieldDecision, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].field != out[j].field {
+			return out[i].field < out[j].field
+		}
+
+		return out[i].decision < out[j].decision
+	})
+
+	return out
 }

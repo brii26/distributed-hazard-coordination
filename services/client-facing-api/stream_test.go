@@ -117,3 +117,33 @@ func TestStreamIsBadGatewayWhenTheUpstreamIsDown(t *testing.T) {
 		t.Fatalf("expected 502, got %d", code)
 	}
 }
+
+func TestOneAccountCannotTakeEveryStreamSlot(t *testing.T) {
+	t.Parallel()
+
+	s := newStreamAPI("http://unused")
+
+	for range maxStreamsPerAccount {
+		if !s.acquire("hog@x.example") {
+			t.Fatal("refused inside the per-account cap")
+		}
+	}
+
+	if s.acquire("hog@x.example") {
+		t.Fatal("an account got more than its share")
+	}
+
+	if !s.acquire("field@x.example") {
+		t.Fatal("one account's streams starved another")
+	}
+
+	s.release("hog@x.example")
+
+	if !s.acquire("hog@x.example") {
+		t.Fatal("a closed stream did not free the account's slot")
+	}
+
+	if len(s.slots) != maxStreamsPerAccount+1 {
+		t.Fatalf("global slots in use = %d, want %d", len(s.slots), maxStreamsPerAccount+1)
+	}
+}
