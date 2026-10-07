@@ -14,9 +14,7 @@ import (
 
 var tracer = otel.Tracer(serviceName)
 
-// setupTracing sends spans to the OTLP endpoint in OTEL_EXPORTER_OTLP_ENDPOINT when
-// TRACING_ENABLED=true; otherwise tracing stays the no-op default. Export is batched
-// and asynchronous, so a Jaeger that is down costs a request nothing (#116).
+// Sends spans to OTLP when TRACING_ENABLED=true, otherwise a no-op. Export is batched and async, so a Jaeger that is down costs a request nothing.
 func setupTracing(ctx context.Context) (shutdown func(context.Context) error, err error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 

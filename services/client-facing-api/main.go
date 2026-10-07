@@ -1,5 +1,4 @@
-// Command client-facing-api is a scaffold for the client-facing-api service.
-// See doc/TRD_M1.md for the full specification this service must implement.
+// Command client-facing-api is the public entry point: auth, accounts and hazards over HTTP.
 package main
 
 import (
@@ -29,8 +28,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// newMux has the API routes; /health is added by main, since it needs the
-// dependency addresses.
+// The API routes. /health is added by main since it needs the dependency addresses.
 func newMux(auth *authAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	auth.register(mux)
@@ -38,7 +36,7 @@ func newMux(auth *authAPI) *http.ServeMux {
 	return mux
 }
 
-// envPositiveInt reads a positive integer env var, falling back to def when unset.
+// Reads a positive integer env var, def if unset.
 func envPositiveInt(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -53,8 +51,7 @@ func envPositiveInt(name string, def int) (int, error) {
 	return n, nil
 }
 
-// newAuthAPI dials the Auth Service (AUTH_SERVICE_GRPC_ADDR). The connection is
-// lazy, so the service starts even while the Auth Service is still coming up.
+// Dials the Auth Service (AUTH_SERVICE_GRPC_ADDR). The connection is lazy, so the service starts while Auth is still coming up.
 func newAuthAPI() (*authAPI, error) {
 	addr := os.Getenv("AUTH_SERVICE_GRPC_ADDR")
 	if addr == "" {
@@ -66,8 +63,6 @@ func newAuthAPI() (*authAPI, error) {
 		return nil, err
 	}
 
-	// Secure by default: the cookies carry the session. Set COOKIE_SECURE=false only
-	// for a plain-HTTP demo on a host that is not localhost.
 	secure := true
 
 	if raw := os.Getenv("COOKIE_SECURE"); raw != "" {
@@ -105,8 +100,7 @@ func newAuthAPI() (*authAPI, error) {
 	return api, nil
 }
 
-// resolvePort validates a raw port value (as read from the PORT env var),
-// falling back to defaultPort when raw is empty.
+// Validates a port from PORT, defaultPort if empty.
 func resolvePort(raw string) (string, error) {
 	if raw == "" {
 		raw = defaultPort
@@ -119,7 +113,7 @@ func resolvePort(raw string) (string, error) {
 	return raw, nil
 }
 
-// newHealthAPI sets up the two checks behind /health.
+// Sets up the two checks behind /health.
 func newHealthAPI() (healthAPI, error) {
 	agg := os.Getenv("AGGREGATOR_GRPC_ADDR")
 	if agg == "" {
@@ -131,7 +125,6 @@ func newHealthAPI() (healthAPI, error) {
 		return healthAPI{}, err
 	}
 
-	// Lazy like the Auth Service connection: the service starts while the Aggregator is still coming up.
 	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithUnaryInterceptor(logOutbound(agg)))
 	if err != nil {
 		return healthAPI{}, err
@@ -173,16 +166,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// /hazards shares the health check's Aggregator connection and timeout.
 	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
 
-	// The push stream (#114) is fed by the Dashboard Updater and is the only public way to it.
 	if upstream := os.Getenv("DASHBOARD_UPDATER_URL"); upstream != "" {
 		mux.Handle("GET /hazards/stream", auth.verifier.require(newStreamAPI(upstream)))
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatal(err)
@@ -200,7 +189,7 @@ func main() {
 	log.Printf("client-facing-api listening on :%d", portNum)
 
 	err = srv.ListenAndServe()
-	_ = shutdownTracing(context.Background()) // flush what is buffered
+	_ = shutdownTracing(context.Background())
 
 	log.Fatal(err)
 }

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 )
 
-// jwtHeader is the fixed HS256 header from doc/TRD_M1.md section 4.1.
+// The fixed HS256 header.
 const jwtHeader = `{"alg":"HS256","typ":"JWT"}`
 
 type jwtClaims struct {
@@ -20,7 +20,7 @@ type jwtClaims struct {
 
 var b64 = base64.RawURLEncoding
 
-// signJWT returns Base64(header).Base64(payload).Base64(HMAC-SHA256(secret, first two parts)).
+// Base64(header).Base64(payload).Base64(HMAC-SHA256(secret, first two parts)).
 func signJWT(secret []byte, c jwtClaims) (string, error) {
 	payload, err := json.Marshal(c)
 	if err != nil {

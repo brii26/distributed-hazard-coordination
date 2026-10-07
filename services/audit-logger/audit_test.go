@@ -28,7 +28,7 @@ func msgFor(id, severity, extra string) message {
 	return message{body: []byte(body), correlationID: "c-" + id}
 }
 
-// lines reads the audit log back.
+// Reads the audit log back.
 func lines(t *testing.T, dir string) []entry {
 	t.Helper()
 
@@ -100,7 +100,7 @@ func TestDedupSurvivesARestart(t *testing.T) {
 	dir := t.TempDir()
 
 	newTestAuditor(t, dir).handle(msgFor("h1", "AWAS", ""))
-	newTestAuditor(t, dir).handle(msgFor("h1", "AWAS", "")) // redelivered after a restart
+	newTestAuditor(t, dir).handle(msgFor("h1", "AWAS", ""))
 
 	if got := len(lines(t, dir)); got != 1 {
 		t.Fatalf("a redelivery after a restart must not be logged again, got %d entries", got)

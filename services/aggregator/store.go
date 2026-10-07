@@ -8,21 +8,13 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
+	_ "github.com/jackc/pgx/v5/stdlib" // registers the pgx driver with database/sql
 )
 
-// dbQueryTimeout bounds every call to the Canonical Store, so a slow database
-// can hold an ingest goroutine for this long at most (doc/TRD_M1.md 3.4).
+// Timeout for every call to the Canonical Store.
 const dbQueryTimeout = 2 * time.Second
 
-// upsertSQL writes one HazardEvent keyed by (source, source_ref_id) and returns a
-// row only when something was written: a new record, or an existing one whose
-// content changed. An identical repeat matches the conflict, fails the WHERE and
-// returns nothing, so the caller can tell "new or changed" from "seen before".
-//
-// hazard_id and ingested_at are left out of the UPDATE on purpose: the id handed
-// out when the record first arrived stays stable, and ingested_at stays the time
-// it first arrived (a fresh one would also make every repeat look changed).
+// Upserts by (source, source_ref_id) and returns a row only when something is new or changed. hazard_id and ingested_at stay out of the UPDATE so the id is stable and a repeat never looks changed.
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
@@ -45,15 +37,12 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
        EXCLUDED.attributes)
 RETURNING hazard_id`
 
-// store is the Aggregator's only door to the Canonical Store (doc/TRD_M1.md 3.5, 6).
-// *sql.DB is already a pool that is safe for concurrent use, so the goroutines
-// using the store need no lock of their own.
+// The only door to the Canonical Store. *sql.DB is a pool, safe for concurrent use.
 type store struct {
 	db *sql.DB
 }
 
-// openStore connects with a pool capped at poolSize (DB_POOL_SIZE) and checks
-// the database answers, so a wrong URL fails at startup rather than on first use.
+// Connects with a pool of at most poolSize and pings, so a wrong URL fails at startup.
 func openStore(url string, poolSize int) (*store, error) {
 	db, err := sql.Open("pgx", url)
 	if err != nil {
@@ -79,10 +68,7 @@ func (s *store) close() error {
 	return s.db.Close()
 }
 
-// upsert writes h in one transaction and reports whether it was new or changed
-// (true) or an identical repeat that wrote nothing (false). Two goroutines may
-// upsert the same record at once: ON CONFLICT is atomic in Postgres, and BMKG and
-// PVMBG never share a (source, source_ref_id).
+// Writes h in one transaction. True if new or changed, false for an identical repeat.
 func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "canonical-store upsert")
@@ -107,7 +93,7 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 		return false, err
 	}
 
-	defer func() { _ = tx.Rollback() }() // a no-op once committed
+	defer func() { _ = tx.Rollback() }()
 
 	var id string
 
@@ -124,8 +110,7 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 	return changed, tx.Commit()
 }
 
-// listQuery is one page of one hazard type. Severity and Search are optional
-// filters: Search is a case-insensitive substring of area_name.
+// One page of one hazard type. Search is a case-insensitive substring of area_name.
 type listQuery struct {
 	HazardType string
 	Severity   string
@@ -134,14 +119,11 @@ type listQuery struct {
 	Offset     int
 }
 
-// likeEscaper makes a user's search text literal inside LIKE (ESCAPE '\').
+// Makes search text literal inside LIKE.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// listByType returns one page of a hazard type, newest first, and whether another
-// page follows (it asks for one extra row instead of counting the whole type).
-// ponytail: OFFSET still walks the skipped rows and the substring search is a
-// scan over the type; at millions of rows move to keyset paging
-// (occurred_at, hazard_id) and a pg_trgm index on area_name.
+// One page of a hazard type, newest first, plus whether another page follows (it asks for one extra row).
+// ponytail: OFFSET still walks the skipped rows and search scans the type. At millions of rows move to keyset paging (occurred_at, hazard_id) and a pg_trgm index on area_name.
 func (s *store) listByType(ctx context.Context, q listQuery) (_ []HazardEvent, _ bool, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "canonical-store list "+q.HazardType)
@@ -219,7 +201,7 @@ LIMIT $4 OFFSET $5`, q.HazardType, q.Severity, likeEscaper.Replace(q.Search), q.
 	return out, more, nil
 }
 
-// ping reports whether the Canonical Store answers, for the health check.
+// Whether the Canonical Store answers, for the health check.
 func (s *store) ping(ctx context.Context) (err error) {
 	start := time.Now()
 	defer func() { logCall(ctx, "canonical-store ping", start, err) }()

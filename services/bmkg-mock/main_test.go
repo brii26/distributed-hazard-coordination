@@ -106,7 +106,7 @@ func TestSeismicEventsSince(t *testing.T) {
 
 	store := &eventStore{}
 	base := time.Now().UTC()
-	store.seed(10, time.Minute, base) // oldest 10 min ago, newest 1 min ago
+	store.seed(10, time.Minute, base)
 
 	rec := get(t, store, "/seismic-events?since="+url.QueryEscape(base.Add(-5*time.Minute-time.Second).Format(time.RFC3339Nano)))
 	if rec.Code != http.StatusOK {
@@ -197,7 +197,6 @@ func TestDelayWithinRange(t *testing.T) {
 
 		mux.ServeHTTP(rec, req)
 
-		// Upper bound has slack for scheduling; the lower bound is exact.
 		if d := time.Since(start); rec.Code != http.StatusOK || d < lo || d > hi+250*time.Millisecond {
 			t.Fatalf("status %d, latency %v outside [%v, %v]", rec.Code, d, lo, hi)
 		}

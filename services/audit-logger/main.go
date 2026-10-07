@@ -1,6 +1,4 @@
-// Command audit-logger consumes HazardEvents from the fanout exchange into an
-// append-only log (doc/TRD_M1.md 8.3). It was added on top of the running system
-// without any change to the Aggregator, the P5.4 demonstration.
+// Command audit-logger consumes HazardEvents from the fanout exchange into an append-only log. It is added on top of the running system without any Aggregator change.
 package main
 
 import (
@@ -28,10 +26,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// healthHandler is liveness, the broker connection and whether the dedup store
-// could be read at start (doc/TRD_M1.md 8). Without its dedup store or its log
-// the Audit Logger does not consume at all, so that is "down" and a 503; a lost
-// broker is "degraded", it reconnects by itself.
+// Liveness, broker connection and whether the dedup store and log could be opened. Without them it doesn't consume, so "down" (503). A lost broker is "degraded" and reconnects on its own.
 func healthHandler(dedupReadable bool, connected func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		status, code, rabbit, store := "ok", http.StatusOK, "connected", "readable"
@@ -60,8 +55,7 @@ func newMux(dedupReadable bool, connected func() bool) *http.ServeMux {
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the HEALTH_PORT env var),
-// falling back to defaultPort when raw is empty.
+// Validates a port from HEALTH_PORT, defaultPort if empty.
 func resolvePort(raw string) (string, error) {
 	if raw == "" {
 		raw = defaultPort
@@ -113,7 +107,6 @@ func run() error {
 
 	dedup, audit, err := openStores(envOr("DEDUP_STORE_PATH", defaultDedupPath), envOr("AUDIT_LOG_PATH", defaultAuditPath))
 	if err != nil {
-		// Stay up and report it, rather than crash-loop: /health shows the store is unreadable.
 		log.Printf("dedup store or audit log unusable, not consuming: %v", err)
 		close(done)
 	} else {
@@ -128,8 +121,6 @@ func run() error {
 		}()
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		return err
@@ -159,12 +150,12 @@ func run() error {
 		return err
 	}
 
-	<-done // unacked deliveries go back to the queue when the connection closes
+	<-done
 
 	return nil
 }
 
-// openStores opens the dedup store and the audit log; both are needed to consume.
+// Opens the dedup store and the audit log, both are needed to consume.
 func openStores(dedupPath, auditPath string) (*dedupStore, *auditLog, error) {
 	dedup, err := openDedup(dedupPath)
 	if err != nil {

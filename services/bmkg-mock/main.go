@@ -1,5 +1,4 @@
-// Command bmkg-mock is a scaffold for the bmkg-mock service.
-// See doc/TRD_M1.md for the full specification this service must implement.
+// Command bmkg-mock is the mock BMKG source API: seismic events and tsunami warnings.
 package main
 
 import (
@@ -56,7 +55,7 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// parseSince reads the optional ?since=<ISO8601> filter; absent means all records.
+// Reads the optional ?since=<ISO8601> filter, absent means all records.
 func parseSince(r *http.Request) (time.Time, error) {
 	raw := r.URL.Query().Get("since")
 	if raw == "" {
@@ -66,7 +65,7 @@ func parseSince(r *http.Request) (time.Time, error) {
 	return time.Parse(time.RFC3339, raw)
 }
 
-// sinceHandler serves the records get returns for the request's since filter.
+// Serves the records get returns for the request's since filter.
 func sinceHandler[T any](get func(time.Time) []T) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		since, err := parseSince(r)
@@ -84,9 +83,7 @@ func sinceHandler[T any](get func(time.Time) []T) http.HandlerFunc {
 	}
 }
 
-// withDelay sleeps a random time in [minDelay, maxDelay] before next, so BMKG
-// answers with the low, consistent latency its contract promises. A client that
-// disconnects mid delay frees the handler immediately.
+// Sleeps a random time in [minDelay, maxDelay] before next, so BMKG answers with its low, consistent latency. A client that disconnects mid delay frees the handler at once.
 func withDelay(minDelay, maxDelay time.Duration, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		delay := minDelay + time.Duration(rand.Int64N(int64(maxDelay-minDelay)+1)) //nolint:gosec // mock latency, not security-sensitive
@@ -102,8 +99,7 @@ func withDelay(minDelay, maxDelay time.Duration, next http.HandlerFunc) http.Han
 	}
 }
 
-// newMux wires the routes. Data endpoints check the API key first, so rejected
-// requests fail fast, and only served requests pay the delay. /health is not delayed.
+// Wires the routes. Data endpoints check the API key first, so rejected requests fail fast and only served ones pay the delay. /health isn't delayed.
 func newMux(apiKey string, store *eventStore, logger *slog.Logger, minDelay, maxDelay time.Duration) http.Handler {
 	data := func(h http.HandlerFunc) http.HandlerFunc {
 		return requireAPIKey(apiKey, withDelay(minDelay, maxDelay, h))
@@ -117,7 +113,7 @@ func newMux(apiKey string, store *eventStore, logger *slog.Logger, minDelay, max
 	return withRequestLog(logger, mux)
 }
 
-// envPositiveInt reads a positive integer env var, falling back to def when unset.
+// Reads a positive integer env var, def if unset.
 func envPositiveInt(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -132,8 +128,7 @@ func envPositiveInt(name string, def int) (int, error) {
 	return n, nil
 }
 
-// resolvePort validates a raw port value (as read from the PORT env var),
-// falling back to defaultPort when raw is empty.
+// Validates a port from PORT, defaultPort if empty.
 func resolvePort(raw string) (string, error) {
 	if raw == "" {
 		raw = defaultPort
@@ -148,8 +143,6 @@ func resolvePort(raw string) (string, error) {
 
 func main() {
 	logger := newLogger(os.Stdout)
-	// Routes the stdlib log package (including log.Fatal) through the JSON
-	// handler too; "-" marks lines that aren't tied to a request.
 	slog.SetDefault(logger.With("correlation_id", "-"))
 
 	port, err := resolvePort(os.Getenv("PORT"))
@@ -168,8 +161,6 @@ func main() {
 		log.Fatal("API key is not provided")
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatal(err)
@@ -219,7 +210,7 @@ func main() {
 	log.Printf("bmkg-mock listening on :%d", portNum)
 
 	err = srv.ListenAndServe()
-	_ = shutdownTracing(context.Background()) // flush what is buffered
+	_ = shutdownTracing(context.Background())
 
 	log.Fatal(err)
 }

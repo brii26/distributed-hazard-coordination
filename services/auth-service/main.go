@@ -1,5 +1,4 @@
-// Command auth-service is a scaffold for the auth-service service.
-// See doc/TRD_M1.md for the full specification this service must implement.
+// Command auth-service handles registration, login and token refresh against the User DB.
 package main
 
 import (
@@ -16,7 +15,7 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
+	_ "github.com/jackc/pgx/v5/stdlib" // registers the pgx driver with database/sql
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
@@ -34,9 +33,7 @@ var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
 const dbPingTimeout = 2 * time.Second
 
-// healthHandler serves GET /health: liveness plus User DB connectivity. The service
-// can do nothing without its DB, so an unreachable one is "down" and a 503
-// (doc/TRD_M1.md 5).
+// GET /health: liveness plus User DB connectivity. The service can do nothing without its DB, so unreachable is "down" (503).
 func healthHandler(ping func(context.Context) error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status, db, code := "ok", "connected", http.StatusOK
@@ -61,8 +58,7 @@ func newMux(ping func(context.Context) error) *http.ServeMux {
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the HEALTH_PORT or GRPC_PORT env var),
-// falling back to fallback when raw is empty.
+// Validates a port from HEALTH_PORT or GRPC_PORT, fallback if empty.
 func resolvePort(raw, fallback string) (string, error) {
 	if raw == "" {
 		raw = fallback
@@ -75,7 +71,7 @@ func resolvePort(raw, fallback string) (string, error) {
 	return raw, nil
 }
 
-// startGRPC serves the internal Auth RPCs on :port in the background.
+// Serves the internal Auth RPCs on :port in the background.
 func startGRPC(port string, srv *authServer) error {
 	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", ":"+port)
 	if err != nil {
@@ -163,8 +159,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatal(err)
@@ -182,7 +176,7 @@ func main() {
 	log.Printf("auth-service listening on :%d", portNum)
 
 	err = srv.ListenAndServe()
-	_ = shutdownTracing(context.Background()) // flush what is buffered
+	_ = shutdownTracing(context.Background())
 
 	log.Fatal(err)
 }

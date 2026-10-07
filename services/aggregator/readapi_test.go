@@ -25,9 +25,7 @@ import (
 
 var errBoom = errors.New("boom")
 
-// testAPI returns a readAPI whose store holds events (by hazard type) and whose
-// breakers are all UP, plus a client talking to it over an in-memory gRPC server,
-// so the interceptor and status codes are exercised as a real caller sees them.
+// A readAPI over a store holding events, all breakers UP, plus a client on an in-memory gRPC server.
 func testAPI(t *testing.T, events map[string][]HazardEvent, maxInflight int) (*readAPI, aggregatorpb.AggregatorClient) {
 	t.Helper()
 
@@ -63,9 +61,9 @@ func testAPI(t *testing.T, events map[string][]HazardEvent, maxInflight int) (*r
 	return api, aggregatorpb.NewAggregatorClient(conn)
 }
 
-// trip opens a source's breaker (threshold 1), as a poll failure would.
+// Opens a source's breaker (threshold 1), like a failed poll.
 func trip(api *readAPI, source string) {
-	api.breakers[source].success() // a source that worked once, so stale_since is its last good poll
+	api.breakers[source].success()
 	api.breakers[source].failure()
 }
 
@@ -90,7 +88,7 @@ func TestVolcanicDownWithNoDataIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	api, c := testAPI(t, nil, 10)
-	api.breakers[sourcePVMBG].failure() // never succeeded, now DOWN
+	api.breakers[sourcePVMBG].failure()
 
 	_, err := c.GetHazards(context.Background(), &aggregatorpb.GetHazardsRequest{HazardType: typeVolcanic})
 	if status.Code(err) != codes.Unavailable {
@@ -204,7 +202,7 @@ func TestOverTheCapIsResourceExhaustedAndTheRestFinish(t *testing.T) {
 	}
 
 	for range limit {
-		<-started // both slots are now in flight
+		<-started
 	}
 
 	for range 5 {
@@ -222,7 +220,6 @@ func TestOverTheCapIsResourceExhaustedAndTheRestFinish(t *testing.T) {
 		}
 	}
 
-	// A slot is free again once the earlier requests are done.
 	if err := call(); err != nil {
 		t.Fatalf("expected success after the burst, got %v", err)
 	}
@@ -288,7 +285,7 @@ func TestHealthReportsConnectivityFlags(t *testing.T) {
 	}
 }
 
-// getHealth calls the REST /health the way compose's healthcheck does.
+// Calls REST /health like compose's healthcheck.
 func getHealth(t *testing.T, api *readAPI) (int, restHealth) {
 	t.Helper()
 
@@ -358,7 +355,7 @@ func TestRESTHealthIsNotHeldUpByTheGRPCCap(t *testing.T) {
 	t.Parallel()
 
 	api, _ := testAPI(t, nil, 1)
-	api.sem <- struct{}{} // the gRPC cap is full
+	api.sem <- struct{}{}
 
 	if code, _ := getHealth(t, api); code != http.StatusOK {
 		t.Fatalf("health must answer while the read API is saturated, got %d", code)

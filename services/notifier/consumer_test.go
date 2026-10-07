@@ -13,7 +13,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// The Notifier against a real RabbitMQ at RABBITMQ_TEST_URL; skipped otherwise.
+// The Notifier against a real RabbitMQ at RABBITMQ_TEST_URL, skipped otherwise.
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -86,13 +86,12 @@ func TestRealBrokerAlertsOnceAndKeepsDedupAcrossARestart(t *testing.T) {
 	stop := start()
 
 	publish("h1", "SIAGA")
-	publish("h1", "SIAGA") // at-least-once delivery: the same message twice
-	publish("h1", "AWAS")  // an escalation
+	publish("h1", "SIAGA")
+	publish("h1", "AWAS")
 	waitFor(t, "two alerts", func() bool { return a.count() == 2 })
 
 	stop()
 
-	// Redelivered after a restart: the dedup state on disk still holds.
 	publish("h1", "AWAS")
 
 	stop = start()

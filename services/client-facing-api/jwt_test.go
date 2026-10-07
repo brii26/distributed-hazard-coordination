@@ -25,7 +25,7 @@ const (
 
 var testNow = time.Unix(1_700_000_000, 0)
 
-// sign builds header.payload.signature the way the Auth Service does.
+// Builds header.payload.signature the way the Auth Service does.
 func sign(t *testing.T, secret, header string, c jwtClaims) string {
 	t.Helper()
 
@@ -58,8 +58,7 @@ func newVerifier() *jwtVerifier {
 	return v
 }
 
-// get sends a GET to a protected route with the given cookies; reached reports
-// whether the protected handler ran, and seen is the claims it saw.
+// GETs a protected route with the given cookies. reached says whether the handler ran, seen is the claims it saw.
 func get(v *jwtVerifier, cookies ...*http.Cookie) (rec *httptest.ResponseRecorder, reached bool, seen jwtClaims) {
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reached = true
@@ -186,7 +185,7 @@ func TestExpiredButValidlySignedTokenGoesToRefreshWhenARefreshCookieExists(t *te
 	v.refresh = func(w http.ResponseWriter, _ *http.Request, _ http.Handler) {
 		handedOff = true
 
-		w.WriteHeader(http.StatusTeapot) // stands in for the #26 flow's response
+		w.WriteHeader(http.StatusTeapot)
 	}
 
 	rec, reached, _ := get(v, sessionCookie(cookieJWT, expired), sessionCookie(cookieRefresh, "r"))
@@ -194,7 +193,6 @@ func TestExpiredButValidlySignedTokenGoesToRefreshWhenARefreshCookieExists(t *te
 		t.Fatalf("expected a handoff to refresh, got %d handedOff=%v reached=%v", rec.Code, handedOff, reached)
 	}
 
-	// Without a refresh cookie, or before the refresh flow exists, it is a plain 401.
 	if rec, reached, _ := get(v, sessionCookie(cookieJWT, expired)); rec.Code != http.StatusUnauthorized || reached {
 		t.Fatalf("expired without a refresh cookie: expected 401, got %d", rec.Code)
 	}
@@ -220,7 +218,7 @@ func TestExpiryIsExclusive(t *testing.T) {
 	}
 }
 
-// cleared reports which session cookies a response expires.
+// Which session cookies a response expires.
 func cleared(rec *httptest.ResponseRecorder) map[string]bool {
 	out := map[string]bool{}
 

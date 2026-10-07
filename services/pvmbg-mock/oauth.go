@@ -24,17 +24,14 @@ type tokenPair struct {
 	expires time.Time // absolute end of the access token's advertised lifetime
 }
 
-// tokenStore is the mock's OAuth state: one registered client, a one-time
-// bootstrap code, and the single currently valid token pair per client_id.
-// ponytail: one global mutex is plenty for a single-client mock; shard per
-// client_id if this ever serves many.
+// The mock's OAuth state: one registered client, a one-time bootstrap code, and the single valid token pair per client_id.
+// ponytail: one global mutex is fine for a single-client mock. Shard per client_id if it ever serves many.
 type tokenStore struct {
 	clientID     string
 	clientSecret string
 	oneTimeCode  string
 
-	// now is the clock used to stamp and check expiry; tests replace it so
-	// expiry never needs a real wait.
+	// The clock for stamping and checking expiry, tests replace it so expiry needs no real wait.
 	now func() time.Time
 
 	mu       sync.Mutex
@@ -65,9 +62,7 @@ func randomToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// exchange validates the grant and, on success, replaces the client's token
-// pair (so the previous refresh token stops working). It returns an OAuth
-// error code, or "" on success.
+// Validates the grant and, on success, replaces the client's token pair (the old refresh token stops working). Returns an OAuth error code, or "" on success.
 func (s *tokenStore) exchange(grant, code, refresh string) (tokenPair, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,7 +91,6 @@ func (s *tokenStore) exchange(grant, code, refresh string) (tokenPair, string) {
 		return tokenPair{}, "server_error"
 	}
 
-	// The one-time code is only consumed once a token was actually issued.
 	if grant == grantAuthCode {
 		s.codeUsed = true
 	}
@@ -107,10 +101,7 @@ func (s *tokenStore) exchange(grant, code, refresh string) (tokenPair, string) {
 	return pair, ""
 }
 
-// validAccess reports whether token is the client's currently valid access
-// token and still inside its advertised lifetime. Rotation replaces the pair, so
-// a superseded access token stops working; the refresh token is not affected by
-// access-token expiry, so an expired client can still rotate.
+// Whether token is the client's current access token and still inside its lifetime. A superseded access token stops working, an expired client can still rotate.
 func (s *tokenStore) validAccess(token string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -120,8 +111,7 @@ func (s *tokenStore) validAccess(token string) bool {
 	return ok && equal(token, cur.access) && s.now().Before(cur.expires)
 }
 
-// loggableGrant maps the client-supplied grant_type onto known constants so
-// arbitrary request input never reaches the log.
+// Maps the client's grant_type onto known constants so request input never reaches the log.
 func loggableGrant(grant string) string {
 	switch grant {
 	case grantAuthCode:

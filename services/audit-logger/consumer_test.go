@@ -12,7 +12,7 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// The Audit Logger against a real RabbitMQ at RABBITMQ_TEST_URL; skipped otherwise.
+// The Audit Logger against a real RabbitMQ at RABBITMQ_TEST_URL, skipped otherwise.
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -26,8 +26,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// TestRealBrokerAddedLaterReceivesNewEvents is P5.4: the exchange is already in
-// use when the Audit Logger is added, and it receives what is published from then on.
+// The exchange is already in use when the Audit Logger is added, and it receives what is published from then on.
 //
 //nolint:paralleltest // needs the real broker
 func TestRealBrokerAddedLaterReceivesNewEvents(t *testing.T) {
@@ -66,7 +65,7 @@ func TestRealBrokerAddedLaterReceivesNewEvents(t *testing.T) {
 		}
 	}
 
-	publish("before") // the system is already running, before the logger exists
+	publish("before")
 
 	dir := t.TempDir()
 

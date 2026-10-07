@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// HazardEvent is the canonical record the Aggregator publishes (doc/TRD_M1.md
-// 3.2). Kept here as this service's own copy: no Go code is shared across services.
+// Canonical hazard record from the Aggregator. This service keeps its own copy, no Go code is shared across services.
 type HazardEvent struct {
 	HazardID    string         `json:"hazard_id"`
 	Source      string         `json:"source"`
@@ -32,9 +31,7 @@ func severityOf(e HazardEvent) string {
 	return *e.Severity
 }
 
-// state is the dashboard's in-memory view, hazard_id -> latest HazardEvent
-// (doc/TRD_M1.md 8.1). It is lost on restart and not resynced from the
-// Aggregator, a known limitation of the TRD.
+// The dashboard's in-memory view, hazard_id to latest HazardEvent. Lost on restart and not resynced, a known limitation.
 type state struct {
 	mu     sync.RWMutex
 	events map[string]HazardEvent
@@ -45,8 +42,7 @@ func newState() *state {
 	return &state{events: map[string]HazardEvent{}, hub: newHub()}
 }
 
-// handle upserts one event. Keyed by hazard_id, so a redelivered message just
-// overwrites the entry with the same data: idempotent without any dedup record.
+// Upserts one event. Keyed by hazard_id, so a redelivery just overwrites the same data, idempotent without a dedup record.
 func (s *state) handle(m message) outcome {
 	var e HazardEvent
 	if err := json.Unmarshal(m.body, &e); err != nil || e.HazardID == "" {
@@ -74,7 +70,7 @@ func (s *state) handle(m message) outcome {
 	return ack
 }
 
-// snapshot is every event, newest first, for the dashboard view.
+// Every event, newest first, for the dashboard view.
 func (s *state) snapshot() []HazardEvent {
 	s.mu.RLock()
 	out := make([]HazardEvent, 0, len(s.events))

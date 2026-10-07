@@ -1,13 +1,6 @@
 package main
 
-// Abuse suite: the whole stack in an isolated compose project, pushed through the
-// failures the spec grades (restart one component, outage, schema change, consumer
-// down, sustained load, forged credentials) and the malformed input a client can
-// send. Run it with tests/integration/run.sh abuse; without IT_ABUSE_URL every test
-// here skips, so `go test ./...` stays offline.
-//
-// Each test says what it does and what it expects. A test that is red is a real
-// defect; the comment names the issue when there is one.
+// Abuse suite: the whole stack in an isolated compose project, pushed through restarts, outages, schema change, consumer down, sustained load, forged credentials and malformed input. Run it with tests/integration/run.sh abuse, without IT_ABUSE_URL every test skips.
 
 import (
 	"context"
@@ -36,8 +29,7 @@ const (
 	fieldAttribs = "attributes"
 )
 
-// abClient keeps connections alive: a load test that opens one socket per request
-// runs out of ports and reports its own failures as the system's.
+// Keeps connections alive, so a load test doesn't run out of ports and blame the system for it.
 var abClient = &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{MaxIdleConnsPerHost: 200}}
 
 type abEnv struct {
@@ -67,7 +59,7 @@ func abuseEnv(t *testing.T) abEnv {
 	}
 }
 
-// composeOut runs a docker compose command against the suite's project and returns stdout.
+// Runs a docker compose command against the suite's project and returns stdout.
 func composeOut(t *testing.T, args ...string) string {
 	t.Helper()
 
@@ -89,8 +81,7 @@ func composeOut(t *testing.T, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// allServices is every container of the stack except the web frontend (the suite
-// talks to the Client-Facing API directly).
+// Every container of the stack except the web frontend.
 var allServices = []string{
 	"bmkg-mock", svcPVMBG, "canonical-store", "user-db", "rabbitmq",
 	"aggregator", "auth-service", "client-facing-api", "dashboard-updater", "notifier", "audit-logger",
@@ -114,8 +105,7 @@ func eventually(t *testing.T, within time.Duration, what string, ok func() bool)
 	}
 }
 
-// quiet is e.do without the t.Errorf on a transport error: callers here expect
-// failures while a service is down and want the status (-1 for no answer).
+// e.do without the t.Errorf on a transport error. Callers expect failures while a service is down and want the status (-1 for no answer).
 func (e abEnv) quiet(method, path, body string, jar cookies, hdr map[string]string) reply {
 	req, _ := http.NewRequestWithContext(context.Background(), method, e.url+path, strings.NewReader(body))
 	for k, v := range hdr {
@@ -162,7 +152,7 @@ func (e abEnv) hazards(t *testing.T, jar cookies, query string) (reply, hazardPa
 	return r, p
 }
 
-// healthStatus is the Client-Facing API's own /health status ("ok", "degraded", ...).
+// The Client-Facing API's own /health status.
 func (e abEnv) healthStatus() string {
 	r := e.quiet(http.MethodGet, "/health", "", nil, nil)
 
@@ -177,7 +167,7 @@ func (e abEnv) healthStatus() string {
 	return h["status"]
 }
 
-// servesData is true when an Operator can log in and read seismic and volcanic data.
+// True when an Operator can log in and read seismic and volcanic data.
 func (e abEnv) servesData(t *testing.T) bool {
 	t.Helper()
 
@@ -195,9 +185,7 @@ func (e abEnv) servesData(t *testing.T) bool {
 	return true
 }
 
-// reset gives the next test a known-good stack: every container recreated and every
-// volume (databases, queues, token file, dedup stores) wiped. Without it one test's
-// damage would fail every test after it for the same reason.
+// Gives the next test a known-good stack: every container recreated and every volume wiped.
 func (e abEnv) reset(t *testing.T) {
 	t.Helper()
 	composeOut(t, "down", "-v", "--remove-orphans")
@@ -206,7 +194,7 @@ func (e abEnv) reset(t *testing.T) {
 	eventually(t, 40*time.Second, "both sources ingesting", func() bool { return e.count(t, "source='BMKG'") > 0 && e.count(t, "source='PVMBG'") > 0 })
 }
 
-// waitHealthy waits for the whole stack to serve again after a lifecycle change.
+// Waits for the whole stack to serve again after a lifecycle change.
 func (e abEnv) waitHealthy(t *testing.T, within time.Duration) {
 	t.Helper()
 	eventually(t, within, "Client-Facing API /health ok and data served", func() bool {
@@ -214,8 +202,7 @@ func (e abEnv) waitHealthy(t *testing.T, within time.Duration) {
 	})
 }
 
-// count runs a count query on the Canonical Store through its own container, so the
-// suite needs no database driver and never opens a published port.
+// Runs a count query on the Canonical Store through its own container, so the suite needs no database driver.
 func (e abEnv) count(t *testing.T, where string) int {
 	t.Helper()
 
@@ -230,8 +217,7 @@ func (e abEnv) count(t *testing.T, where string) int {
 	return n
 }
 
-// logCount counts lines of a service's log (since the compose project's start)
-// that contain every given substring.
+// Counts a service's log lines (since the project's start) that contain every given substring.
 func logCount(t *testing.T, service string, parts ...string) int {
 	t.Helper()
 
@@ -270,14 +256,7 @@ func postAdmin(t *testing.T, base, adminKey, path string) reply {
 	return reply{code: resp.StatusCode, body: string(raw)}
 }
 
-// ---- lifecycle: the spec's "stop, rebuild and restart one component" (P4.1) ----
-
-// TestAbuseDownUpKeepsVolumes does `compose down`, waits longer than the access token
-// TTL, then `up` with every volume kept: the everyday restart after a break. Expect:
-// the stack comes back healthy, serves seismic and volcanic data, and BOTH sources
-// keep ingesting new records afterwards. PVMBG's mock forgets the tokens it issued
-// across the restart while the Aggregator keeps its token volume, so the saved
-// refresh token is rejected: the regression test for #117.
+// `compose down`, wait past the access token TTL, then `up` with volumes kept. The stack comes back healthy and both sources keep ingesting, even though the PVMBG mock forgot its tokens.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseDownUpKeepsVolumes(t *testing.T) {
@@ -287,7 +266,7 @@ func TestAbuseDownUpKeepsVolumes(t *testing.T) {
 	bmkg, pvmbg := e.count(t, "source='BMKG'"), e.count(t, "source='PVMBG'")
 
 	composeOut(t, "down", "--remove-orphans")
-	time.Sleep(tokenTTL + 5*time.Second) // a night away: the saved access token is long expired
+	time.Sleep(tokenTTL + 5*time.Second)
 	e.upAll(t)
 	e.waitHealthy(t, 90*time.Second)
 
@@ -295,10 +274,7 @@ func TestAbuseDownUpKeepsVolumes(t *testing.T) {
 	eventually(t, 40*time.Second, "PVMBG ingest to continue after down/up", func() bool { return e.count(t, "source='PVMBG'") > pvmbg })
 }
 
-// TestAbuseDownVolumesUpIsAFreshStart does `compose down -v` then `up`: every
-// database, queue and token file is gone. Expect: a clean bootstrap (one-time OAuth
-// code, migrations, seeded Operator) ends with the stack healthy, both sources
-// ingesting and the seeded Operator able to log in.
+// `compose down -v` then `up`: a clean bootstrap ends with the stack healthy, both sources ingesting and the seeded Operator able to log in.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseDownVolumesUpIsAFreshStart(t *testing.T) {
@@ -312,12 +288,7 @@ func TestAbuseDownVolumesUpIsAFreshStart(t *testing.T) {
 	eventually(t, 40*time.Second, "PVMBG records after a fresh start", func() bool { return e.count(t, "source='PVMBG'") > 0 })
 }
 
-// TestAbuseRestartEachServiceAlone restarts every service on its own while nothing
-// else is touched. Expect: every restart ends with the stack healthy and serving
-// again WITHOUT restarting a neighbour, and the services that do not depend on the
-// restarted one keep answering while it is down (seismic data survives pvmbg-mock;
-// a logged-in session survives auth-service and user-db), and PVMBG ingest picks up
-// again after every restart that can interrupt it. pvmbg-mock's restart is the #117 case.
+// Restarts every service on its own. The stack comes back healthy without restarting a neighbour, and independent services keep answering meanwhile.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseRestartEachServiceAlone(t *testing.T) {
@@ -326,8 +297,6 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 
 	jar := e.operator(t)
 
-	// pvmbg-mock goes last: it is the restart that has broken PVMBG ingest before (#117),
-	// so if it ever does again, the failure shows once and not under every service after it.
 	order := append(slices.DeleteFunc(slices.Clone(allServices), func(s string) bool { return s == svcPVMBG }), svcPVMBG)
 
 	for _, svc := range order {
@@ -341,12 +310,10 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 
 			switch svc {
 			case svcPVMBG, "rabbitmq", "notifier", "audit-logger", "dashboard-updater", "bmkg-mock", "auth-service", "user-db":
-				// None of these is on the read path of an already logged-in client.
 				if r, p := e.hazards(t, jar, "type="+typSeismic+"&limit=1"); r.code != http.StatusOK || len(p.Data) == 0 {
 					t.Errorf("seismic read with %s stopped: %d %.120s", svc, r.code, r.body)
 				}
 			default:
-				// Aggregator, Canonical Store, the API itself: a clean refusal, never a hang.
 				began := time.Now()
 				r, _ := e.hazards(t, jar, "type="+typSeismic+"&limit=1")
 
@@ -366,15 +333,7 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 	}
 }
 
-// TestAbuseBrokerStoreAndUserDBDown stops the three stateful dependencies one at a
-// time and brings each back. Expect, per dependency:
-//   - rabbitmq: reads keep working, the Aggregator keeps ingesting, and after the
-//     broker returns the consumers reconnect on their own (new "message processed"
-//     lines appear without restarting them);
-//   - canonical-store: the API answers a clean 5xx quickly and /health says
-//     "degraded", never a hang; after it returns data is served with no restart;
-//   - user-db: login fails cleanly, an existing session still reads data, and login
-//     works again with no restart.
+// Stops rabbitmq, the Canonical Store and the User DB one at a time. Reads and sessions keep working or fail cleanly (never a hang), and everything recovers without a restart.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseBrokerStoreAndUserDBDown(t *testing.T) {
@@ -439,11 +398,7 @@ func TestAbuseBrokerStoreAndUserDBDown(t *testing.T) {
 	})
 }
 
-// TestAbuseConsumerDownCatchesUp stops one consumer (P5.3). Expect: the producer
-// and the other consumers carry on (dashboard-updater and audit-logger keep
-// processing new events while notifier is stopped), and once notifier returns it is
-// handed the events published meanwhile (the queue is durable), so it does not lose
-// them.
+// Stops one consumer. The others carry on, and the stopped one gets the events published meanwhile once it returns (durable queue).
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseConsumerDownCatchesUp(t *testing.T) {
@@ -466,12 +421,7 @@ func TestAbuseConsumerDownCatchesUp(t *testing.T) {
 	})
 }
 
-// ---- outage and schema change at runtime (P2.3, P1.2-3, P4.2) ----
-
-// TestAbusePVMBGOutageToggle switches PVMBG off with POST /admin/outage. Expect:
-// while it is off, seismic reads are normal, volcanic reads are never a 500 and
-// never hang, and they say so explicitly (source_status not UP, or stale_since
-// set); after switching back on, volcanic data is fresh again with no restart.
+// Switches PVMBG off with POST /admin/outage. Seismic reads stay normal, volcanic reads are never a 500 or a hang and say it's stale, and data is fresh again after switching back.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbusePVMBGOutageToggle(t *testing.T) {
@@ -485,7 +435,7 @@ func TestAbusePVMBGOutageToggle(t *testing.T) {
 		t.Fatalf("outage did not switch on: %d %s", on.code, on.body)
 	}
 
-	defer func() { // never leave the mock in outage for the next test
+	defer func() {
 		if r := postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/outage"); strings.Contains(r.body, `"outage_active":true`) {
 			postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/outage")
 		}
@@ -511,8 +461,7 @@ func TestAbusePVMBGOutageToggle(t *testing.T) {
 	})
 }
 
-// outageVisible is true once a volcanic read says PVMBG is down (stale data with a
-// marker, or an explicit 503). Any other 5xx, or a hang, fails the test outright.
+// True once a volcanic read says PVMBG is down (stale data with a marker, or an explicit 503). Any other 5xx or a hang fails the test.
 func (e abEnv) outageVisible(t *testing.T, jar cookies) bool {
 	t.Helper()
 
@@ -524,11 +473,7 @@ func (e abEnv) outageVisible(t *testing.T, jar cookies) bool {
 	return r.code == http.StatusServiceUnavailable || p.Meta["stale_since"] != nil || (p.Meta["source_status"] != nil && p.Meta["source_status"] != "UP")
 }
 
-// TestAbuseSchemaVersionToggle flips PVMBG to the extended schema (confidence_level)
-// with POST /admin/schema-version while the system runs. Expect: no restart and no
-// crash; the Aggregator keeps ingesting; records from before and after the change
-// are both readable side by side; a new record carries confidence_level in its
-// attributes (the declared policy: unknown fields are forwarded to attributes).
+// Flips PVMBG to the extended schema with POST /admin/schema-version while running. No restart or crash, old and new records both readable, new records carry confidence_level in attributes.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseSchemaVersionToggle(t *testing.T) {
@@ -540,7 +485,6 @@ func TestAbuseSchemaVersionToggle(t *testing.T) {
 
 	r := postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
 	if !strings.Contains(r.body, "extended") {
-		// A previous run left it extended: flip back and forth so we start from legacy.
 		r = postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
 		before = e.count(t, "source='PVMBG'")
 		r = postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
@@ -550,7 +494,7 @@ func TestAbuseSchemaVersionToggle(t *testing.T) {
 		t.Fatalf("schema did not switch to extended: %s", r.body)
 	}
 
-	defer postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version") // back to legacy
+	defer postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
 
 	eventually(t, 45*time.Second, "new PVMBG records after the schema change", func() bool { return e.count(t, "source='PVMBG'") > before })
 
@@ -565,7 +509,6 @@ func TestAbuseSchemaVersionToggle(t *testing.T) {
 		return false
 	})
 
-	// the pre-change records are still there and still readable next to the new ones
 	_, p := e.hazards(t, jar, "type=VOLCANIC&limit=100")
 
 	old := 0
@@ -585,19 +528,14 @@ func TestAbuseSchemaVersionToggle(t *testing.T) {
 	}
 }
 
-// TestAbuseKillAggregatorMidPoll SIGKILLs the Aggregator (no graceful shutdown)
-// while it is polling and publishing, then starts it again, three times. Expect: it
-// resumes without help; every BMKG record the source still serves is in the store
-// exactly once (the table is UNIQUE(source, source_ref_id), so a duplicate would
-// show as a count above 1); and the notifier never alerts twice for the same hazard
-// and severity (the redelivery after a crash is deduplicated).
+// SIGKILLs the Aggregator mid-poll three times. It resumes on its own, every BMKG record is stored exactly once, and the notifier never alerts twice for one hazard and severity.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseKillAggregatorMidPoll(t *testing.T) {
 	e := abuseEnv(t)
 	e.reset(t)
 
-	for range 3 { // repeat: a kill that lands between two writes is a matter of timing
+	for range 3 {
 		composeOut(t, "kill", "aggregator")
 		time.Sleep(time.Second)
 		composeOut(t, "up", "-d", "--wait", "--no-deps", "aggregator")
@@ -611,7 +549,6 @@ func TestAbuseKillAggregatorMidPoll(t *testing.T) {
 		}
 	}
 
-	// notifier: one "alert sent" per hazard_id+severity
 	seen := map[string]int{}
 
 	for l := range strings.SplitSeq(composeOut(t, "logs", "--no-log-prefix", "notifier"), "\n") {
@@ -632,7 +569,7 @@ func TestAbuseKillAggregatorMidPoll(t *testing.T) {
 	}
 }
 
-// sourceIDs lists the event ids BMKG's mock serves right now.
+// The event ids BMKG's mock serves right now.
 func (e abEnv) sourceIDs(t *testing.T) []string {
 	t.Helper()
 
@@ -663,12 +600,7 @@ func (e abEnv) sourceIDs(t *testing.T) []string {
 	return ids
 }
 
-// ---- credentials and trust (P3) ----
-
-// TestAbuseCredentialsDoNotCrossDomains uses each source's credential on the other
-// source. Expect 401 or 403 every time: BMKG's API key on PVMBG's data endpoint, a
-// PVMBG-style bearer on BMKG, the PVMBG admin key as a BMKG key, and no credential
-// at all.
+// Uses each source's credential on the other source. Every try is 401 or 403.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseCredentialsDoNotCrossDomains(t *testing.T) {
@@ -714,11 +646,7 @@ func TestAbuseCredentialsDoNotCrossDomains(t *testing.T) {
 	}
 }
 
-// TestAbuseMediaCannotReachRawFields has a Media client ask for raw fields every way
-// it can. Expect: an explicit ?fields= naming a raw field is refused with 401/403
-// (not silently dropped); the default response carries summary fields only; forged
-// or tampered tokens (changed role, alg=none, garbage, empty, Bearer header instead
-// of the cookie) are all 401.
+// A Media client asks for raw fields every way it can. Explicit raw fields are refused (401/403), the default is summary only, and forged or tampered tokens are 401.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseMediaCannotReachRawFields(t *testing.T) {
@@ -783,14 +711,7 @@ func TestAbuseMediaCannotReachRawFields(t *testing.T) {
 	}
 }
 
-// ---- malformed input ----
-
-// TestAbuseAuthInputIsRejectedCleanly sends malformed login and register bodies.
-// Expect a 4xx for every one: a client mistake must never become a 5xx. Known
-// defects (red until fixed): a NUL byte in an email makes Postgres reject the query
-// and the client sees a 502 "authentication service unavailable"; an email that is
-// not an email, a one-character password, and an email that differs only by case
-// from an existing one are all accepted.
+// Sends malformed login and register bodies. Every one is a 4xx, a client mistake never becomes a 5xx.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseAuthInputIsRejectedCleanly(t *testing.T) {
@@ -851,10 +772,7 @@ func TestAbuseAuthInputIsRejectedCleanly(t *testing.T) {
 	})
 }
 
-// TestAbuseQueryParametersAreValidatedAlike sends bad query parameters to /hazards.
-// Expect a 400 for each, the way limit and severity already do; and no 5xx for any
-// of them, including SQL metacharacters, NUL, emoji and a 100KB search. GET /hazards pages
-// with limit and offset; there is no page parameter.
+// Sends bad query parameters to /hazards. Each is a 400 and never a 5xx, including SQL metacharacters, NUL, emoji and a 100KB search.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseQueryParametersAreValidatedAlike(t *testing.T) {
@@ -884,9 +802,7 @@ func TestAbuseQueryParametersAreValidatedAlike(t *testing.T) {
 	}
 }
 
-// TestAbuseCorrelationIDIsSane sends hostile X-Correlation-ID values. Expect: a
-// reasonable client value is echoed back; an oversized or malformed one is replaced
-// by a generated id (never reflected, never a 5xx).
+// Sends hostile X-Correlation-ID values. A reasonable one is echoed, an oversized or malformed one is replaced by a generated id.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseCorrelationIDIsSane(t *testing.T) {
@@ -917,12 +833,7 @@ func TestAbuseCorrelationIDIsSane(t *testing.T) {
 	}
 }
 
-// ---- load (P2.1, P2.2) ----
-
-// TestAbuseRateLimitIsPerAccount hammers the API with one account until it is
-// limited. Expect: 429 with a Retry-After header for the hammering account, while a
-// second account is still served normally, and the first is served again after
-// the window.
+// Hammers the API with one account until limited. That account gets 429 with Retry-After, a second account is still served, and the first recovers after the window.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseRateLimitIsPerAccount(t *testing.T) {
@@ -985,13 +896,7 @@ func TestAbuseRateLimitIsPerAccount(t *testing.T) {
 	}
 }
 
-// TestAbuseSustainedLoadAndHeadOfLine drives the API with 50 parallel connections
-// (10 accounts x 5, so the per-account rate limit does not decide the result) for
-// IT_LOAD_SECONDS (the spec asks 60; the default is shorter), half of them on
-// volcanic data (PVMBG is 3 s slow in this suite) and half on seismic only. Expect:
-// seismic p95 stays under 300 ms despite the slow PVMBG traffic (no head-of-line
-// blocking); errors other than 429 stay under 1%; the stack is still healthy
-// afterwards. Throughput, p50/p95/p99 and the 429 count are logged for the report.
+// Drives the API with 50 parallel connections for IT_LOAD_SECONDS, half on volcanic data (PVMBG is slow here) and half on seismic only. Seismic p95 stays under 300 ms, non-429 errors stay under 1%, and the stack is healthy afterwards.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseSustainedLoadAndHeadOfLine(t *testing.T) {
@@ -1058,7 +963,7 @@ func TestAbuseSustainedLoadAndHeadOfLine(t *testing.T) {
 					mu.Unlock()
 				}
 
-				time.Sleep(120 * time.Millisecond) // a client thinks between requests; 50 of them ~ 400 req/s
+				time.Sleep(120 * time.Millisecond)
 			}
 		})
 	}

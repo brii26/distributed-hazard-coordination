@@ -21,13 +21,12 @@ const (
 	testRefresh = "the-refresh"
 )
 
-// sessionCookie is a request cookie as a browser would send it.
+// A request cookie as a browser would send it.
 func sessionCookie(name, value string) *http.Cookie {
 	return &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode}
 }
 
-// fakeAuth stands in for the Auth Service; the embedded interface makes any RPC
-// a test doesn't set up panic if it is called.
+// Stands in for the Auth Service. The embedded interface makes any RPC a test doesn't set up panic.
 type fakeAuth struct {
 	authpb.AuthClient
 
@@ -81,7 +80,7 @@ func cookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 	return nil
 }
 
-// wantSessionCookie checks a cookie is set as an HttpOnly, Secure session cookie at /.
+// Checks a cookie is set as an HttpOnly, Secure session cookie at /.
 func wantSessionCookie(t *testing.T, rec *httptest.ResponseRecorder, name, value string) {
 	t.Helper()
 
@@ -257,7 +256,7 @@ func TestLoginAndRegisterAreThrottledPerIP(t *testing.T) {
 	}
 
 	for _, path := range []string{"/auth/login", "/auth/register"} {
-		if code := post(path, "10.0.0.1:2222"); code != http.StatusTooManyRequests { // new port, same IP
+		if code := post(path, "10.0.0.1:2222"); code != http.StatusTooManyRequests {
 			t.Fatalf("%s: got %d, want 429", path, code)
 		}
 	}

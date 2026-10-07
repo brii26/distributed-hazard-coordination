@@ -14,13 +14,12 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// fakeBroker stands in for RabbitMQ: it records what it confirmed and can be told
-// to refuse connections or fail publishes, to play an outage.
+// Stands in for RabbitMQ: records what it confirmed and can refuse connections or fail publishes.
 type fakeBroker struct {
 	mu            sync.Mutex
 	got           []message
 	failDials     int // refuse this many connections first
-	failPublishes int // fail this many publishes first, as a lost connection would
+	failPublishes int // fail this many publishes first, like a lost connection
 	dials         int
 	dead          bool // the broker is gone: open sessions report closed, new connections are refused
 }
@@ -101,7 +100,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// start runs p until the test ends and returns a function that stops it and waits.
+// Runs p until the test ends and returns a func that stops it and waits.
 func start(t *testing.T, p *publisher) (stop func()) {
 	t.Helper()
 
@@ -234,9 +233,9 @@ func TestConfirmedMessageIsNotRemovedIfTheBufferAlreadyDroppedIt(t *testing.T) {
 	p.publish(context.Background(), event("a"), "c")
 	p.publish(context.Background(), event("b"), "c")
 
-	inFlight, _ := p.front() // a is being sent...
+	inFlight, _ := p.front()
 
-	p.publish(context.Background(), event("c"), "c") // ...when the full buffer drops it
+	p.publish(context.Background(), event("c"), "c")
 
 	p.done(inFlight)
 
@@ -281,9 +280,7 @@ func TestShutdownFlushesWhatIsBuffered(t *testing.T) {
 	}
 }
 
-// TestRealBroker needs a RabbitMQ at RABBITMQ_TEST_URL and skips otherwise. It
-// checks what the fake cannot: the message is persistent, carries the correlation ID
-// as a property, and is confirmed by the broker.
+// Needs RabbitMQ at RABBITMQ_TEST_URL, skips otherwise. Checks the message is persistent, carries the correlation ID as a property and is confirmed.
 func TestRealBroker(t *testing.T) { //nolint:gocyclo // one broker scenario read top to bottom
 	t.Parallel()
 

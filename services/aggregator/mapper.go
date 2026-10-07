@@ -6,10 +6,7 @@ import (
 	"time"
 )
 
-// mapper turns raw source records into HazardEvents (doc/TRD_M1.md 3.2). It
-// reads records as generic maps, the shape the pollers produce, so the
-// unknown/changed-field policy (#19) can be applied on top without a rewrite.
-// The clock and ID generator are fields so tests can pin them.
+// Turns raw source records into HazardEvents, working on generic maps. Clock and ID generator are fields so tests can pin them.
 type mapper struct {
 	now   func() time.Time
 	newID func() string
@@ -19,14 +16,13 @@ func newMapper() *mapper {
 	return &mapper{now: time.Now, newID: newHazardID}
 }
 
-// volcano is one row of the static reference table: PVMBG sends only a
-// volcano_id, so the name and coordinates live here.
+// One row of the volcano reference table. PVMBG only sends volcano_id.
 type volcano struct {
 	name     string
 	lat, lon float64
 }
 
-// volcanoRef covers the volcano_id values the PVMBG mock draws from.
+// The volcano_id values the PVMBG mock draws from.
 var volcanoRef = map[string]volcano{
 	"MERAPI":   {"Gunung Merapi", -7.5407, 110.4457},
 	"SEMERU":   {"Gunung Semeru", -8.1080, 112.9220},
@@ -56,18 +52,9 @@ func num(r map[string]any, k string) (float64, bool) {
 	return f, ok
 }
 
-// Field policy (doc/TRD_M1.md 3.2, #19), applied generically so a new field never
-// needs a code change: a source field that feeds a canonical field is consumed and
-// not repeated in attributes; every other field goes to attributes under its own
-// key; a canonical field the record lacks stays null. That covers a field added
-// (it lands in attributes), removed (null), renamed (old name null, new name in
-// attributes) and retyped (the value cannot feed the canonical field, so it stays
-// in attributes under the same key). The one exception is a record without a
-// usable id or time, which cannot be stored and is rejected.
+// Field policy: a source field that feeds a canonical field is consumed, every other field goes to attributes under its own key, and a missing canonical field stays null.
 
-// base fills what every source shares. A record with no id or no usable time
-// cannot be stored (both are NOT NULL), so it is rejected. The two fields it
-// reads are marked in used.
+// Fills what every source shares. A record without an id or a usable time is rejected.
 func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKey string, used map[string]bool) (HazardEvent, error) {
 	id, ok := str(r, idKey)
 	if !ok {
@@ -94,8 +81,7 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	}, nil
 }
 
-// mapAll maps every record, skipping the ones fn rejects and reporting them
-// together, so one bad record never costs the rest of the poll.
+// Maps every record and reports rejected ones together, so one bad record never fails the whole poll.
 func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, error)) ([]HazardEvent, error) {
 	var (
 		out  []HazardEvent
@@ -116,8 +102,7 @@ func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, erro
 	return out, errors.Join(errs...)
 }
 
-// mapSeismic maps one BMKG poll: the seismic events plus the tsunami warnings
-// polled with them, correlated here through related_event_id.
+// Maps one BMKG poll: seismic events plus tsunami warnings, correlated through related_event_id.
 func (m *mapper) mapSeismic(events, warnings []map[string]any) ([]HazardEvent, error) {
 	byEvent := map[string][]map[string]any{}
 
@@ -163,16 +148,12 @@ func (m *mapper) seismic(r map[string]any, warnings map[string][]map[string]any)
 		h.Severity = magnitudeSeverity(r)
 	}
 
-	// magnitude, depth_km and potential_tsunami are not consumed: they feed no
-	// canonical field except through the severity, so they stay in attributes.
 	h.addLeftovers(r, used)
 
 	return h, nil
 }
 
-// topWarning returns the most severe related warning and the severity its
-// threat_level maps to. A warning is never dropped: if none has a known level,
-// the first is returned with an empty severity.
+// The most severe related warning and its severity. If no warning has a known level, the first one comes back with an empty severity.
 func topWarning(related []map[string]any) (map[string]any, string) {
 	var (
 		best map[string]any
@@ -194,7 +175,7 @@ func topWarning(related []map[string]any) (map[string]any, string) {
 	return best, sev
 }
 
-// magnitudeSeverity is the fallback when no warning decides the severity.
+// Severity from magnitude when no warning decides it.
 func magnitudeSeverity(r map[string]any) *string {
 	mag, ok := num(r, "magnitude")
 	if !ok {
@@ -213,7 +194,7 @@ func magnitudeSeverity(r map[string]any) *string {
 	return &s
 }
 
-// mapVolcanic maps one PVMBG poll.
+// Maps one PVMBG poll.
 func (m *mapper) mapVolcanic(reports []map[string]any) ([]HazardEvent, error) {
 	return mapAll(reports, m.volcanic)
 }
@@ -226,7 +207,6 @@ func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
 		return HazardEvent{}, err
 	}
 
-	// A volcano_id or alert_level the tables do not know stays in attributes.
 	id, _ := str(r, "volcano_id")
 	if v, ok := volcanoRef[id]; ok {
 		h.AreaName, h.Latitude, h.Longitude = &v.name, &v.lat, &v.lon
@@ -244,7 +224,7 @@ func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
 	return h, nil
 }
 
-// addLeftovers puts every field of r that was not consumed into attributes.
+// Puts every unconsumed field into attributes.
 func (h *HazardEvent) addLeftovers(r map[string]any, used map[string]bool) {
 	for k, v := range r {
 		if !used[k] {

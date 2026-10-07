@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// clock is a settable time source for the token bucket.
+// A settable time source for the token bucket.
 type clock struct{ t time.Time }
 
 func (c *clock) now() time.Time { return c.t }
@@ -34,7 +34,7 @@ func TestBucketAllowsABurstThenRefillsAtTheRate(t *testing.T) {
 		t.Fatalf("the 6th request in the same instant must be refused with Retry-After 1, got ok=%v retry=%d", ok, retryAfter)
 	}
 
-	c.t = c.t.Add(200 * time.Millisecond) // one token at 5 per second
+	c.t = c.t.Add(200 * time.Millisecond)
 
 	if ok, _, _ := l.take("a"); !ok {
 		t.Fatal("a token must be back after 1/rps seconds")
@@ -87,7 +87,7 @@ func TestIdleBucketsAreEvictedWhenThereAreMany(t *testing.T) {
 	}
 }
 
-// protected serves an always-200 route behind the JWT middleware with a limiter of rps.
+// Serves an always-200 route behind the JWT middleware with a limiter of rps.
 func protected(rps int) http.Handler {
 	v := newVerifier()
 	v.limiter = newRateLimiter(rps)
@@ -161,7 +161,7 @@ func TestInflightCapRefusesAtOnceAndSparesHealth(t *testing.T) {
 	}
 
 	<-entered
-	<-entered // both slots are taken
+	<-entered
 
 	start := time.Now()
 
@@ -182,9 +182,7 @@ func TestInflightCapRefusesAtOnceAndSparesHealth(t *testing.T) {
 	}
 }
 
-// TestManyConcurrentClientsGetOnlySuccessOr429 is a small in-process load check:
-// far more concurrent requests than the cap, from many clients, and every answer
-// is either served or a controlled 429, never a 5xx or a hang.
+// A small in-process load check: far more concurrent requests than the cap, from many clients, and every answer is served or a controlled 429, never a 5xx or a hang.
 func TestManyConcurrentClientsGetOnlySuccessOr429(t *testing.T) {
 	t.Parallel()
 
