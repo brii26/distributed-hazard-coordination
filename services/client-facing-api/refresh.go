@@ -11,10 +11,7 @@ import (
 	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/authpb"
 )
 
-// withRefresh turns on transparent refresh for the verifier's protected routes:
-// a validly signed but expired jwt plus a refresh_token cookie is exchanged at the
-// Auth Service and the request carries on, all in one round trip for the client
-// (doc/TRD_M1.md section 4.2).
+// Turns on transparent refresh for the protected routes: a validly signed but expired jwt plus a refresh_token cookie is exchanged at Auth and the request carries on, in one round trip.
 func (v *jwtVerifier) withRefresh(a *authAPI) *jwtVerifier {
 	v.refresh = func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		a.refreshAndForward(v, w, r, next)
@@ -28,21 +25,12 @@ func (v *jwtVerifier) withRefresh(a *authAPI) *jwtVerifier {
 	return v
 }
 
-// refreshAndForward holds the request while it swaps the refresh token for a new
-// pair, puts the new JWT into the held request, runs next, and re-sets both cookies
-// on the response.
-//
-// Known race: two concurrent requests with the same expired jwt both try this, but
-// the Auth Service rotates a refresh token only once. The loser's token is already
-// gone, so it takes the invalid-token path below: 401 with both cookies cleared. A
-// client that gets that 401 starts over from login (or, if the winner's new cookies
-// reached it first, simply retries with them). Single-flight per refresh token would
-// let every parallel request succeed. ponytail: not built, the spec only asks that
-// the loser's outcome be defined; it also only helps within one instance.
+// Holds the request while swapping the refresh token for a new pair, puts the new JWT into it, runs next and re-sets both cookies. Two concurrent requests with the same expired jwt race, the loser gets 401 with cookies cleared.
+// ponytail: single-flight per refresh token would let every parallel request succeed, not built, it only helps within one instance.
 func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *http.Request, next http.Handler) {
 	old, err := r.Cookie(cookieRefresh)
 	if err != nil {
-		unauthorized(w) // the middleware only hands over requests that have one
+		unauthorized(w)
 
 		return
 	}
@@ -57,8 +45,6 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 		return
 	}
 
-	// The new JWT is signed by our own Auth Service with the shared secret, so it
-	// must verify; if it does not, the two services disagree on JWT_SIGNING_SECRET.
 	claims, err := v.verify(resp.GetJwt())
 	if err != nil {
 		logFor(r.Context()).Error("transparent refresh", "result", "failure", "reason", "the Auth Service issued a token that does not verify", "error", err)
@@ -75,9 +61,7 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 	next.ServeHTTP(w, held.WithContext(context.WithValue(held.Context(), claimsKey{}, claims)))
 }
 
-// refreshFailed answers a failed exchange. An unknown refresh token is a 401 and
-// both cookies are cleared. An Auth Service that is down or too slow is a 502 or
-// 504 and the cookies stay: the refresh token may still be valid.
+// Answers a failed exchange. An unknown refresh token is 401 with both cookies cleared. Auth down or too slow is 502/504 and the cookies stay.
 func (a *authAPI) refreshFailed(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case status.Code(err) == codes.Unauthenticated:
@@ -94,8 +78,7 @@ func (a *authAPI) refreshFailed(ctx context.Context, w http.ResponseWriter, err 
 	}
 }
 
-// withSession returns a copy of r whose jwt and refresh_token cookies carry the
-// new values, so what runs next sees the fresh session, not the expired one.
+// A copy of r whose jwt and refresh_token cookies carry the new values, so what runs next sees the fresh session.
 func withSession(r *http.Request, jwt, refresh string) *http.Request {
 	held := r.Clone(r.Context())
 	cookies := r.Cookies()

@@ -16,7 +16,7 @@ import (
 
 const newUserBody = `{"email":"new@x.example","password":"pw"}`
 
-// call posts to the real mux, with the JWT middleware and transparent refresh on.
+// Posts to the real mux, with the JWT middleware and transparent refresh on.
 func call(f fakeAuth, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 	api := &authAPI{auth: f, timeout: time.Second, secure: true}
 	api.verifier = newVerifier().withRefresh(api)
@@ -38,7 +38,7 @@ func jwtCookie(t *testing.T, role string) *http.Cookie {
 	return sessionCookie(cookieJWT, tokenFor(t, testSecret, role, "caller@x.example", testNow.Add(time.Minute)))
 }
 
-// noCreates fails the test if either account RPC is called.
+// Fails the test if either account RPC is called.
 func noCreates(t *testing.T) fakeAuth {
 	t.Helper()
 
@@ -68,7 +68,6 @@ func TestSelfRegistrationNeedsNoAuthAndNeverEscalates(t *testing.T) {
 		return nil
 	}
 
-	// A role in the body is ignored: Register has no role, and CreateAccount is never called.
 	rec := call(f, "/auth/register", `{"email":"new@x.example","password":"pw","role":"Operator"}`)
 
 	if rec.Code != http.StatusCreated || got.GetEmail() != "new@x.example" || got.GetPassword() != "pw" {
@@ -171,8 +170,7 @@ func TestAccountCreationErrors(t *testing.T) {
 	}
 }
 
-// An Operator whose JWT expired mid-session is refreshed transparently and the
-// account is still created, in the same round trip.
+// An Operator whose JWT expired mid-session is refreshed transparently and the account is still created, in the same round trip.
 func TestExpiredOperatorSessionRefreshesThenCreates(t *testing.T) {
 	t.Parallel()
 

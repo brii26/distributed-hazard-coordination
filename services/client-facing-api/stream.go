@@ -11,13 +11,10 @@ import (
 	"time"
 )
 
-// maxStreams caps open streams. They are exempt from capInflight (a long-lived
-// stream would hold a slot for its whole life), so they get their own cap.
+// Caps open streams. They skip capInflight (a long-lived stream would hold a slot for its whole life), so they get their own cap.
 const maxStreams = 500
 
-// streamAPI is GET /hazards/stream?type=: the Dashboard Updater's event stream
-// (doc/TRD_M1.md 9), behind the same JWT middleware and role filtering as
-// GET /hazards. It is the only public way to that stream.
+// GET /hazards/stream?type=: the Dashboard Updater's event stream, behind the same JWT middleware and role filtering as GET /hazards. The only public way to that stream.
 type streamAPI struct {
 	upstream string // DASHBOARD_UPDATER_URL, e.g. http://dashboard-updater:8093
 	client   *http.Client
@@ -26,7 +23,6 @@ type streamAPI struct {
 }
 
 func newStreamAPI(upstream string) streamAPI {
-	// No client Timeout: it would cut the stream. The request context ends it.
 	return streamAPI{upstream: strings.TrimRight(upstream, "/"), client: &http.Client{}, slots: make(chan struct{}, maxStreams), now: time.Now}
 }
 
@@ -51,14 +47,12 @@ func (s streamAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil { // the server's WriteTimeout would cut the stream
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errBody("streaming unsupported"))
 
 		return
 	}
 
-	// The stream ends when the session's token does: the browser reconnects, and
-	// the middleware then refreshes it or answers 401. An expired session cannot keep a stream.
 	ctx, cancel := context.WithTimeout(r.Context(), time.Unix(claims.Exp, 0).Sub(s.now()))
 	defer cancel()
 
@@ -83,11 +77,11 @@ func (s streamAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	defer func() { _ = resp.Body.Close() }()
 
-	fields := fieldsFor(claims.Role) // role filtering, same as GET /hazards
+	fields := fieldsFor(claims.Role)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no") // nginx must not hold the frames back
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprint(w, ": open\n\n")
 	_ = rc.Flush()
@@ -99,8 +93,7 @@ func (s streamAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logFor(r.Context()).Info("hazards stream", "role", claims.Role, "type", typ, "result", "closed")
 }
 
-// relay copies the upstream frames to the client, keeping the events of one type
-// and only the fields the role may see, until either side ends.
+// Copies upstream frames to the client, keeping one type's events and only the fields the role may see, until either side ends.
 func relay(w http.ResponseWriter, rc *http.ResponseController, body io.Reader, typ string, fields []string) {
 	var err error
 
@@ -119,7 +112,7 @@ func relay(w http.ResponseWriter, rc *http.ResponseController, body io.Reader, t
 
 			out, _ := json.Marshal(project(e, fields))
 			_, err = fmt.Fprintf(w, "data: %s\n\n", out)
-		case line == ": keep-alive": // passed on so the browser and proxies see traffic
+		case line == ": keep-alive":
 			_, err = fmt.Fprint(w, line+"\n\n")
 		default:
 			continue

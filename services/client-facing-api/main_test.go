@@ -16,7 +16,7 @@ import (
 	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpb"
 )
 
-// fakeAggregator answers GetHealth with a fixed status, or an error as when it is unreachable.
+// Answers GetHealth with a fixed status, or an error as when it is unreachable.
 type fakeAggregator struct {
 	aggregatorpb.AggregatorClient
 
@@ -34,7 +34,7 @@ func (f fakeAggregator) GetHealth(context.Context, *emptypb.Empty, ...grpc.CallO
 	return &aggregatorpb.HealthStatus{Status: f.status}, f.err
 }
 
-// listener opens a local TCP port and returns its address, so the Auth Service can be "up".
+// Opens a local TCP port and returns its address, so the Auth Service can be "up".
 func listener(t *testing.T) string {
 	t.Helper()
 
@@ -48,7 +48,7 @@ func listener(t *testing.T) string {
 	return lis.Addr().String()
 }
 
-// closedAddr is a local address nothing listens on: a port that was just released.
+// A local address nothing listens on, a port that was just released.
 func closedAddr(t *testing.T) string {
 	t.Helper()
 

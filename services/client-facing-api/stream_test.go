@@ -11,8 +11,7 @@ import (
 	"time"
 )
 
-// upstreamStream is a Dashboard Updater that sends one seismic and one volcanic
-// event, then ends the stream.
+// A Dashboard Updater that sends one seismic and one volcanic event, then ends the stream.
 func upstreamStream() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, ": open\n\n")
@@ -21,7 +20,7 @@ func upstreamStream() *httptest.Server {
 	}))
 }
 
-// openStream asks for /hazards/stream as role, with a session that expires in exp.
+// Asks for /hazards/stream as role, with a session that expires in exp.
 func openStream(t *testing.T, upstream, role, query string, exp time.Duration) (code int, body string) {
 	t.Helper()
 
@@ -31,7 +30,7 @@ func openStream(t *testing.T, upstream, role, query string, exp time.Duration) (
 		api.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey{}, claims)))
 	})
 
-	srv := httptest.NewServer(withCorrelation(h)) // the real wrapper, which must stay flushable
+	srv := httptest.NewServer(withCorrelation(h))
 	t.Cleanup(srv.Close)
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL+"/hazards/stream?"+query, nil)
@@ -88,7 +87,6 @@ func TestStreamRejectsABadType(t *testing.T) {
 func TestStreamEndsWhenTheSessionExpires(t *testing.T) {
 	t.Parallel()
 
-	// An upstream that never ends: only the token's expiry can close the stream.
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprint(w, ": open\n\n")
 		_ = http.NewResponseController(w).Flush()

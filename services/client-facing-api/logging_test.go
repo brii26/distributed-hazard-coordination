@@ -56,7 +56,7 @@ func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 
 	for _, err := range []error{
 		nil,
-		status.Error(codes.Unauthenticated, "invalid credentials"), // an answer, not a failed call
+		status.Error(codes.Unauthenticated, "invalid credentials"),
 		status.Error(codes.Unavailable, "connection refused"),
 		status.Error(codes.DeadlineExceeded, "too slow"),
 	} {
@@ -98,8 +98,7 @@ func TestEveryGRPCCallIsLoggedWithTargetDurationAndStatus(t *testing.T) {
 	}
 }
 
-// serveWithCorrelation runs one request through the correlation middleware and
-// returns the response and the log lines it produced.
+// Runs one request through the correlation middleware and returns the response and its log lines.
 const clientID = "client-abc-123"
 
 func serveWithCorrelation(t *testing.T, header string, inner http.Handler) (*httptest.ResponseRecorder, []map[string]any) {

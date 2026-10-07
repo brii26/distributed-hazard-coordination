@@ -13,9 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// setupTracing sends spans to the OTLP endpoint in OTEL_EXPORTER_OTLP_ENDPOINT when
-// TRACING_ENABLED=true; otherwise tracing stays the no-op default. Export is batched
-// and asynchronous, so a Jaeger that is down costs a request nothing (#116).
+// Sends spans to OTLP when TRACING_ENABLED=true, otherwise a no-op. Export is batched and async, so a Jaeger that is down costs a request nothing.
 func setupTracing(ctx context.Context) (shutdown func(context.Context) error, err error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
@@ -37,9 +35,7 @@ func setupTracing(ctx context.Context) (shutdown func(context.Context) error, er
 	return tp.Shutdown, nil
 }
 
-// traceIDOf is the trace ID in ctx as 32 hex characters, or "" when there is none.
-// With tracing on it doubles as the correlation ID, so a log line's correlation_id
-// is the Jaeger trace ID.
+// Trace ID in ctx (32 hex) or "". With tracing on it is also the correlation ID.
 func traceIDOf(ctx context.Context) string {
 	if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
 		return sc.TraceID().String()

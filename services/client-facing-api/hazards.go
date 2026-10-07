@@ -19,8 +19,7 @@ import (
 	"github.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpb"
 )
 
-// The two field classes of doc/TRD_M1.md 4: every role sees the summary, only
-// Tim Lapangan and BNPB Ops see the raw fields.
+// The two field classes: every role sees the summary, only Tim Lapangan and BNPB Ops see the raw fields.
 var (
 	summaryFields = []string{"hazard_id", "source", "hazard_type", "severity", "area_name", "occurred_at", "ingested_at"}
 	rawFields     = []string{"source_ref_id", "latitude", "longitude", "attributes"}
@@ -34,19 +33,16 @@ func fieldsFor(role string) []string {
 	return append(slices.Clone(summaryFields), rawFields...)
 }
 
-// hazardsAPI is GET /hazards: the Aggregator's GetHazards, filtered per role
-// server-side. It sits behind the JWT middleware, so the caller's claims are set.
+// GET /hazards: the Aggregator's GetHazards, filtered per role. Sits behind the JWT middleware, so claims are set.
 type hazardsAPI struct {
 	agg     aggregatorpb.AggregatorClient
 	timeout time.Duration // UPSTREAM_TIMEOUT_MS
 }
 
-// errFieldForbidden is a raw field asked for by a role that may not see it.
+// A raw field asked for by a role that may not see it.
 var errFieldForbidden = errors.New("field not available to this role")
 
-// requestedFields resolves ?fields= for a role. Empty means every field the role
-// may see. An unknown field is an error; a raw field asked for explicitly by a
-// Media caller is refused outright (TRD 4), not silently dropped.
+// Resolves ?fields= for a role. Empty means every field the role may see. An unknown field is an error, and a raw field asked for explicitly by Media is refused, not dropped.
 func requestedFields(raw, role string) ([]string, error) {
 	allowed := fieldsFor(role)
 	if raw == "" {
@@ -73,16 +69,14 @@ func requestedFields(raw, role string) ([]string, error) {
 	return out, nil
 }
 
-// Paging of GET /hazards: the page size a caller gets without asking, and the most it
-// may ask for, so one response never carries the whole table.
+// Paging of GET /hazards: the default page size and the max, so one response never carries the whole table.
 const (
 	defaultLimit = 25
 	maxLimit     = 100
 	maxQueryLen  = 100
 )
 
-// pageParams reads and checks ?limit=, ?offset=, ?severity= and ?q=. Anything out
-// of range is a 400 here, so the Aggregator only ever sees sane values.
+// Reads and checks ?limit=, ?offset=, ?severity= and ?q=. Out of range is a 400, so the Aggregator only sees sane values.
 func pageParams(v url.Values) (limit, offset int32, severity, search string, err error) {
 	limit = defaultLimit
 
@@ -152,8 +146,6 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
 	defer cancel()
 
-	// The role travels as gRPC metadata, never as a message field (TRD 0.0); the
-	// correlation ID is added by the connection's interceptor (logOutbound).
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-client-role", claims.Role)
 
 	resp, err := h.agg.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{
@@ -177,11 +169,10 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// hazardsFailed maps the Aggregator's status to the client (TRD 3.3, 3.4).
+// Maps the Aggregator's status to the client.
 func hazardsFailed(ctx context.Context, w http.ResponseWriter, err error) {
 	switch status.Code(err) { //nolint:exhaustive // every other code is the default 502
 	case codes.Unavailable:
-		// The source is down and nothing is stored: an explicit 503, not a 500 or a hang.
 		writeJSON(w, http.StatusServiceUnavailable, errBody("no data available: "+status.Convert(err).Message()))
 	case codes.ResourceExhausted:
 		w.Header().Set("Retry-After", "1")
@@ -203,7 +194,7 @@ func hazardsFailed(ctx context.Context, w http.ResponseWriter, err error) {
 	}
 }
 
-// eventJSON renders a HazardEvent with null for what the source did not give.
+// Renders a HazardEvent with null for what the source didn't give.
 func eventJSON(e *aggregatorpb.HazardEvent) map[string]any {
 	var attrs map[string]any
 	if e.GetAttributes() != nil {
@@ -225,7 +216,7 @@ func eventJSON(e *aggregatorpb.HazardEvent) map[string]any {
 	}
 }
 
-// optional turns a proto3 optional field into its value, or nil (JSON null).
+// Turns a proto3 optional field into its value, or nil (JSON null).
 func optional[T any](p *T) any {
 	if p == nil {
 		return nil
@@ -243,7 +234,7 @@ func project(event map[string]any, fields []string) map[string]any {
 	return out
 }
 
-// metaJSON is the source state envelope of TRD 3.3.
+// The source state envelope.
 func metaJSON(m *aggregatorpb.ResponseMeta) map[string]any {
 	ts := func(set bool, t time.Time) any {
 		if !set {
