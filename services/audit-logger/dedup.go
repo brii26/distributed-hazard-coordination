@@ -12,22 +12,17 @@ import (
 	"sync"
 )
 
-// dedupKey is (hazard_id, severity), not hazard_id alone, so an escalation of the
-// same event (SIAGA to AWAS) is logged again, not skipped (doc/TRD_M1.md 8.2, 8.3).
+// Dedup key is (hazard_id, severity), so an escalation like SIAGA to AWAS is logged again.
 type dedupKey struct{ hazardID, severity string }
 
-// dedupStore keeps the processed keys on disk and in memory. It is loaded once at
-// start and checked in memory; record writes to disk before memory, so a key is
-// only ever considered seen once it is safely on disk.
+// Keeps processed keys on disk and in memory. Loaded once at start, record writes to disk first so a key only counts as seen once it is safe.
 type dedupStore struct {
 	mu   sync.Mutex
 	seen map[dedupKey]bool
 	file *os.File
 }
 
-// openDedup loads path (one "hazard_id<TAB>severity" line per record) and opens it
-// for appending, creating it and its directory on first start. A line cut short by
-// a crash is skipped: its message was never acked, so it will come back.
+// Loads path (one "hazard_id<TAB>severity" line per record) and opens it for appending. A line cut off by a crash is skipped, its message was never acked.
 func openDedup(path string) (*dedupStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
@@ -76,7 +71,7 @@ func (d *dedupStore) has(k dedupKey) bool {
 	return d.seen[k]
 }
 
-// record appends k and syncs it to disk, then remembers it in memory.
+// Appends k, syncs to disk, then remembers it in memory.
 func (d *dedupStore) record(k dedupKey) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

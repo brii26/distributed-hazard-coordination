@@ -10,8 +10,7 @@ import (
 
 const serviceName = "audit-logger"
 
-// newLogger returns a JSON logger with the field names doc/TRD_M1.md 0.3
-// requires: timestamp, level, service, correlation_id, message (same as bmkg-mock).
+// JSON logger with the required field names.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -35,20 +34,17 @@ func newLogger(w io.Writer) *slog.Logger {
 	return slog.New(h).With("service", serviceName)
 }
 
-// setupLogging makes w the one log output, with the stdlib log package routed
-// through the JSON logger, so a plain log.Printf is a JSON line too, with
-// correlation_id "-" until it has one (#34).
+// Makes w the one log output, stdlib log goes through it too with correlation_id "-".
 func setupLogging(w io.Writer) {
 	l := newLogger(w)
 	base.Store(l)
 	slog.SetDefault(l.With("correlation_id", "-"))
 }
 
-// base is the logger without a correlation_id, so withID can add the right one.
+// Logger without a correlation_id, so withID can add the right one.
 var base atomic.Pointer[slog.Logger]
 
-// withID is the logger for one message's correlation ID, the AMQP correlation_id
-// property the Aggregator set from its poll cycle ("-" when a message has none).
+// Logger for one message's correlation ID, from the AMQP property ("-" if none).
 func withID(id string) *slog.Logger {
 	if id == "" {
 		id = "-"
@@ -57,5 +53,4 @@ func withID(id string) *slog.Logger {
 	return base.Load().With("correlation_id", id)
 }
 
-// Installed at start-up, before main, so every line from the first one is JSON.
 func init() { setupLogging(os.Stdout) }
