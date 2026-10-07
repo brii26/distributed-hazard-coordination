@@ -8,15 +8,12 @@ import (
 )
 
 const (
-	// subBuffer is how many events one subscriber may fall behind before it is cut off.
+	// Max events one subscriber may fall behind before it is cut off.
 	subBuffer = 64
 	keepAlive = 15 * time.Second
 )
 
-// hub fans each upserted event out to the connected streams (doc/TRD_M1.md 8.1).
-// publish never blocks: a subscriber whose buffer is full is dropped, so one slow
-// or dead client cannot slow the consumer or the other clients. It reconnects and
-// refetches, so a dropped event is not lost to it.
+// Fans each upserted event out to the connected streams. publish never blocks: a subscriber with a full buffer is dropped, so one slow client can't hold up the consumer or the others. It reconnects and refetches.
 type hub struct {
 	mu   sync.Mutex
 	subs map[chan []byte]struct{}
@@ -58,11 +55,9 @@ func (h *hub) publish(body []byte) {
 	}
 }
 
-// stream is GET /stream: one Server-Sent Events frame per event, the full
-// HazardEvent as JSON. It is internal; the Client-Facing API filters it by role.
+// GET /stream: one Server-Sent Events frame per event, the full HazardEvent as JSON. Internal, the Client-Facing API filters it by role.
 func (h *hub) stream(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
-	// The server's WriteTimeout would cut a stream that is meant to stay open.
 	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 
@@ -89,7 +84,7 @@ func (h *hub) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		case body, ok := <-ch:
 			if !ok {
-				return // dropped as too slow
+				return
 			}
 
 			_, err = fmt.Fprintf(w, "data: %s\n\n", body)

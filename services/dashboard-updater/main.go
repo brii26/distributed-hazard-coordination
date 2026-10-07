@@ -1,5 +1,4 @@
-// Command dashboard-updater consumes HazardEvents from the fanout exchange and
-// keeps the internal dashboard's in-memory view (doc/TRD_M1.md 8.1).
+// Command dashboard-updater consumes HazardEvents from the fanout exchange and keeps the internal dashboard's in-memory view.
 package main
 
 import (
@@ -34,9 +33,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	}
 }
 
-// healthHandler is liveness plus the broker connection (doc/TRD_M1.md 8). Without
-// the broker the service still serves its last known state, so that is
-// "degraded", still a 200.
+// Liveness plus the broker connection. Without the broker it still serves its last known state, so "degraded" and still 200.
 func healthHandler(connected func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		status, rabbit := "ok", "connected"
@@ -60,8 +57,7 @@ func newMux(s *state, connected func() bool) *http.ServeMux {
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the HEALTH_PORT env var),
-// falling back to defaultPort when raw is empty.
+// Validates a port from HEALTH_PORT, defaultPort if empty.
 func resolvePort(raw string) (string, error) {
 	if raw == "" {
 		raw = defaultPort
@@ -119,8 +115,6 @@ func run() error {
 		c.run(ctx)
 	}()
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		return err
@@ -150,7 +144,7 @@ func run() error {
 		return err
 	}
 
-	<-done // unacked deliveries go back to the queue when the connection closes
+	<-done
 
 	return nil
 }
