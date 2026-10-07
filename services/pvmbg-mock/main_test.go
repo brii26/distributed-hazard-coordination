@@ -65,14 +65,19 @@ func TestOutageToggle(t *testing.T) {
 		t.Fatalf("during outage: expected 503, got %d", rec.Code)
 	}
 
-	if rec := do(http.MethodGet, "/health"); rec.Code != http.StatusOK {
-		t.Fatalf("health during outage: got %d", rec.Code)
+	rec := do(http.MethodGet, "/health")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"outage_active":true`) {
+		t.Fatalf("health during outage: got %d %s", rec.Code, rec.Body.String())
 	}
 
 	do(http.MethodPost, "/admin/outage")
 
 	if rec := do(http.MethodGet, "/volcanic-reports"); rec.Code == http.StatusServiceUnavailable {
 		t.Fatal("outage should be cleared after second toggle")
+	}
+
+	if rec := do(http.MethodGet, "/health"); !strings.Contains(rec.Body.String(), `"outage_active":false`) {
+		t.Fatalf("health after outage: %s", rec.Body.String())
 	}
 }
 

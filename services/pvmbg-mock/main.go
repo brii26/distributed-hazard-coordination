@@ -23,12 +23,14 @@ var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+	body := map[string]any{"status": "ok", "outage_active": outageActive.Load()}
+
+	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Printf("failed to write health response: %v", err)
 	}
 }
 
-// Makes /volcanic-reports fail fast with 503 (no hang, no auto-recovery). /health still says ok, only the simulated upstream is down.
+// Makes /volcanic-reports fail fast with 503 (no hang, no auto-recovery). /health stays 200 and reports outage_active, only the simulated upstream is down.
 var outageActive atomic.Bool
 
 func outageHandler(w http.ResponseWriter, _ *http.Request) {
