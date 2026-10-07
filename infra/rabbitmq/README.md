@@ -1,11 +1,11 @@
 # RabbitMQ topology
 
-`definitions.json` is loaded at broker start (`rabbitmq.conf`) and declares:
+`definitions.json.tpl` is rendered at container start by `render-definitions.sh` (the user and password come from `RABBITMQ_USER` and `RABBITMQ_PASSWORD`, so nothing is committed), loaded from `/tmp/definitions.json` (`rabbitmq.conf`) and declares:
 
-- the `guest` user (loading definitions suppresses RabbitMQ's default user, and every service connects as `guest:guest`), and
+- the broker user (loading definitions suppresses RabbitMQ's default user, so it is declared here and every service connects with it), and
 - one durable **fanout** exchange, `hazard.events` (TRD section 7).
 
-`RABBITMQ_EXCHANGE` must equal that name. The definitions file is static, so renaming the exchange means editing it too.
+`RABBITMQ_EXCHANGE` must equal that name. The template is otherwise static, so renaming the exchange means editing it too. Use a password without `|` or `&`, which the `sed` render would misread.
 
 ## Conventions
 

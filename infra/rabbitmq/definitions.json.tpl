@@ -1,9 +1,8 @@
 {
   "users": [
     {
-      "name": "guest",
-      "password_hash": "ChssPYAaTQZZ9LqZoubibmBISBv5Jrti0dvv7EYbjXWpS0+X",
-      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "name": "__RABBITMQ_USER__",
+      "password": "__RABBITMQ_PASSWORD__",
       "tags": [
         "administrator"
       ]
@@ -16,7 +15,7 @@
   ],
   "permissions": [
     {
-      "user": "guest",
+      "user": "__RABBITMQ_USER__",
       "vhost": "/",
       "configure": ".*",
       "write": ".*",
