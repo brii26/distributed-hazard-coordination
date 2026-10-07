@@ -90,6 +90,12 @@ func newAuthAPI() (*authAPI, error) {
 		return nil, err
 	}
 
+	authRPS, err := envPositiveInt("AUTH_RATE_LIMIT_RPS", defaultAuthRPS)
+	if err != nil {
+		return nil, err
+	}
+
+	api.ipLimiter = newRateLimiter(authRPS)
 	api.verifier = newJWTVerifier([]byte(secret)).withRefresh(api)
 	api.verifier.limiter = newRateLimiter(rps)
 

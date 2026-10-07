@@ -31,17 +31,28 @@ type authAPI struct {
 	// verifier protects the routes that need a logged-in caller. When nil those
 	// routes are not registered.
 	verifier *jwtVerifier
+
+	// ipLimiter throttles login and register per client IP; nil means no limit.
+	ipLimiter *rateLimiter
 }
 
 func (a *authAPI) register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /auth/login", a.login)
+	mux.Handle("POST /auth/login", a.throttled(a.login))
 	mux.HandleFunc("POST /auth/logout", a.logout)
-	mux.HandleFunc("POST /auth/register", a.signup)
+	mux.Handle("POST /auth/register", a.throttled(a.signup))
 
 	if a.verifier != nil {
 		mux.Handle("GET /me", a.verifier.require(http.HandlerFunc(me)))
 		mux.Handle("POST /accounts", a.verifier.require(http.HandlerFunc(a.createAccount)))
 	}
+}
+
+func (a *authAPI) throttled(h http.HandlerFunc) http.Handler {
+	if a.ipLimiter == nil {
+		return h
+	}
+
+	return a.ipLimiter.byIP(h)
 }
 
 // setCookie sets a cookie that scripts can't read (HttpOnly). With maxAge 0 it is

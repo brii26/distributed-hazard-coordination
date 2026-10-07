@@ -229,3 +229,40 @@ func TestAuthRoutesOnlyAcceptPost(t *testing.T) {
 		t.Fatalf("expected 405, got %d", rec.Code)
 	}
 }
+
+func TestLoginAndRegisterAreThrottledPerIP(t *testing.T) {
+	t.Parallel()
+
+	f := fakeAuth{
+		login: func(*authpb.LoginRequest) (*authpb.TokenResponse, error) {
+			return nil, status.Error(codes.Unauthenticated, "no")
+		},
+		register: func(*authpb.RegisterRequest) error { return nil },
+	}
+	mux := newMux(&authAPI{auth: f, timeout: time.Second, secure: true, ipLimiter: newRateLimiter(2)})
+
+	post := func(path, addr string) int {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{"email":"a@x.example","password":"bad"}`))
+		req.RemoteAddr = addr
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		return rec.Code
+	}
+
+	for range 2 {
+		if code := post("/auth/login", "10.0.0.1:1111"); code == http.StatusTooManyRequests {
+			t.Fatalf("throttled inside the burst")
+		}
+	}
+
+	for _, path := range []string{"/auth/login", "/auth/register"} {
+		if code := post(path, "10.0.0.1:2222"); code != http.StatusTooManyRequests { // new port, same IP
+			t.Fatalf("%s: got %d, want 429", path, code)
+		}
+	}
+
+	if code := post("/auth/login", "10.0.0.2:1111"); code == http.StatusTooManyRequests {
+		t.Fatal("one IP's flood throttled another")
+	}
+}
