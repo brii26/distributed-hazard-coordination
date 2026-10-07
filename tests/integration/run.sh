@@ -16,13 +16,14 @@ root=$PWD
 project=hazard-it
 compose="docker compose -p $project --env-file $root/.env.example -f $root/docker-compose.yml -f $root/tests/integration/compose.override.yml"
 
+# shellcheck disable=SC1091
+set -a; . ./.env.example; set +a
 export CLIENT_FACING_API_PORT=18080 BMKG_PORT=18081 PVMBG_PORT=18082
 
 export POLL_INTERVAL_MS=500 POLL_TIMEOUT_MS=2000 CB_FAILURE_THRESHOLD=2 CB_OPEN_DURATION_MS=2000
 export BMKG_DELAY_MIN_MS=10 BMKG_DELAY_MAX_MS=50 PVMBG_DELAY_MIN_MS=10 PVMBG_DELAY_MAX_MS=50
 
-# shellcheck disable=SC1091
-set -a; . ./.env.example; set +a
+export AUTH_RATE_LIMIT_RPS=1000
 export IT_COMPOSE="$compose"
 
 cleanup() { $compose down -v --remove-orphans >/dev/null 2>&1 || true; }

@@ -141,7 +141,7 @@ func (e itEnv) requireAccountRPCs(t *testing.T) {
 	t.Helper()
 
 	accountRPCsOnce.Do(func() {
-		r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-1234"}`, freshEmail("probe")), nil)
+		r := e.do(t, http.MethodPost, "/auth/register", fmt.Sprintf(`{"email":%q,"password":"pw-12345"}`, freshEmail("probe")), nil)
 		if r.code != http.StatusCreated {
 			t.Fatalf("POST /auth/register returned %d %s: the Auth Service seems to lack the Register/CreateAccount RPCs (#13)", r.code, r.body)
 		}

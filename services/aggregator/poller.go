@@ -128,6 +128,8 @@ type sourceClient struct {
 	timeout time.Duration
 	client  *http.Client
 	auth    func(*http.Request) error
+	// Runs on a 401, the credential is no longer good.
+	onUnauthorized func()
 }
 
 // GETs path (with ?since if set) and decodes a JSON array of objects.
@@ -168,6 +170,10 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized && c.onUnauthorized != nil {
+			c.onUnauthorized()
+		}
+
 		return nil, fmt.Errorf("%s returned status %d", path, resp.StatusCode)
 	}
 
@@ -258,6 +264,7 @@ type pollConfig struct {
 	pvmbgURL          string
 	token             func() string
 	tokenErr          func() error
+	rejectToken       func() // PVMBG answered 401: renew the token now
 }
 
 // Builds the BMKG and PVMBG pollers, each with its own circuit breaker.
@@ -265,7 +272,7 @@ func newPollers(c pollConfig) []*poller {
 	client := &http.Client{}
 
 	bmkg := &sourceClient{baseURL: strings.TrimRight(c.bmkgURL, "/"), timeout: c.timeout, client: client, auth: bmkgAuth(c.bmkgKey)}
-	pvmbg := &sourceClient{baseURL: strings.TrimRight(c.pvmbgURL, "/"), timeout: c.timeout, client: client, auth: pvmbgAuth(c.token)}
+	pvmbg := &sourceClient{baseURL: strings.TrimRight(c.pvmbgURL, "/"), timeout: c.timeout, client: client, auth: pvmbgAuth(c.token), onUnauthorized: c.rejectToken}
 
 	return []*poller{
 		{name: sourceBMKG, interval: c.interval, fetch: bmkgFetch(bmkg), breaker: newBreaker(sourceBMKG, c.cbThreshold, c.cbOpenFor)},

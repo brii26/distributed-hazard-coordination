@@ -77,14 +77,15 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 	}
 
 	c := pollConfig{
-		interval:  ms("POLL_INTERVAL_MS", defaultPollInterval),
-		timeout:   ms("POLL_TIMEOUT_MS", defaultPollTimeout),
-		cbOpenFor: ms("CB_OPEN_DURATION_MS", defaultCBOpenDuration),
-		bmkgURL:   os.Getenv("BMKG_BASE_URL"),
-		bmkgKey:   os.Getenv("BMKG_API_KEY"),
-		pvmbgURL:  tokens.baseURL,
-		token:     tokens.Token,
-		tokenErr:  tokens.LastError,
+		interval:    ms("POLL_INTERVAL_MS", defaultPollInterval),
+		timeout:     ms("POLL_TIMEOUT_MS", defaultPollTimeout),
+		cbOpenFor:   ms("CB_OPEN_DURATION_MS", defaultCBOpenDuration),
+		bmkgURL:     os.Getenv("BMKG_BASE_URL"),
+		bmkgKey:     os.Getenv("BMKG_API_KEY"),
+		pvmbgURL:    tokens.baseURL,
+		token:       tokens.Token,
+		tokenErr:    tokens.LastError,
+		rejectToken: tokens.Reject,
 	}
 
 	var err error

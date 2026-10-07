@@ -48,6 +48,7 @@ type tokenManager struct {
 	path         string
 	client       *http.Client
 	retryDelay   time.Duration
+	kick         chan struct{} // Reject wakes run() to renew now
 
 	mu      sync.RWMutex
 	cur     tokenFile
@@ -64,6 +65,7 @@ func newTokenManager(baseURL, clientID, clientSecret, oneTimeCode, path string) 
 		path:         path,
 		client:       &http.Client{Timeout: 5 * time.Second},
 		retryDelay:   defaultRetryDelay,
+		kick:         make(chan struct{}, 1),
 		margin:       defaultRotateMargin,
 	}
 }
@@ -74,6 +76,14 @@ func (m *tokenManager) Token() string {
 	defer m.mu.RUnlock()
 
 	return m.cur.AccessToken
+}
+
+// Called when PVMBG refuses the access token (401). run() renews at once instead of waiting for the next rotation, and calls coalesce.
+func (m *tokenManager) Reject() {
+	select {
+	case m.kick <- struct{}{}:
+	default:
+	}
 }
 
 // Last bootstrap or rotation error (nil after a success). The PVMBG breaker counts it as a failed poll.
@@ -255,6 +265,7 @@ func (m *tokenManager) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(m.nextWait()):
+		case <-m.kick:
 		}
 
 		if m.Token() == "" {
