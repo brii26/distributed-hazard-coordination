@@ -308,3 +308,27 @@ func TestAFailedFallbackKeepsTheStoredToken(t *testing.T) {
 		t.Fatal("a failed fallback must leave the stored pair untouched")
 	}
 }
+
+func TestRejectRenewsTheTokenAtOnce(t *testing.T) {
+	t.Parallel()
+
+	m, _ := newTestManager(t, 3600) // next scheduled rotation is far away
+
+	if err := m.load(); err != nil {
+		t.Fatal(err)
+	}
+
+	go m.run(t.Context())
+
+	m.Reject()
+	m.Reject() // coalesces, never blocks
+
+	deadline := time.Now().Add(3 * time.Second)
+	for m.Token() == firstAccess && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if m.Token() == firstAccess {
+		t.Fatal("a rejected token was not renewed")
+	}
+}

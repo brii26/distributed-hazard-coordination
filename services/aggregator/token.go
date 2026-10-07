@@ -53,6 +53,7 @@ type tokenManager struct {
 	path         string
 	client       *http.Client
 	retryDelay   time.Duration
+	kick         chan struct{} // Reject wakes run() to renew now
 
 	// mu guards cur, margin and lastErr: pollers read Token() while the
 	// rotation goroutine writes.
@@ -71,6 +72,7 @@ func newTokenManager(baseURL, clientID, clientSecret, oneTimeCode, path string) 
 		path:         path,
 		client:       &http.Client{Timeout: 5 * time.Second},
 		retryDelay:   defaultRetryDelay,
+		kick:         make(chan struct{}, 1),
 		margin:       defaultRotateMargin,
 	}
 }
@@ -81,6 +83,16 @@ func (m *tokenManager) Token() string {
 	defer m.mu.RUnlock()
 
 	return m.cur.AccessToken
+}
+
+// Reject says PVMBG refused the current access token (a 401), e.g. because it
+// restarted and forgot it. run() renews at once instead of waiting for the next
+// scheduled rotation, which can be most of a token TTL away. Calls coalesce.
+func (m *tokenManager) Reject() {
+	select {
+	case m.kick <- struct{}{}:
+	default:
+	}
 }
 
 // LastError is the most recent bootstrap/rotation failure, nil after a success.
@@ -275,6 +287,7 @@ func (m *tokenManager) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(m.nextWait()):
+		case <-m.kick:
 		}
 
 		if m.Token() == "" {

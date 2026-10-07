@@ -332,7 +332,10 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 
 	for _, svc := range order {
 		t.Run(svc, func(t *testing.T) {
-			pvmbg := e.count(t, "source='PVMBG'")
+			// Ingest log lines, not rows: a restarted pvmbg-mock numbers its reports from
+			// 1 again, so they upsert over existing rows and the row count stays put.
+			ingested := func() int { return logCount(t, "aggregator", `"message":"ingest"`, `"source":"PVMBG"`) }
+			pvmbg := ingested()
 
 			composeOut(t, "stop", svc)
 
@@ -357,7 +360,7 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 			e.waitHealthy(t, 90*time.Second)
 
 			if svc == svcPVMBG || svc == "aggregator" || svc == "canonical-store" || svc == "rabbitmq" {
-				eventually(t, 45*time.Second, "PVMBG ingest to resume after restarting "+svc, func() bool { return e.count(t, "source='PVMBG'") > pvmbg })
+				eventually(t, 45*time.Second, "PVMBG ingest to resume after restarting "+svc, func() bool { return ingested() > pvmbg })
 			}
 		})
 	}
