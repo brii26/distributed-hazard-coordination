@@ -7,18 +7,27 @@ x-tracing: &tracing
   OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
 
 services:
+  # Jaeger v2: stores traces in memory and turns spans into RED metrics itself (spanmetrics),
+  # which Prometheus scrapes and the Monitor tab reads back (#116). Configs are inline so no
+  # host file's permissions can stop the container reading them.
   jaeger:
-    image: jaegertracing/all-in-one:1.76.0
-    environment:
-      COLLECTOR_OTLP_ENABLED: "true"
-      QUERY_UI_CONFIG: /etc/jaeger/ui-config.json
-    # Inline, so there is no host file whose permissions a container uid could trip on.
-    # themes.enabled shows the dark/light toggle; off, the UI is always light.
+    image: jaegertracing/jaeger:2.22.0
+    command: ["--config", "/etc/jaeger/config.yml"]
     configs:
+      - source: jaeger_config
+        target: /etc/jaeger/config.yml
       - source: jaeger_ui_config
-        target: /etc/jaeger/ui-config.json
+        target: /etc/jaeger/jaeger-ui.json
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
+
+  # Holds only the numbers Jaeger derives from spans. Internal to the compose network, no
+  # published port, no volume: losing it on a restart only empties the charts.
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
 
   bmkg-mock:
     build: ./services/bmkg-mock
@@ -274,9 +283,67 @@ networks:
     internal: true
 
 configs:
+  jaeger_config:
+    content: |
+      service:
+        extensions: [jaeger_storage, jaeger_query]
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [batch]
+            exporters: [jaeger_storage_exporter, spanmetrics]
+          metrics/spanmetrics:
+            receivers: [spanmetrics]
+            exporters: [prometheus]
+        telemetry:
+          logs:
+            level: INFO
+      extensions:
+        jaeger_query:
+          storage:
+            traces: memory_store
+            metrics: prometheus_store
+          ui:
+            config_file: /etc/jaeger/jaeger-ui.json
+        jaeger_storage:
+          backends:
+            memory_store:
+              memory:
+                max_traces: 100000
+          metric_backends:
+            prometheus_store:
+              prometheus:
+                endpoint: http://prometheus:9090
+                normalize_calls: true
+                normalize_duration: true
+      connectors:
+        spanmetrics:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+      processors:
+        batch:
+      exporters:
+        jaeger_storage_exporter:
+          trace_storage: memory_store
+        prometheus:
+          endpoint: 0.0.0.0:8889
+  # themes.enabled shows the dark/light toggle (off, the UI is always light); monitor turns on the Monitor tab.
   jaeger_ui_config:
     content: |
-      {"themes": {"enabled": true}}
+      {"themes": {"enabled": true}, "monitor": {"menuEnabled": true}}
+  prometheus_config:
+    content: |
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: aggregated-trace-metrics
+          static_configs:
+            - targets: ['jaeger:8889']
 
 volumes:
   canonical_store_data:
