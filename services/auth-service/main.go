@@ -92,10 +92,23 @@ func startGRPC(port string, srv *authServer) error {
 	return nil
 }
 
+// Refuses a seed Operator email that login would reject, since that Operator could never log in.
+func checkSeedEmail(raw string) error {
+	if raw != "" && !validEmail(normalizeEmail(raw)) {
+		return fmt.Errorf("SEED_OPERATOR_EMAIL %q is not a valid email address", raw)
+	}
+
+	return nil
+}
+
 func newAuthServer() (*authServer, error) {
 	dbURL, secret, salt := os.Getenv("USER_DB_URL"), os.Getenv("JWT_SIGNING_SECRET"), os.Getenv("SECRET_SALT")
 	if dbURL == "" || secret == "" || salt == "" {
 		return nil, errors.New("USER_DB_URL, JWT_SIGNING_SECRET and SECRET_SALT must be set")
+	}
+
+	if err := checkSeedEmail(os.Getenv("SEED_OPERATOR_EMAIL")); err != nil {
+		return nil, err
 	}
 
 	ttl := defaultTTLSecs
