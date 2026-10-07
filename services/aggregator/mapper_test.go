@@ -318,7 +318,7 @@ func TestRenamedFieldIsOldNullPlusNewInAttributes(t *testing.T) {
 	t.Parallel()
 
 	q := quake("E1", 5.5)
-	q["region"] = q["region_name"] // the source renamed region_name to region
+	q["region"] = q["region_name"]
 
 	delete(q, "region_name")
 
@@ -340,9 +340,9 @@ func TestRetypedFieldStaysInAttributesUnderTheSameKey(t *testing.T) {
 	t.Parallel()
 
 	q := quake("E1", 0)
-	q["magnitude"] = "6.8"       // was a number
-	q["epicenter_lat"] = "-8.5"  // was a number
-	q["potential_tsunami"] = "1" // was a bool
+	q["magnitude"] = "6.8"
+	q["epicenter_lat"] = "-8.5"
+	q["potential_tsunami"] = "1"
 
 	got, err := testMapper().mapSeismic([]map[string]any{q}, nil)
 	if err != nil || len(got) != 1 {
@@ -382,8 +382,7 @@ func TestSchemaToggleDoesNotNeedACodeChange(t *testing.T) {
 	}
 }
 
-// No source field may disappear: every key is either consumed by a canonical
-// field or present in attributes.
+// tidak boleh ada field source yang hilang: dipakai canonical atau ada di attributes.
 func TestNoSourceFieldIsDropped(t *testing.T) {
 	t.Parallel()
 

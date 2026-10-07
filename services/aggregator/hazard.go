@@ -19,8 +19,7 @@ const (
 	severityAwas    = "AWAS"
 )
 
-// HazardEvent is the canonical record from doc/TRD_M1.md 3.2. Fields a source
-// may not provide are pointers so a missing value serializes as null.
+// record kanonik hazard (TRD 3.2), field yang nggak disediakan source jadi pointer biar keluar null.
 type HazardEvent struct {
 	HazardID    string         `json:"hazard_id"`
 	Source      string         `json:"source"`
@@ -35,12 +34,12 @@ type HazardEvent struct {
 	Attributes  map[string]any `json:"attributes"`
 }
 
-// newHazardID returns a random (version 4) UUID, so no dependency is needed.
+// UUID v4 random, tanpa dependency.
 func newHazardID() string {
 	var b [16]byte
 
 	if _, err := rand.Read(b[:]); err != nil {
-		panic(err) // crypto/rand does not fail on supported platforms
+		panic(err)
 	}
 
 	b[6] = b[6]&0x0f | 0x40

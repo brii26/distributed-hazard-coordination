@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// recorder collects what an ingest did, in order.
+// catat apa yang dikerjakan ingest, berurutan.
 type recorder struct {
 	mu        sync.Mutex
 	upserts   []string
@@ -48,7 +48,7 @@ func (r *recorder) snapshot() (upserts, published []string) {
 
 func always(string) bool { return true }
 
-// volcanicIngest is an ingest over real mapping with the given upsert.
+// ingest dengan mapping asli dan upsert yang diberikan.
 func volcanicIngest(upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) (*ingest, chan pollResult) {
 	ch := make(chan pollResult, 8)
 	m := testMapper()
@@ -96,7 +96,7 @@ func TestIngestSkipsARejectedRecordAndKeepsGoing(t *testing.T) {
 
 	in, ch := volcanicIngest(rec.upsert(always), rec.publish)
 	batch := reports("R1", "R3")
-	batch.records = append([]map[string]any{{"volcano_id": "MERAPI"}}, batch.records...) // no report_id
+	batch.records = append([]map[string]any{{"volcano_id": "MERAPI"}}, batch.records...)
 
 	ch <- batch
 
@@ -145,7 +145,7 @@ func TestSlowSourceDoesNotHoldUpTheOtherIngest(t *testing.T) {
 func TestPollerWaitsOnAFullChannelAndMovesTheCursorOnlyAfterHandoff(t *testing.T) {
 	t.Parallel()
 
-	out := make(chan pollResult) // nobody is reading yet: the channel is full
+	out := make(chan pollResult)
 	cursor := time.Date(2026, 10, 4, 10, 0, 0, 0, time.UTC)
 	p := &poller{name: sourcePVMBG, breaker: testBreaker(), out: out, fetch: func(context.Context, time.Time) (pollResult, error) {
 		return pollResult{records: []map[string]any{{"reported_at": "x"}}, cursor: cursor}, nil
@@ -164,7 +164,7 @@ func TestPollerWaitsOnAFullChannelAndMovesTheCursorOnlyAfterHandoff(t *testing.T
 	case <-time.After(80 * time.Millisecond):
 	}
 
-	<-out // the ingest side takes the batch
+	<-out
 
 	<-done
 
@@ -183,7 +183,7 @@ func TestCursorStaysPutWhenTheBatchWasNeverHandedOver(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	p.pollOnce(ctx) // the channel never frees up and the poller is stopped while waiting
+	p.pollOnce(ctx)
 
 	if !p.since.IsZero() {
 		t.Fatalf("cursor = %v, but nothing was handed over, so it must not have moved", p.since)
@@ -210,7 +210,7 @@ func TestNoBatchIsLostWhenTheIngestIsSlow(t *testing.T) {
 
 	var got []int
 
-	for res := range out { // a slow reader: the poller has to wait for it
+	for res := range out {
 		n, _ := res.records[0]["n"].(float64)
 		got = append(got, int(n))
 
@@ -281,7 +281,7 @@ func TestADataErrorIsNotRetried(t *testing.T) {
 		attempts = append(attempts, h.SourceRefID)
 
 		if h.SourceRefID == "R1" {
-			return false, &pgconn.PgError{Code: "23514"} // check violation
+			return false, &pgconn.PgError{Code: "23514"}
 		}
 
 		return true, nil
@@ -291,7 +291,6 @@ func TestADataErrorIsNotRetried(t *testing.T) {
 
 	close(ch)
 
-	// A deadline so a wrongly retried data error fails the test instead of hanging it.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -318,7 +317,7 @@ func TestShutdownStillWritesWhatTheChannelHolds(t *testing.T) {
 	close(ch)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // stopping already
+	cancel()
 
 	in.run(ctx)
 
@@ -333,7 +332,7 @@ func TestShutdownDuringAnOutageDoesNotHang(t *testing.T) {
 	in, ch := volcanicIngest(func(context.Context, HazardEvent) (bool, error) {
 		return false, errors.New("connection refused")
 	}, func(context.Context, HazardEvent, string) {})
-	in.retryBase, in.retryMax = time.Hour, time.Hour // a retry would wait forever
+	in.retryBase, in.retryMax = time.Hour, time.Hour
 
 	ch <- reports("R1", "R2")
 
@@ -356,8 +355,7 @@ func TestShutdownDuringAnOutageDoesNotHang(t *testing.T) {
 	}
 }
 
-// The whole path against a real Postgres: both sources land in hazard_events,
-// repeated polls add no duplicates, and each record is published once.
+// jalur penuh ke Postgres asli: dua source masuk hazard_events, poll berulang nggak menambah duplikat, tiap record dipublish sekali.
 func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 	t.Parallel()
 
@@ -373,7 +371,6 @@ func TestPipelineWritesBothSourcesWithoutDuplicates(t *testing.T) {
 	warnings := fmt.Sprintf(`[{"warning_id":"W1","related_event_id":"%s-E1","threat_level":"Awas","affected_zones":["Jawa Timur"],"estimated_arrival":"2026-10-04T10:30:00Z"}]`, prefix)
 	volcanic := fmt.Sprintf(`[{"report_id":"%[1]s-R1","volcano_id":"MERAPI","alert_level":"Siaga","eruption_count_24h":4,"ash_column_height_m":900,"reported_at":"2026-10-04T10:02:00Z"}]`, prefix)
 
-	// The fake sources ignore ?since, so every poll returns the same records again.
 	bmkg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/tsunami-warnings" {
 			_, _ = w.Write([]byte(warnings))

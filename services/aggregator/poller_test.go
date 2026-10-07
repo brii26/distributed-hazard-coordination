@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// starts records when each call began and how many ran at once.
+// catat kapan tiap call mulai dan berapa yang jalan bareng.
 type starts struct {
 	mu       sync.Mutex
 	at       []time.Time
@@ -19,7 +19,7 @@ type starts struct {
 	maxSeen  atomic.Int32
 }
 
-// fetch returns a fetch func that takes d per call and records the call.
+// fetch func yang memakan d per call dan mencatatnya.
 func (s *starts) fetch(d time.Duration) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, _ time.Time) (pollResult, error) {
 		s.mu.Lock()
@@ -45,7 +45,7 @@ func (s *starts) fetch(d time.Duration) func(context.Context, time.Time) (pollRe
 	}
 }
 
-// gaps returns the start-to-start spacing of the recorded calls.
+// jarak antar start call yang tercatat.
 func (s *starts) gaps() []time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,12 +58,12 @@ func (s *starts) gaps() []time.Duration {
 	return out
 }
 
-// sink is a channel big enough that a test poller never waits on it.
+// channel yang cukup besar supaya poller test nggak pernah menunggu.
 func sink() chan pollResult {
 	return make(chan pollResult, 256)
 }
 
-// testBreaker is a breaker that never trips, for tests about something else.
+// breaker yang nggak pernah trip, untuk test soal hal lain.
 func testBreaker() *breaker {
 	return newBreaker("test", 1000, time.Hour)
 }
@@ -82,7 +82,7 @@ func TestNextWait(t *testing.T) {
 		{3 * time.Second, 0, 3 * time.Second},
 		{3 * time.Second, time.Second, 2 * time.Second},
 		{3 * time.Second, 3 * time.Second, 0},
-		{3 * time.Second, 4 * time.Second, 0}, // overran: fire at once, no extra wait
+		{3 * time.Second, 4 * time.Second, 0},
 	} {
 		if got := nextWait(c.interval, c.elapsed); got != c.want {
 			t.Fatalf("nextWait(%v, %v) = %v, want %v", c.interval, c.elapsed, got, c.want)
@@ -95,8 +95,6 @@ func TestSlowCallFiresNextImmediatelyWithoutOverlap(t *testing.T) {
 
 	var s starts
 
-	// Each call (150 ms) outlasts the interval (100 ms): the next one must start
-	// right after it, not after another full interval (which would be 250 ms).
 	runFor(&poller{name: "slow", interval: 100 * time.Millisecond, fetch: s.fetch(150 * time.Millisecond), breaker: testBreaker(), out: sink()}, 800*time.Millisecond)
 
 	if s.maxSeen.Load() != 1 {
@@ -120,7 +118,6 @@ func TestWaitIsIntervalMinusCallDuration(t *testing.T) {
 
 	var s starts
 
-	// A 30 ms call in a 100 ms interval: starts stay about 100 ms apart.
 	runFor(&poller{name: "ok", interval: 100 * time.Millisecond, fetch: s.fetch(30 * time.Millisecond), breaker: testBreaker(), out: sink()}, 600*time.Millisecond)
 
 	gaps := s.gaps()
@@ -168,7 +165,7 @@ func TestCallPastTimeoutIsCancelled(t *testing.T) {
 
 	cancelled := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done() // hangs until the client gives up
+		<-r.Context().Done()
 		close(cancelled)
 	}))
 
@@ -176,7 +173,6 @@ func TestCallPastTimeoutIsCancelled(t *testing.T) {
 
 	c := &sourceClient{baseURL: srv.URL, timeout: 50 * time.Millisecond, client: &http.Client{}, auth: bmkgAuth("k")}
 
-	// Guard: a client that ignores its timeout must fail this test, not hang it.
 	guard, stop := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stop()
 
@@ -278,14 +274,12 @@ func TestPVMBGBearerTokenAndFailures(t *testing.T) {
 	c := &sourceClient{baseURL: srv.URL, timeout: time.Second, client: &http.Client{}, auth: pvmbgAuth(func() string { return token })}
 	p := &poller{name: sourcePVMBG, fetch: pvmbgFetch(c, func() error { return nil }), breaker: testBreaker(), out: sink()}
 
-	// No token yet: no request is sent and the cursor stays put.
 	p.pollOnce(context.Background())
 
 	if calls.Load() != 0 || !p.since.IsZero() {
 		t.Fatalf("without a token expected no request, got %d calls", calls.Load())
 	}
 
-	// A rejected token (401) is a failed poll and does not move the cursor.
 	token = "tok"
 
 	code.Store(http.StatusUnauthorized)
@@ -295,7 +289,6 @@ func TestPVMBGBearerTokenAndFailures(t *testing.T) {
 		t.Fatalf("Authorization = %v, since = %v", auth.Load(), p.since)
 	}
 
-	// Success moves the cursor to the newest report.
 	code.Store(http.StatusOK)
 	p.pollOnce(context.Background())
 

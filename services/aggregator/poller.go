@@ -23,47 +23,33 @@ const (
 	maxPollBody         = 8 << 20
 )
 
-// pollResult is what one poll cycle brings back from a source.
+// hasil satu poll cycle dari satu source: records, warnings (BMKG), cursor buat ?since= berikutnya, correlationID, dan span trace-nya.
 type pollResult struct {
-	// records are the source's own records (BMKG seismic events, PVMBG
-	// volcanic reports); warnings are BMKG's tsunami warnings polled with them.
 	records, warnings []map[string]any
-	// cursor is the newest record timestamp seen, used as the next ?since=.
-	// Zero means the poll carried nothing to advance it with.
-	cursor time.Time
-	// correlationID names the poll cycle (doc/TRD_M1.md 0.1); it follows the
-	// records into ingest and out on the broker message.
-	correlationID string
-	// trace is the poll cycle's span, so ingest and the publisher continue its trace.
-	trace trace.SpanContext
+	cursor            time.Time
+	correlationID     string
+	trace             trace.SpanContext
 }
 
-// poller runs one source's polling loop. The loop is a single goroutine that
-// does one call at a time, so there can never be two calls in flight for the
-// same source, and a slow source can only slow its own loop (doc/TRD_M1.md 3.1).
+// loop polling satu source, satu goroutine satu call jadi nggak mungkin ada dua call bareng (TRD 3.1).
 type poller struct {
 	name     string
 	interval time.Duration
 	fetch    func(ctx context.Context, since time.Time) (pollResult, error)
 	breaker  *breaker
-	// out carries each successful poll to this source's ingest goroutine. The
-	// poller is its only writer and closes it on exit, which tells ingest to drain.
-	out chan<- pollResult
+	out      chan<- pollResult
 
-	// since is only touched by the run goroutine.
-	// ponytail: the cursor lives in memory, so a restart re-reads everything
-	// once; the upsert dedup (#21) makes that harmless. It also assumes the
-	// source's timestamps never go backwards.
+	// since cuma disentuh goroutine run.
+	// ponytail: cursor ada di memory, restart baca ulang semuanya sekali (upsert dedup #21 bikin aman) dan mengasumsikan timestamp source nggak mundur.
 	since time.Time
 }
 
-// nextWait is how long to sleep after a call that took elapsed: the rest of the
-// interval, or nothing when the call already used it up (no pile-up, no extra wait).
+// sisa interval setelah call, atau nol kalau call sudah memakan semuanya.
 func nextWait(interval, elapsed time.Duration) time.Duration {
 	return max(interval-elapsed, 0)
 }
 
-// run polls until ctx is done, then closes out.
+// polling sampai ctx selesai lalu tutup out.
 func (p *poller) run(ctx context.Context) {
 	defer close(p.out)
 
@@ -80,12 +66,8 @@ func (p *poller) run(ctx context.Context) {
 	}
 }
 
-// pollOnce makes one call, logs how it ended and hands the records on. Any
-// error, including a timeout, counts as a failed poll; the cursor only moves
-// once the records have been handed over.
+// satu call, log hasilnya, serahkan record. Error apa pun termasuk timeout dihitung gagal dan cursor baru maju setelah record diserahkan.
 func (p *poller) pollOnce(ctx context.Context) {
-	// While the breaker is OPEN the source is left alone; the loop keeps its
-	// rhythm and asks again next cycle.
 	if !p.breaker.allow() {
 		return
 	}
@@ -93,7 +75,6 @@ func (p *poller) pollOnce(ctx context.Context) {
 	ctx, span := tracer.Start(ctx, "poll "+p.name)
 	defer span.End()
 
-	// With tracing on, the trace ID is the correlation ID; otherwise a random UUID is as good as any.
 	id := traceIDOf(ctx)
 	if id == "" {
 		id = newHazardID()
@@ -126,9 +107,7 @@ func (p *poller) pollOnce(ctx context.Context) {
 	}
 }
 
-// handoff sends a poll's records to ingest. A full channel makes it wait rather
-// than drop: the cursor has moved past a dropped batch, which would never be
-// fetched again. So the cursor moves only once the channel accepted the batch.
+// kirim record ke ingest dan menunggu kalau channel penuh, karena batch yang dibuang nggak akan diambil lagi.
 func (p *poller) handoff(ctx context.Context, res pollResult) {
 	if len(res.records)+len(res.warnings) == 0 {
 		return
@@ -143,17 +122,15 @@ func (p *poller) handoff(ctx context.Context, res pollResult) {
 	}
 }
 
-// sourceClient makes the authenticated GETs for one source. Every call gets its
-// own explicit timeout and is cancelled when it expires.
+// GET terautentikasi per source dengan timeout eksplisit tiap call.
 type sourceClient struct {
 	baseURL string
 	timeout time.Duration
 	client  *http.Client
-	// auth adds the source's own credential, or fails when it has none yet.
-	auth func(*http.Request) error
+	auth    func(*http.Request) error
 }
 
-// records GETs path (with ?since when set) and decodes a JSON array of objects.
+// GET path (dengan ?since kalau ada) dan decode JSON array of object.
 func (c *sourceClient) records(ctx context.Context, path string, since time.Time) (_ []map[string]any, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "GET "+c.baseURL+path)
@@ -175,7 +152,6 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-	// The source logs the poll cycle's ID it receives (doc/TRD_M1.md 1, 0.1).
 	if id := correlationOf(ctx); id != "" {
 		req.Header.Set("X-Correlation-ID", id)
 	}
@@ -203,7 +179,7 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 	return out, nil
 }
 
-// newest returns the latest RFC 3339 timestamp stored under key, or zero.
+// timestamp RFC 3339 terbaru di key, atau nol.
 func newest(recs []map[string]any, key string) time.Time {
 	var latest time.Time
 
@@ -217,9 +193,7 @@ func newest(recs []map[string]any, key string) time.Time {
 	return latest
 }
 
-// bmkgFetch polls BMKG: seismic events and tsunami warnings are separate
-// endpoints, correlated later by the mapper (#17), so one poll reads both. The
-// cursor follows the seismic events, which the warnings are filtered by.
+// poll BMKG: seismik dan tsunami warning dua endpoint, dibaca bareng. Cursor mengikuti seismik.
 func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
 		events, err := c.records(ctx, "/seismic-events", since)
@@ -236,9 +210,7 @@ func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, er
 	}
 }
 
-// pvmbgFetch polls PVMBG's volcanic reports.
-// A failing token bootstrap or rotation (tokenErr) is a failed poll too: without
-// a working token PVMBG cannot be polled, and the breaker has to see that.
+// poll laporan vulkanik PVMBG, gagal token (tokenErr) dihitung poll gagal.
 func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
 		if err := tokenErr(); err != nil {
@@ -254,7 +226,7 @@ func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, ti
 	}
 }
 
-// bmkgAuth sends BMKG's static API key.
+// kirim API key statis BMKG.
 func bmkgAuth(key string) func(*http.Request) error {
 	return func(r *http.Request) error {
 		r.Header.Set("X-BMKG-Key", key)
@@ -263,8 +235,7 @@ func bmkgAuth(key string) func(*http.Request) error {
 	}
 }
 
-// pvmbgAuth sends the current OAuth access token. With no token yet the call is
-// not made at all and counts as a failed poll.
+// kirim access token OAuth saat ini, belum ada token berarti call nggak dibuat dan dihitung gagal.
 func pvmbgAuth(token func() string) func(*http.Request) error {
 	return func(r *http.Request) error {
 		t := token()
@@ -278,7 +249,7 @@ func pvmbgAuth(token func() string) func(*http.Request) error {
 	}
 }
 
-// pollConfig is everything newPollers needs, so its call site stays readable.
+// semua yang dibutuhkan newPollers.
 type pollConfig struct {
 	interval, timeout time.Duration
 	cbThreshold       int
@@ -289,7 +260,7 @@ type pollConfig struct {
 	tokenErr          func() error
 }
 
-// newPollers builds the BMKG and PVMBG pollers, each with its own circuit breaker.
+// bangun poller BMKG dan PVMBG, masing-masing dengan circuit breaker sendiri.
 func newPollers(c pollConfig) []*poller {
 	client := &http.Client{}
 

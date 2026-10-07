@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// fakeClock lets tests move time by hand.
+// clock palsu, waktu digeser manual.
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -187,9 +187,7 @@ func TestSourceStatusJSONShape(t *testing.T) {
 	}
 }
 
-// Drives the poller and its breaker together: after enough failed polls the
-// source is not called any more, a trial after the open duration brings it back,
-// and the other source's breaker is never touched.
+// poller dan breaker jalan bareng: gagal berulang menghentikan call, trial setelah open duration memulihkan, breaker source lain nggak tersentuh.
 func TestPollerStopsCallingAnOpenSourceAndRecovers(t *testing.T) {
 	t.Parallel()
 
@@ -259,8 +257,6 @@ func TestBreakerSafeUnderConcurrentUse(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	// One goroutine drives the breaker as the poller does; others read it as the
-	// read API and /health will. -race checks the locking.
 	wg.Go(func() {
 		for i := range 2000 {
 			if b.allow() {

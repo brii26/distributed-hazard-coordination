@@ -112,6 +112,15 @@ A comment earns its place when it explains something the code does not already s
 
 Earning a place says what may stay, never how long it may run. A workaround note is one line about the workaround, not a paragraph about it. The example above is two lines because two facts are real, not because two lines is a target. This list is the most common reason a comment survives a review it should not: the content is legitimately valuable, so the length goes unexamined. Value is not length.
 
+## House Style for This Repo
+
+Applies to every file under the repo root.
+
+- Write comments in casual Indonesian mixed with English technical terms, at most one or two sentences. Say what the thing is for, e.g. `// payload buat polling ke PVMBG`.
+- Describe the mechanism once, in the doc comment on top of the function, e.g. `// function buat polling BMKG tiap N detik, breaker-nya ada di fungsi terpisah`.
+- No comments inside a function body that explain the flow. Exceptions: `ponytail:` notes, `//nolint` reasons, and TODOs that name a task.
+- A block of 3 or more lines (history, race essay, design notes) is too long. Keep the one line reason and move the rest to the PR body or `doc/TRD_M1.md`.
+
 ## Code Comment Checklist
 
 Run these alongside the core Delivery Gate when the task touches comments. All answers must be **yes**:
@@ -126,3 +135,4 @@ Run these alongside the core Delivery Gate when the task touches comments. All a
 - [ ] Is every comment one line, or two only when the second carries a new fact?
 - [ ] Do the remaining comments read short, natural, and in sentence case?
 - [ ] Is the scope guardrail held: only comments changed, the code untouched?
+- [ ] House style held: casual Indonesian-English, one or two sentences, mechanism only in the doc comment above the function, none inside the body?

@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// syncBuffer is a bytes.Buffer safe to write from several goroutines.
+// bytes.Buffer yang aman ditulis banyak goroutine.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -35,7 +35,7 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// captureLogs sends all logging to a buffer for the test and back to stdout after.
+// arahkan semua log ke buffer selama test, balik ke stdout sesudahnya.
 func captureLogs(t *testing.T) *syncBuffer {
 	t.Helper()
 
@@ -47,8 +47,7 @@ func captureLogs(t *testing.T) *syncBuffer {
 	return &buf
 }
 
-// jsonLines parses every line, failing on anything that is not JSON with the
-// doc/TRD_M1.md 0.3 fields.
+// parse tiap baris, gagal kalau bukan JSON dengan field TRD 0.3.
 func jsonLines(t *testing.T, out string) []map[string]any {
 	t.Helper()
 

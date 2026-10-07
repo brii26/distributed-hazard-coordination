@@ -1,5 +1,4 @@
-// Command aggregator is a scaffold for the aggregator service.
-// See doc/TRD_M1.md for the full specification this service must implement.
+// Command aggregator: polling BMKG dan PVMBG, simpan ke Canonical Store, publish ke broker (doc/TRD_M1.md).
 package main
 
 import (
@@ -28,8 +27,7 @@ const (
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-// newMux is the REST side, on its own port apart from gRPC (doc/TRD_M1.md 0.0), so
-// compose's wget healthcheck works and the gRPC concurrency cap never starves it.
+// sisi REST di port sendiri terpisah dari gRPC (TRD 0.0), biar healthcheck nggak ikut kena concurrency cap.
 func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.healthHandler)
@@ -37,8 +35,7 @@ func newMux(api *readAPI) *http.ServeMux {
 	return mux
 }
 
-// resolvePort validates a raw port value (as read from the HEALTH_PORT or GRPC_PORT env
-// var), falling back to def when raw is empty.
+// validasi port dari env, pakai def kalau kosong.
 func resolvePort(raw, def string) (string, error) {
 	if raw == "" {
 		raw = def
@@ -51,7 +48,7 @@ func resolvePort(raw, def string) (string, error) {
 	return raw, nil
 }
 
-// envPositiveInt reads a positive integer env var, falling back to def when unset.
+// baca env integer positif, pakai def kalau kosong.
 func envPositiveInt(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -66,12 +63,10 @@ func envPositiveInt(name string, def int) (int, error) {
 	return n, nil
 }
 
-// loadPollConfig reads the polling and circuit breaker settings from the
-// environment and takes the PVMBG credentials from the token manager.
+// baca setting polling dan circuit breaker dari env, kredensial PVMBG dari token manager.
 func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 	var firstErr error
 
-	// ms reads a positive millisecond env var as a Duration, remembering the first error.
 	ms := func(name string, def time.Duration) time.Duration {
 		n, err := envPositiveInt(name, int(def/time.Millisecond))
 		if err != nil && firstErr == nil {
@@ -110,8 +105,7 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 
 const defaultDBPoolSize = 20
 
-// loadStore opens the Canonical Store from DATABASE_URL with DB_POOL_SIZE connections.
-// An unreachable database stops the service at start; compose waits for it to be healthy.
+// buka Canonical Store dari DATABASE_URL, DB unreachable menghentikan service saat start.
 func loadStore() (*store, error) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -126,8 +120,7 @@ func loadStore() (*store, error) {
 	return openStore(url, poolSize)
 }
 
-// startReadAPI binds the gRPC read API on GRPC_PORT, so a taken port stops the
-// service at start. MAX_INFLIGHT_REQUESTS caps its concurrent requests.
+// bind gRPC read API di GRPC_PORT, port terpakai menghentikan service saat start.
 func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*readAPI, *grpc.Server, net.Listener, error) {
 	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
 	if err != nil {
@@ -159,15 +152,13 @@ func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*rea
 	return api, newGRPCServer(api), lis, nil
 }
 
-// run starts the Aggregator and returns when it has stopped or failed to start.
+// jalanin Aggregator sampai berhenti atau gagal start.
 func run() error { //nolint:gocyclo // start-up wiring, one step after another
 	port, err := resolvePort(os.Getenv("HEALTH_PORT"), defaultPort)
 	if err != nil {
 		return err
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		return err
@@ -185,11 +176,8 @@ func run() error { //nolint:gocyclo // start-up wiring, one step after another
 		return errors.New("PVMBG_BASE_URL, PVMBG_OAUTH_CLIENT_ID, PVMBG_OAUTH_CLIENT_SECRET and PVMBG_TOKEN_VOLUME_PATH must be set")
 	}
 
-	// A failed bootstrap must not stop the service (BMKG still works): run()
-	// keeps retrying and the failure shows up through LastError().
 	_ = tokens.load()
 
-	// On SIGINT or SIGTERM the pollers stop and ingest writes what it holds.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -224,13 +212,10 @@ func run() error { //nolint:gocyclo // start-up wiring, one step after another
 
 	defer func() { _ = db.close() }()
 
-	// One poller and one ingest goroutine per source; both share the one pool.
 	var wg sync.WaitGroup
 
 	breakers := map[string]*breaker{}
 
-	// The publisher outlives the pipelines, so events they hand over while draining
-	// at shutdown still get their flush attempt.
 	pubCtx, stopPub := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopPub()
 
@@ -284,9 +269,9 @@ func run() error { //nolint:gocyclo // start-up wiring, one step after another
 		return err
 	}
 
-	wg.Wait() // the pipelines have drained
+	wg.Wait()
 	stopPub()
-	pubWG.Wait() // the publisher has flushed what it could
+	pubWG.Wait()
 	log.Print("aggregator stopped")
 
 	return nil

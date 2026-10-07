@@ -13,15 +13,12 @@ import (
 
 const serviceName = "aggregator"
 
-// base is the JSON logger every line goes through (see withID, logCall). Atomic
-// because setupLogging may swap it while other goroutines log.
+// logger JSON yang dipakai semua log, atomic karena setupLogging bisa swap saat goroutine lain nulis.
 var base atomic.Pointer[slog.Logger]
 
-// Installed at start-up, before main, so every line from the first one is JSON.
 func init() { setupLogging(os.Stdout) }
 
-// newLogger returns a JSON logger with the field names doc/TRD_M1.md 0.3
-// requires: timestamp, level, service, correlation_id, message (same as bmkg-mock).
+// logger JSON dengan nama field sesuai TRD 0.3.
 func newLogger(w io.Writer) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
@@ -45,16 +42,14 @@ func newLogger(w io.Writer) *slog.Logger {
 	return slog.New(h).With("service", serviceName)
 }
 
-// setupLogging makes w the one log output: the JSON logger above, and the stdlib
-// log package routed through it, so a plain log.Printf is a JSON line too, with
-// correlation_id "-" until it has one (#34).
+// jadiin w satu-satunya output log, log stdlib ikut lewat sini dengan correlation_id "-".
 func setupLogging(w io.Writer) {
 	l := newLogger(w)
 	base.Store(l)
 	slog.SetDefault(l.With("correlation_id", "-"))
 }
 
-// withID is the logger for one correlation ID ("-" when there is none yet).
+// logger untuk satu correlation ID ("-" kalau belum ada).
 func withID(id string) *slog.Logger {
 	if id == "" {
 		id = "-"
@@ -65,7 +60,7 @@ func withID(id string) *slog.Logger {
 
 type correlationKey struct{}
 
-// withCorrelation carries a poll cycle's correlation ID down to the calls it makes.
+// bawa correlation ID satu poll cycle ke call-call di bawahnya.
 func withCorrelation(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, correlationKey{}, id)
 }
@@ -76,7 +71,7 @@ func correlationOf(ctx context.Context) string {
 	return id
 }
 
-// callStatus classifies an outbound call's result as doc/TRD_M1.md 0.3 asks.
+// klasifikasi hasil outbound call (success, timeout, failure) sesuai TRD 0.3.
 func callStatus(err error) string {
 	var t interface{ Timeout() bool }
 
@@ -90,8 +85,7 @@ func callStatus(err error) string {
 	}
 }
 
-// logCall records one outbound call: target, duration_ms, status, and the cause
-// when it failed (doc/TRD_M1.md 0.3).
+// log satu outbound call: target, duration_ms, status, dan penyebab kalau gagal.
 func logCall(ctx context.Context, target string, start time.Time, err error) {
 	endCall(ctx, err)
 

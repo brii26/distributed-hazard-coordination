@@ -28,22 +28,17 @@ func (s breakerState) String() string {
 	return [...]string{"CLOSED", "OPEN", "HALF-OPEN"}[s]
 }
 
-// sourceStatus is what the read API puts in its response meta (doc/TRD_M1.md
-// 3.3). Times are pointers so "never" and "not stale" serialize as null.
+// status source buat meta read API (TRD 3.3), waktu pakai pointer biar bisa null.
 type sourceStatus struct {
 	Source        string     `json:"source"`
-	Status        string     `json:"source_status"` // UP, DEGRADED or DOWN
+	Status        string     `json:"source_status"` // UP, DEGRADED, atau DOWN
 	LastSuccessAt *time.Time `json:"last_success_at"`
 	StaleSince    *time.Time `json:"stale_since"`
 
 	ConsecutiveFail int `json:"-"`
 }
 
-// breaker is one source's circuit breaker plus the status tracked with it. The
-// poller goroutine drives it (allow, success, failure) while other goroutines
-// (the read API, /health) read snapshots, so all state sits behind the RWMutex.
-// Each source has its own breaker, so one source being down never affects the
-// other.
+// circuit breaker satu source plus statusnya. Poller yang drive, goroutine lain baca snapshot lewat RWMutex.
 type breaker struct {
 	name      string
 	threshold int
@@ -62,15 +57,14 @@ func newBreaker(name string, threshold int, openFor time.Duration) *breaker {
 	return &breaker{name: name, threshold: threshold, openFor: openFor, now: time.Now}
 }
 
-// transition moves to state to and logs it; the caller holds the write lock.
+// pindah state dan log, caller harus pegang write lock.
 func (b *breaker) transition(to breakerState) {
 	withID("").Info("circuit breaker transition", "source", b.name, "from", b.state.String(), "to", to.String(), "consecutive_fail", b.consecutiveFail)
 
 	b.state = to
 }
 
-// open trips the breaker. stale_since is the last good poll; a source that never
-// succeeded has no such time, so the moment it went down stands in for it.
+// trip breaker. stale_since diisi poll terakhir yang sukses, atau waktu down kalau belum pernah sukses.
 func (b *breaker) open() {
 	b.openedAt = b.now()
 
@@ -82,9 +76,7 @@ func (b *breaker) open() {
 	b.transition(stateOpen)
 }
 
-// allow reports whether the poller may call the source now. While OPEN it says
-// no until openFor has passed, then lets exactly one trial call through
-// (HALF-OPEN); until that trial reports back it says no again.
+// boleh nggak poller manggil source sekarang. Saat OPEN nolak sampai openFor lewat, lalu loloskan satu trial call (HALF-OPEN).
 func (b *breaker) allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -107,7 +99,7 @@ func (b *breaker) allow() bool {
 	return true
 }
 
-// success records a good poll: the breaker closes and the source is fresh again.
+// poll sukses: breaker close dan source fresh lagi.
 func (b *breaker) success() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -121,8 +113,7 @@ func (b *breaker) success() {
 	}
 }
 
-// failure records a failed poll (an error or a timeout). A failed trial reopens
-// the breaker; otherwise it opens once threshold failures happen in a row.
+// poll gagal (error atau timeout). Trial yang gagal reopen breaker, selain itu open setelah threshold gagal berturut-turut.
 func (b *breaker) failure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -134,8 +125,7 @@ func (b *breaker) failure() {
 	}
 }
 
-// snapshot is a consistent copy of the status for the read API and /health.
-// DEGRADED means polls are failing but the breaker has not tripped yet.
+// copy status yang konsisten buat read API dan /health. DEGRADED artinya poll gagal tapi breaker belum trip.
 func (b *breaker) snapshot() sourceStatus {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

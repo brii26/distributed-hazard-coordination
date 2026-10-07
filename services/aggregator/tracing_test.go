@@ -10,8 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// A message queued inside a poll cycle's span must carry that span's trace ID in
-// the headers it is published with, or the consumers cannot join the trace.
+// pesan yang diantre di span poll cycle harus membawa trace ID itu di header publish, kalau nggak consumer nggak bisa join trace.
 func TestPublishCarriesTraceContext(t *testing.T) { //nolint:paralleltest // swaps the global tracer and propagator
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 

@@ -18,27 +18,24 @@ const (
 	retryMax     = 5 * time.Second
 )
 
-// ingest is one source's second stage (doc/TRD_M1.md 3.5): map the records the
-// poller handed over, upsert each event, publish the new or changed ones. One per
-// source, so a slow write for one never holds up the other.
+// tahap kedua per source (TRD 3.5): mapping record dari poller, upsert, lalu publish yang baru atau berubah.
 type ingest struct {
-	name     string
-	in       <-chan pollResult
-	mapBatch func(pollResult) ([]HazardEvent, error)
-	upsert   func(context.Context, HazardEvent) (bool, error)
-	// publish hands a new or changed event, with its poll cycle's correlation ID, to the broker publisher.
+	name                string
+	in                  <-chan pollResult
+	mapBatch            func(pollResult) ([]HazardEvent, error)
+	upsert              func(context.Context, HazardEvent) (bool, error)
 	publish             func(ctx context.Context, h HazardEvent, correlationID string)
 	retryBase, retryMax time.Duration
 }
 
-// run ingests until the poller closes the channel, so queued records are still written on shutdown.
+// jalan sampai poller nutup channel, jadi record yang antre tetap ditulis saat shutdown.
 func (i *ingest) run(ctx context.Context) {
 	for res := range i.in {
 		i.handle(ctx, res)
 	}
 }
 
-// handle maps one poll's records and writes them in order; a rejected record is skipped.
+// mapping satu poll lalu tulis berurutan, record yang ditolak di-skip.
 func (i *ingest) handle(ctx context.Context, res pollResult) {
 	start := time.Now()
 	ctx, span := tracer.Start(trace.ContextWithRemoteSpanContext(ctx, res.trace), "ingest "+i.name)
@@ -61,7 +58,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 			l.Warn("ingest upsert failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
 
 			if ctx.Err() != nil {
-				break // shutting down with the database unreachable: give up the rest
+				break
 			}
 
 			continue
@@ -78,12 +75,9 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		"rejected", len(res.records)-len(events), "changed", changed, "duration_ms", time.Since(start).Milliseconds())
 }
 
-// write upserts h. An outage is retried with a growing delay, which holds the batch:
-// the channel fills and the poller waits, so nothing is lost. A data error cannot
-// succeed on retry and is returned at once. Shutdown ends the retrying.
+// upsert h. Outage di-retry dengan delay naik dan menahan batch (poller ikut nunggu), error data langsung dikembalikan.
 func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	for attempt := 0; ; attempt++ {
-		// Not cancelled with ctx, so a draining shutdown still writes.
 		changed, err := i.upsert(context.WithoutCancel(ctx), h)
 		if err == nil || isPermanent(err) {
 			return changed, err
@@ -99,20 +93,20 @@ func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	}
 }
 
-// isPermanent reports a Postgres data exception (class 22) or constraint violation (23).
+// error data Postgres (class 22) atau constraint violation (23), nggak ada gunanya di-retry.
 func isPermanent(err error) bool {
 	var pg *pgconn.PgError
 
 	return errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23"))
 }
 
-// pipeline is one source's whole path: poller, channel, ingest.
+// jalur satu source: poller, channel, ingest.
 type pipeline struct {
 	poller *poller
 	ingest *ingest
 }
 
-// run runs both stages until ctx is done and the ingest side has drained.
+// jalanin dua tahap sampai ctx selesai dan ingest drain.
 func (p pipeline) run(ctx context.Context) {
 	var wg sync.WaitGroup
 
@@ -122,7 +116,7 @@ func (p pipeline) run(ctx context.Context) {
 	wg.Wait()
 }
 
-// newPipelines builds one pipeline per source; all share the one upsert (the store's pool).
+// satu pipeline per source, semuanya share upsert yang sama.
 func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) []pipeline {
 	m := newMapper()
 	mappers := map[string]func(pollResult) ([]HazardEvent, error){
