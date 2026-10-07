@@ -996,9 +996,30 @@ func TestAbuseSustainedLoadAndHeadOfLine(t *testing.T) {
 	e.waitHealthy(t, 30*time.Second)
 }
 
-// TestAbuseOneAccountCannotHoldEveryStream opens live streams as one account past
-// its share. Expect the extra one refused with 503 while another account still
-// gets a stream.
+// Every service has a restart policy, so a panic or OOM doesn't leave it down. Docker doesn't restart a container stopped by docker kill, so the suite checks the config.
+//
+//nolint:paralleltest // shares the docker stack
+func TestAbuseEveryServiceHasARestartPolicy(t *testing.T) {
+	_ = abuseEnv(t)
+
+	var cfg struct {
+		Services map[string]struct {
+			Restart string `json:"restart"`
+		} `json:"services"`
+	}
+
+	if err := json.Unmarshal([]byte(composeOut(t, "config", "--format", "json")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, svc := range cfg.Services {
+		if svc.Restart != "unless-stopped" {
+			t.Errorf("%s has restart policy %q, want unless-stopped", name, svc.Restart)
+		}
+	}
+}
+
+// One account opens live streams past its share. The extra one gets 503 and another account still gets a stream.
 //
 //nolint:paralleltest // shares the docker stack
 func TestAbuseOneAccountCannotHoldEveryStream(t *testing.T) {
