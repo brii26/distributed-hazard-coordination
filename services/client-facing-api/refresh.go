@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,8 +26,58 @@ func (v *jwtVerifier) withRefresh(a *authAPI) *jwtVerifier {
 	return v
 }
 
-// Holds the request while swapping the refresh token for a new pair, puts the new JWT into it, runs next and re-sets both cookies. Two concurrent requests with the same expired jwt race, the loser gets 401 with cookies cleared.
-// ponytail: single-flight per refresh token would let every parallel request succeed, not built, it only helps within one instance.
+// refreshGrace is how long a rotated pair is kept for requests still carrying the old token: a page fires its list and stream requests together, so they all hold the same expired session.
+const refreshGrace = 5 * time.Second
+
+type refreshCall struct {
+	done chan struct{}
+	resp *authpb.TokenResponse
+	err  error
+	at   time.Time
+}
+
+// exchange rotates old at the Auth Service once; concurrent and near-simultaneous callers with the same old token share that result.
+// ponytail: per instance only, and an old token stays usable for refreshGrace after it rotated.
+func (a *authAPI) exchange(ctx context.Context, old string) (*authpb.TokenResponse, error) {
+	a.refreshMu.Lock()
+
+	for k, c := range a.refreshes {
+		if c.err != nil || (!c.at.IsZero() && time.Since(c.at) > refreshGrace) {
+			delete(a.refreshes, k)
+		}
+	}
+
+	if c, ok := a.refreshes[old]; ok {
+		a.refreshMu.Unlock()
+
+		select {
+		case <-c.done:
+			return c.resp, c.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	c := &refreshCall{done: make(chan struct{})}
+
+	if a.refreshes == nil {
+		a.refreshes = map[string]*refreshCall{}
+	}
+
+	a.refreshes[old] = c
+	a.refreshMu.Unlock()
+
+	resp, err := a.auth.Refresh(ctx, &authpb.RefreshRequest{RefreshToken: old})
+
+	a.refreshMu.Lock()
+	c.resp, c.err, c.at = resp, err, time.Now()
+	a.refreshMu.Unlock()
+	close(c.done)
+
+	return c.resp, c.err
+}
+
+// Holds the request while swapping the refresh token for a new pair, puts the new JWT into it, runs next and re-sets both cookies. Requests sharing one expired session all get the same new pair.
 func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *http.Request, next http.Handler) {
 	old, err := r.Cookie(cookieRefresh)
 	if err != nil {
@@ -38,7 +89,7 @@ func (a *authAPI) refreshAndForward(v *jwtVerifier, w http.ResponseWriter, r *ht
 	ctx, cancel := context.WithTimeout(r.Context(), a.timeout)
 	defer cancel()
 
-	resp, err := a.auth.Refresh(ctx, &authpb.RefreshRequest{RefreshToken: old.Value})
+	resp, err := a.exchange(ctx, old.Value)
 	if err != nil {
 		a.refreshFailed(r.Context(), w, err)
 

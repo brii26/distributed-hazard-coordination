@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,8 +53,14 @@ func freshToken(t *testing.T) string {
 func run(t *testing.T, f fakeAuth, cookies ...*http.Cookie) (*httptest.ResponseRecorder, *seen) {
 	t.Helper()
 
+	return runOn(t, &authAPI{auth: f, timeout: time.Second, secure: true}, cookies...)
+}
+
+// Same, on a given API, so requests share its refresh state like they do in the server.
+func runOn(t *testing.T, api *authAPI, cookies ...*http.Cookie) (*httptest.ResponseRecorder, *seen) {
+	t.Helper()
+
 	s := &seen{}
-	api := &authAPI{auth: f, timeout: time.Second, secure: true}
 
 	protected := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.reached = true
@@ -225,38 +232,33 @@ func TestNewTokenThatDoesNotVerifyIsNotForwarded(t *testing.T) {
 	}
 }
 
-// Twenty requests sharing one expired session race to refresh it. Exactly one wins, the rest get the loser outcome (401, cookies cleared), and nothing corrupts state (-race).
-func TestConcurrentRefreshesOfOneTokenHaveExactlyOneWinner(t *testing.T) {
+// Twenty requests sharing one expired session refresh it together. Auth sees one exchange, every request gets the same new pair and is forwarded, and nothing corrupts state (-race).
+func TestConcurrentRefreshesOfOneTokenAllSucceedWithOneExchange(t *testing.T) {
 	t.Parallel()
 
-	var (
-		mu   sync.Mutex
-		used bool
-	)
+	var calls atomic.Int32
 
 	fresh := freshToken(t)
 	f := fakeAuth{refresh: func(in *authpb.RefreshRequest) (*authpb.TokenResponse, error) {
-		mu.Lock()
-		defer mu.Unlock()
-
-		if used {
+		if calls.Add(1) > 1 {
 			return nil, status.Error(codes.Unauthenticated, "invalid refresh token")
 		}
 
-		used = true
+		time.Sleep(50 * time.Millisecond) // long enough for the others to arrive mid-exchange
 
 		return refreshReturning(fresh, newRefresh, nil)(in)
 	}}
+	api := &authAPI{auth: f, timeout: time.Second, secure: true}
 
 	const n = 20
 
-	codesSeen := make(chan int, n)
-
 	var wg sync.WaitGroup
+
+	codesSeen := make(chan int, n)
 
 	for range n {
 		wg.Go(func() {
-			rec, _ := run(t, f, sessionCookie(cookieJWT, expiredToken(t)), sessionCookie(cookieRefresh, oldRefresh))
+			rec, _ := runOn(t, api, sessionCookie(cookieJWT, expiredToken(t)), sessionCookie(cookieRefresh, oldRefresh))
 			codesSeen <- rec.Code
 		})
 	}
@@ -264,18 +266,18 @@ func TestConcurrentRefreshesOfOneTokenHaveExactlyOneWinner(t *testing.T) {
 	wg.Wait()
 	close(codesSeen)
 
-	ok, denied := 0, 0
-
 	for c := range codesSeen {
-		switch c {
-		case http.StatusOK:
-			ok++
-		case http.StatusUnauthorized:
-			denied++
+		if c != http.StatusOK {
+			t.Fatalf("a request sharing the session got %d, want 200", c)
 		}
 	}
 
-	if ok != 1 || denied != n-1 {
-		t.Fatalf("expected exactly one winner and %d clean 401s, got %d ok, %d denied", n-1, ok, denied)
+	// A request that arrives after the exchange, still with the old cookies, gets the same pair.
+	if rec, _ := runOn(t, api, sessionCookie(cookieJWT, expiredToken(t)), sessionCookie(cookieRefresh, oldRefresh)); rec.Code != http.StatusOK {
+		t.Fatalf("late request got %d, want 200", rec.Code)
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("Auth Service saw %d refreshes, want 1", got)
 	}
 }

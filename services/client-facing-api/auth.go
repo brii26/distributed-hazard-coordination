@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -32,6 +33,9 @@ type authAPI struct {
 
 	// Throttles login and register per client IP, nil means no limit.
 	ipLimiter *rateLimiter
+
+	refreshMu sync.Mutex
+	refreshes map[string]*refreshCall
 }
 
 func (a *authAPI) register(mux *http.ServeMux) {
