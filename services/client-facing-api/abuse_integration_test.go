@@ -995,3 +995,26 @@ func TestAbuseSustainedLoadAndHeadOfLine(t *testing.T) {
 
 	e.waitHealthy(t, 30*time.Second)
 }
+
+// Every service must have a restart policy, so a panic or OOM does not leave it down. The behaviour itself cannot be shown here: Docker does not restart a container stopped with docker kill, so the suite checks the configuration.
+//
+//nolint:paralleltest // shares the docker stack
+func TestAbuseEveryServiceHasARestartPolicy(t *testing.T) {
+	_ = abuseEnv(t)
+
+	var cfg struct {
+		Services map[string]struct {
+			Restart string `json:"restart"`
+		} `json:"services"`
+	}
+
+	if err := json.Unmarshal([]byte(composeOut(t, "config", "--format", "json")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, svc := range cfg.Services {
+		if svc.Restart != "unless-stopped" {
+			t.Errorf("%s has restart policy %q, want unless-stopped", name, svc.Restart)
+		}
+	}
+}

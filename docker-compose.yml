@@ -11,6 +11,7 @@ services:
   # which Prometheus scrapes and the Monitor tab reads back (#116). Configs are inline so no
   # host file's permissions can stop the container reading them.
   jaeger:
+    restart: unless-stopped
     image: jaegertracing/jaeger:2.22.0
     command: ["--config", "/etc/jaeger/config.yml"]
     configs:
@@ -24,12 +25,15 @@ services:
   # Holds only the numbers Jaeger derives from spans. Internal to the compose network, no
   # published port, no volume: losing it on a restart only empties the charts.
   prometheus:
+    restart: unless-stopped
     image: prom/prometheus:v3.6.0
     configs:
       - source: prometheus_config
         target: /etc/prometheus/prometheus.yml
 
   bmkg-mock:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/bmkg-mock
     ports:
       - "${BMKG_PORT:-8081}:8081"
@@ -48,6 +52,8 @@ services:
       retries: 5
 
   pvmbg-mock:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/pvmbg-mock
     ports:
       - "${PVMBG_PORT:-8082}:8082"
@@ -69,6 +75,7 @@ services:
       retries: 5
 
   canonical-store:
+    restart: unless-stopped
     image: postgres:16-alpine
     networks:
       - canonical-net
@@ -86,6 +93,7 @@ services:
       retries: 5
 
   user-db:
+    restart: unless-stopped
     image: postgres:16-alpine
     networks:
       - userdb-net
@@ -107,6 +115,7 @@ services:
       retries: 5
 
   rabbitmq:
+    restart: unless-stopped
     image: rabbitmq:3.13-management-alpine
     ports:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
@@ -121,6 +130,8 @@ services:
       retries: 5
 
   aggregator:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/aggregator
     networks:
       - default
@@ -163,6 +174,8 @@ services:
       retries: 5
 
   auth-service:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/auth-service
     networks:
       - default
@@ -187,6 +200,8 @@ services:
       retries: 5
 
   client-facing-api:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/client-facing-api
     depends_on:
       aggregator:
@@ -215,6 +230,7 @@ services:
       retries: 5
 
   web-frontend:
+    restart: unless-stopped
     build:
       context: ./services/web-frontend
       args:
@@ -232,6 +248,8 @@ services:
       retries: 5
 
   dashboard-updater:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/dashboard-updater
     depends_on:
       rabbitmq:
@@ -244,6 +262,8 @@ services:
       QUEUE_NAME: dashboard-updater
 
   notifier:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/notifier
     depends_on:
       rabbitmq:
@@ -259,6 +279,8 @@ services:
       - notifier_dedup_data:/var/lib/notifier
 
   audit-logger:
+    restart: unless-stopped
+    mem_limit: 256m
     build: ./services/audit-logger
     depends_on:
       rabbitmq:
