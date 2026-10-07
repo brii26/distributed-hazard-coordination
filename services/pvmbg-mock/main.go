@@ -1,5 +1,4 @@
-// Command pvmbg-mock is a scaffold for the pvmbg-mock service.
-// See doc/TRD_M1.md for the full specification this service must implement.
+// Command pvmbg-mock is the mock PVMBG source API: OAuth token endpoint and volcanic reports.
 package main
 
 import (
@@ -29,9 +28,7 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// outageActive makes /volcanic-reports fail fast with 503 (no hang, no
-// auto-recovery). /health keeps reporting ok: the process is up, only the
-// simulated upstream is down.
+// Makes /volcanic-reports fail fast with 503 (no hang, no auto-recovery). /health still says ok, only the simulated upstream is down.
 var outageActive atomic.Bool
 
 func outageHandler(w http.ResponseWriter, _ *http.Request) {
@@ -59,8 +56,7 @@ func withOutage(next http.Handler) http.Handler {
 	})
 }
 
-// schemaExtended is read by the /volcanic-reports generator and handler (#5,
-// #7) to decide whether reports carry confidence_level.
+// Read by the /volcanic-reports generator and handler to decide whether reports carry confidence_level.
 var schemaExtended atomic.Bool
 
 func schemaVersionHandler(w http.ResponseWriter, _ *http.Request) {
@@ -86,8 +82,7 @@ func schemaVersion(extended bool) string {
 	return "legacy"
 }
 
-// requireAdminKey guards /admin/* with the X-Admin-Key header: missing is 401,
-// wrong is 403 (same shape as the BMKG mock's X-BMKG-Key).
+// Guards /admin/* with the X-Admin-Key header: missing is 401, wrong is 403.
 func requireAdminKey(adminKey string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-Admin-Key")
@@ -118,8 +113,7 @@ func newMux(store *tokenStore, adminKey string, reports *reportStore, minDelay, 
 	return withRequestLog(withOutage(mux))
 }
 
-// resolvePort validates a raw port value (as read from the PORT env var),
-// falling back to defaultPort when raw is empty.
+// Validates a port from PORT, defaultPort if empty.
 func resolvePort(raw string) (string, error) {
 	if raw == "" {
 		raw = defaultPort
@@ -132,7 +126,7 @@ func resolvePort(raw string) (string, error) {
 	return raw, nil
 }
 
-// envPositiveInt reads a positive integer env var, falling back to def when unset.
+// Reads a positive integer env var, def if unset.
 func envPositiveInt(name string, def int) (int, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -167,8 +161,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Reparsed as an int purely so the log line below carries a numeric
-	// argument instead of a string derived from environment input.
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatal(err)
@@ -218,7 +210,7 @@ func main() {
 	log.Printf("pvmbg-mock listening on :%d", portNum)
 
 	err = srv.ListenAndServe()
-	_ = shutdownTracing(context.Background()) // flush what is buffered
+	_ = shutdownTracing(context.Background())
 
 	log.Fatal(err)
 }
