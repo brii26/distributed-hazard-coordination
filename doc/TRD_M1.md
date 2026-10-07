@@ -708,6 +708,39 @@ Service membaca nama di kolom kedua. `docker-compose.yml` mengisinya dari `.env.
 - Catatan dedup tidak pernah dibersihkan.
 - RabbitMQ berjalan sebagai satu instance tanpa clustering.
 
+**Interoperabilitas Data (P1):**
+- Field baru, field yang di-rename, dan field yang berubah tipe tidak merusak sistem (masuk ke `attributes`), tetapi field kanonik yang bergantung pada nama atau tipe lama menjadi `null`. Contoh: `magnitude` yang berganti nama membuat severity cadangan kosong, dan `epicenter_lat`/`epicenter_lon`/`region_name`/`alert_level` yang berubah membuat latitude, longitude, area_name atau severity kosong. Nilai aslinya tetap ada di `attributes`, tetapi tidak ada yang membacanya.
+- Bila field id atau waktu (`event_id`, `report_id`, `occurred_at`, `reported_at`) berubah, record ditolak dan dihitung sebagai rejected, karena keduanya wajib untuk menyimpan.
+- Perubahan makna pada field dengan nama dan tipe yang sama (mis. satuan atau skala) tidak terdeteksi.
+- Tabel gunung api (`volcanoRef`) statis: `volcano_id` baru tetap disimpan tetapi tanpa nama dan koordinat sampai tabel diubah. Satu severity terpadu diturunkan dari skala tiap sumber, sehingga nuansa spesifik sumber hanya ada di `attributes`.
+
+**Concurrency/Availability (P2), tambahan:**
+- Cap konkurensi bersifat global, bukan per client: satu client yang mengirim body sangat lambat ke `POST /auth/login` memegang satu slot sampai batas baca 10 detik, dan throttle per IP (10 request per detik) cukup longgar untuk menjaga sekitar 100 slot terisi. Selama itu request lain selain `/health` mendapat `429`. Efeknya berakhir beberapa detik setelah client berhenti, dan ini belum diuji.
+- Kesegaran data dibatasi interval polling (`POLL_INTERVAL_MS`). Status basi dilaporkan per sumber lewat `stale_since`, bukan per record.
+- Angka performa (mis. throughput dan p95) diukur di satu mesin terhadap mock, sehingga menunjukkan desain bertahan pada beban itu, bukan kinerja deployment nyata.
+
+**Auth & Trust (P3), tambahan:**
+- Refresh token tidak punya masa berlaku: sah sampai dipakai sekali (rotasi) atau logout. Tidak ada batas jumlah token per user dan baris dari sesi yang ditinggalkan tidak pernah dibersihkan, sehingga tabel `refresh_tokens` hanya tumbuh. Cookie refresh yang bocor tetap berlaku tanpa batas waktu selama belum dipakai.
+- `POST /auth/register` menjawab `409` untuk email yang sudah ada dan `201` bila belum, jadi keberadaan akun bisa diuji lewat registrasi. Login tidak membocorkan ini. Menyembunyikannya membutuhkan verifikasi email, di luar M1. Throttle per IP memperlambat tetapi tidak menghentikan.
+- Password disimpan sebagai `hex(sha256(password + SECRET_SALT))` sesuai §4.1: satu salt global dan hash cepat. Bila User DB bocor bersama salt, tebakan offline cepat dan dua user dengan password sama punya hash sama. Tidak diperkeras terhadap tebakan offline.
+- Contoh secret di `.env.example` (`change-me*`) diterima saat start: tidak ada service yang menolak nilai itu. Deployer wajib menggantinya sebelum sistem diekspos.
+- Batas kepercayaan ada di tepi sistem, bukan antar service. JWT hanya diverifikasi Client-Facing API. Ke Aggregator, role dan correlation ID dikirim sebagai gRPC metadata biasa tanpa TLS dan dipercaya, dan jaringan internal Docker dipercaya (bukan zero trust). Secret JWT dipegang dua service, sehingga kompromi salah satunya memungkinkan pemalsuan token. Edge tanpa HTTPS pada demo (cookie `Secure` butuh `COOKIE_SECURE=false` di HTTP biasa). Hak akses kasar: tiga role tetap, read-only, tanpa izin per resource atau wilayah. Kedaluwarsa token dibandingkan dengan satu jam tanpa toleransi.
+
+**Fan-out Pub/Sub (P5), tambahan:**
+- Port manajemen RabbitMQ (15672) dipublikasikan ke host dengan user administrator, dan consumer mempercayai setiap pesan di `hazard.events`: siapa pun yang menjangkau port itu dapat menerbitkan `HazardEvent` palsu (mis. severity `AWAS`) yang memicu alert Notifier dan feed langsung tanpa melewati Aggregator. Login yang sama dapat mengosongkan queue atau menghapus exchange. Broker diperlakukan sebagai jaringan tepercaya dan event tidak diautentikasi.
+- Pengiriman at-least-once: consumer dapat melihat event yang sama dua kali (ditangani dedup), dan crash antara mengirim alert dan mencatatnya dapat mengirim alert dua kali. Feed langsung tidak durable: client yang terputus kehilangan event dan harus memuat ulang daftar. Canonical Store, event broker, dan feed langsung dapat berbeda sesaat setelah penulisan (eventual consistency).
+- Audit log dan file dedup Audit Logger serta file dedup Notifier tumbuh tanpa batas (tanpa rotasi atau pemangkasan) dan seluruh kunci dedup dimuat ke memori saat start. Pada laju data demo ini baru berarti setelah waktu yang sangat lama. Disk penuh membuat Audit Logger gagal menulis dan pesan di-requeue.
+
+**Operasional (lintas problem):**
+- Satu instance setiap service di satu host, dengan state di memori proses (rate limiter per akun, rotasi refresh bersama, state circuit breaker, kursor polling Aggregator). Menjalankan dua salinan akan memecah state itu. Setiap komponen adalah single point of failure.
+- Migrasi skema hanya berjalan pada volume baru (init directory Postgres). Tidak ada jalur upgrade untuk volume yang sudah ada, tidak ada backup atau kebijakan retensi (event, audit log, dan email user disimpan selamanya), dan tidak ada pengumpulan log terpusat. Tracing dapat dimatikan dan penyimpanan trace tidak persisten.
+- UI Jaeger dipublikasikan ke host tanpa login. Trace memuat path dan query string, correlation ID, waktu, dan pesan error, tetapi tidak cookie, token, atau body sepengetahuan kami (atribut belum diperiksa satu per satu).
+
+**Asumsi:**
+- BMKG dan PVMBG adalah simulasi sesuai kontrak spesifikasi. Layanan nyata akan berbeda dalam autentikasi, rate limit, waktu respons, dan kestabilan id. Perilaku yang terbukti terhadap mock adalah bukti untuk desain, bukan untuk produksi.
+- Aturan pemetaan severity, klasifikasi field Ringkasan/Mentah, dan matriks hak akses tiga client mengikuti spesifikasi apa adanya. Lingkup: dua instansi, dua jenis bencana, BNPB sebagai node koordinasi, client read-only.
+- Deployer mengganti setiap nilai `change-me*` sebelum sistem diekspos, dan host yang menjalankan stack adalah jaringan tepercaya (alat observability seperti Jaeger tidak diautentikasi).
+
 ---
 
 ## 13. Observability
