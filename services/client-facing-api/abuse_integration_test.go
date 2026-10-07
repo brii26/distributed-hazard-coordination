@@ -996,6 +996,37 @@ func TestAbuseSustainedLoadAndHeadOfLine(t *testing.T) {
 	e.waitHealthy(t, 30*time.Second)
 }
 
+// Publishes messages no consumer can use straight onto the exchange. Expect the three consumers to drop them, stay up, and keep handling real events.
+//
+//nolint:paralleltest // shares the docker stack
+func TestAbusePoisonMessagesDoNotStopTheConsumers(t *testing.T) {
+	e := abuseEnv(t)
+	e.reset(t)
+
+	received := func() int { return logCount(t, "notifier", `"message":"message received"`) }
+
+	for _, payload := range []string{"not json", "{}", `{"hazard_id":123}`, `{"hazard_id":""}`, strings.Repeat("x", 1<<16), "\\u0000"} {
+		body, _ := json.Marshal(map[string]any{"properties": map[string]any{}, "routing_key": "", "payload": payload, "payload_encoding": "string"})
+
+		out := composeOut(t, "exec", "-T", "rabbitmq", "wget", "-qO-",
+			"--header", "Content-Type: application/json", "--header", "Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=",
+			"--post-data", string(body), "http://127.0.0.1:15672/api/exchanges/%2F/hazard.events/publish")
+		if !strings.Contains(out, `"routed":true`) {
+			t.Fatalf("poison message %.20q was not routed to the consumers: %s", payload, out)
+		}
+	}
+
+	before := received()
+
+	eventually(t, 45*time.Second, "the notifier to handle a real event after the poison", func() bool { return received() > before })
+
+	for _, svc := range []string{"notifier", "audit-logger", "dashboard-updater"} {
+		if composeOut(t, "ps", "-q", "--status", "running", svc) == "" {
+			t.Errorf("%s is not running after the poison messages", svc)
+		}
+	}
+}
+
 // Every service has a restart policy, so a panic or OOM doesn't leave it down. Docker doesn't restart a container stopped by docker kill, so the suite checks the config.
 //
 //nolint:paralleltest // shares the docker stack

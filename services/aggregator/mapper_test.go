@@ -133,6 +133,31 @@ func TestSeismicRejectsUnstorableRecordsOnly(t *testing.T) {
 	}
 }
 
+func TestSeismicRejectsImplausibleRecordsAndKeepsBadCoordinatesOutOfTheFields(t *testing.T) {
+	t.Parallel()
+
+	future := quake("E3", 5)
+	future["occurred_at"] = fixedNow.Add(48 * time.Hour).Format(time.RFC3339)
+
+	longID := quake(strings.Repeat("x", maxRefIDLen+1), 5)
+
+	badCoords := quake("E4", 5)
+	badCoords["epicenter_lat"], badCoords["epicenter_lon"] = 123.0, -999.0
+
+	got, err := testMapper().mapSeismic([]map[string]any{future, longID, badCoords}, nil)
+	if err == nil || len(got) != 1 || got[0].SourceRefID != "E4" {
+		t.Fatalf("want only E4 mapped and an error for the other two, got %+v err=%v", got, err)
+	}
+
+	if got[0].Latitude != nil || got[0].Longitude != nil {
+		t.Fatalf("out-of-range coordinates must not become the canonical fields: %v %v", got[0].Latitude, got[0].Longitude)
+	}
+
+	if got[0].Attributes["epicenter_lat"] != 123.0 {
+		t.Fatalf("the raw value should stay in attributes, got %v", got[0].Attributes)
+	}
+}
+
 func report(id, volcanoID, level string) map[string]any {
 	return map[string]any{
 		"report_id": id, "volcano_id": volcanoID, "alert_level": level,

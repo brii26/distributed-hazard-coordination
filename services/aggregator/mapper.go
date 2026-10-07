@@ -47,6 +47,11 @@ func str(r map[string]any, k string) (string, bool) {
 	return s, ok && s != ""
 }
 
+const (
+	maxFutureSkew = 24 * time.Hour
+	maxRefIDLen   = 255 // hazard_events.source_ref_id is VARCHAR(255)
+)
+
 func num(r map[string]any, k string) (float64, bool) {
 	f, ok := r[k].(float64)
 
@@ -67,6 +72,11 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	at, err := time.Parse(time.RFC3339, ts)
 	if err != nil {
 		return HazardEvent{}, fmt.Errorf("%s record %s: bad %s: %w", source, id, timeKey, err)
+	}
+
+	// A report from the far future would sort to the top for good, and an over-long id is a database error.
+	if at.After(m.now().Add(maxFutureSkew)) || len(id) > maxRefIDLen {
+		return HazardEvent{}, fmt.Errorf("%s record %.40s: implausible id or %s", source, id, timeKey)
 	}
 
 	used[idKey], used[timeKey] = true, true
@@ -130,11 +140,11 @@ func (m *mapper) seismic(r map[string]any, warnings map[string][]map[string]any)
 		h.AreaName, used["region_name"] = &s, true
 	}
 
-	if v, ok := num(r, "epicenter_lat"); ok {
+	if v, ok := num(r, "epicenter_lat"); ok && v >= -90 && v <= 90 {
 		h.Latitude, used["epicenter_lat"] = &v, true
 	}
 
-	if v, ok := num(r, "epicenter_lon"); ok {
+	if v, ok := num(r, "epicenter_lon"); ok && v >= -180 && v <= 180 {
 		h.Longitude, used["epicenter_lon"] = &v, true
 	}
 
