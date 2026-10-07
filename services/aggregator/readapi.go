@@ -28,23 +28,21 @@ const (
 	metaClientRole    = "x-client-role"
 )
 
-// typeSources maps a hazard type to the one source that feeds it, so a request
-// for one type only ever looks at that source's state (doc/TRD_M1.md 3.3).
+// Maps a hazard type to the one source that feeds it.
 var typeSources = map[string]string{typeSeismic: sourceBMKG, typeVolcanic: sourcePVMBG}
 
-// healthSources fixes the order sources are reported in.
+// Order sources are reported in.
 var healthSources = []string{sourceBMKG, sourcePVMBG}
 
-// readAPI is the Aggregator's internal gRPC read API (doc/TRD_M1.md 3.4).
+// The Aggregator's internal gRPC read API.
 type readAPI struct {
 	aggregatorpb.UnimplementedAggregatorServer
 
 	list     func(ctx context.Context, q listQuery) ([]HazardEvent, bool, error)
-	ping     func(ctx context.Context) error // the Canonical Store
+	ping     func(ctx context.Context) error // checks the Canonical Store
 	rabbitUp func(ctx context.Context) error
 	breakers map[string]*breaker // by source name
 
-	// sem is the global concurrency cap: one token per in-flight request.
 	sem chan struct{}
 }
 
@@ -65,8 +63,7 @@ func newGRPCServer(a *readAPI) *grpc.Server {
 	return s
 }
 
-// limit is the concurrency cap. It never queues: past the cap a request is
-// refused at once with RESOURCE_EXHAUSTED, so overload cannot pile up or hang.
+// Concurrency cap. Never queues: past the cap a request gets RESOURCE_EXHAUSTED at once.
 func (a *readAPI) limit(ctx context.Context, req any, info *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
 	select {
 	case a.sem <- struct{}{}:
@@ -81,8 +78,7 @@ func (a *readAPI) limit(ctx context.Context, req any, info *grpc.UnaryServerInfo
 	return next(ctx, req)
 }
 
-// caller reads the correlation ID and client role the Client-Facing API sends
-// as gRPC metadata.
+// Reads the correlation ID and client role from gRPC metadata.
 func caller(ctx context.Context) (correlationID, role string) {
 	md, _ := metadata.FromIncomingContext(ctx)
 
@@ -97,7 +93,7 @@ func caller(ctx context.Context) (correlationID, role string) {
 	return first(metaCorrelationID), first(metaClientRole)
 }
 
-// Page size: the default when a caller sends none, and the cap on what it may ask.
+// Page size: the default when none is sent, and the max a caller may ask for.
 const (
 	defaultPageLimit = 50
 	maxPageLimit     = 200
@@ -106,8 +102,7 @@ const (
 
 var severities = map[string]bool{"NORMAL": true, "WASPADA": true, "SIAGA": true, "AWAS": true}
 
-// pageQuery checks a request's paging, filter and search and turns it into a
-// store query. A limit of 0 is the default; a bigger one is capped, not refused.
+// Validates paging, filter and search into a store query. Limit 0 is the default, a bigger one is capped.
 func pageQuery(req *aggregatorpb.GetHazardsRequest) (listQuery, error) {
 	limit := int(req.GetLimit())
 
@@ -142,9 +137,7 @@ func pageQuery(req *aggregatorpb.GetHazardsRequest) (listQuery, error) {
 	}, nil
 }
 
-// GetHazards serves one hazard type from the Canonical Store along with the state
-// of its source. A source that is down still serves what is stored (OK, with
-// stale_since set); only a down source with nothing stored is UNAVAILABLE.
+// Serves one hazard type from the Canonical Store with its source's status. A down source still serves stored data, UNAVAILABLE only when it is down and empty.
 func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRequest) (*aggregatorpb.GetHazardsResponse, error) {
 	id, role := caller(ctx)
 	withID(id).Info("read api request", "method", "GetHazards", "role", role, "hazard_type", req.GetHazardType())
@@ -168,7 +161,6 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 
 	snap := a.breakers[src].snapshot()
 
-	// Only an unfiltered first page that is empty means "nothing stored".
 	unfiltered := q.Offset == 0 && q.Severity == "" && q.Search == ""
 	if len(events) == 0 && unfiltered && snap.Status == statusDown {
 		return nil, status.Errorf(codes.Unavailable, "%s is down and no %s data is stored", src, req.GetHazardType())
@@ -190,9 +182,7 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 	return &aggregatorpb.GetHazardsResponse{Data: data, Meta: metaOf(snap), HasMore: more}, nil
 }
 
-// GetHealth reports each source, the Canonical Store and RabbitMQ. Only the
-// store being unreachable is "down"; a down source or broker is "degraded",
-// since reads still work (doc/TRD_M1.md 0.2, 3.5).
+// Health of each source, the Canonical Store and RabbitMQ. Only an unreachable store is "down", the rest is "degraded".
 func (a *readAPI) GetHealth(ctx context.Context, _ *emptypb.Empty) (*aggregatorpb.HealthStatus, error) {
 	r := a.health(ctx)
 	h := &aggregatorpb.HealthStatus{
@@ -213,18 +203,16 @@ const (
 	disconnected = "disconnected"
 )
 
-// healthReport is the Aggregator's health (doc/TRD_M1.md 0.2, 3.5), shared by the
-// gRPC GetHealth and the REST /health.
+// The Aggregator's health, used by gRPC GetHealth and REST /health.
 type healthReport struct {
-	Status   string `json:"status"` // ok | degraded | down
+	Status   string `json:"status"` // ok, degraded or down
 	Database string `json:"database"`
 	RabbitMQ string `json:"rabbitmq"`
 
 	Sources []sourceStatus `json:"-"`
 }
 
-// sourceHealth is one source in the REST body, with the lowercase up/degraded/down
-// of doc/TRD_M1.md 3.5 (the read API's meta keeps 3.3's uppercase).
+// One source in the REST body, lowercase up/degraded/down (the read API meta stays uppercase).
 type sourceHealth struct {
 	Source        string     `json:"source"`
 	Status        string     `json:"status"`
@@ -232,7 +220,7 @@ type sourceHealth struct {
 	StaleSince    *time.Time `json:"stale_since"`
 }
 
-// restHealth is healthReport as /health serves it.
+// healthReport as /health serves it.
 type restHealth struct {
 	healthReport
 
@@ -251,9 +239,7 @@ func (r healthReport) rest() restHealth {
 	return out
 }
 
-// health checks the Canonical Store and RabbitMQ and reads each source's state.
-// Only the store being unreachable is "down"; a down source or broker is
-// "degraded", since reads still work.
+// Checks the Canonical Store and RabbitMQ and reads each source's state.
 func (a *readAPI) health(ctx context.Context) healthReport {
 	r := healthReport{Status: "ok", Database: connected, RabbitMQ: connected}
 
@@ -284,8 +270,7 @@ func (a *readAPI) health(ctx context.Context) healthReport {
 	return r
 }
 
-// healthHandler serves GET /health. Only "down" is a 503: "degraded" still serves
-// and stays 200, so compose and callers can tell "limping" from "gone".
+// GET /health. Only "down" is 503, "degraded" stays 200.
 func (a *readAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	rep := a.health(r.Context())
 

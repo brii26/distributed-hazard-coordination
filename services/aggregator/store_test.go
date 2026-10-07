@@ -14,9 +14,7 @@ import (
 	"time"
 )
 
-// testStore connects to the database named by CANONICAL_DB_TEST_URL and skips
-// the test when it is unset, so plain `go test ./...` still works offline. The
-// schema is applied from the project's own migration (it is idempotent).
+// Connects to CANONICAL_DB_TEST_URL, skips if unset. The schema comes from the project's migration.
 func testStore(t *testing.T, poolSize int) *store {
 	t.Helper()
 
@@ -44,8 +42,7 @@ func testStore(t *testing.T, poolSize int) *store {
 	return s
 }
 
-// ref returns a source_ref_id unique to this test and removes its rows afterwards,
-// so tests never touch each other's data or anything else in the database.
+// A source_ref_id unique to this test, its rows are removed afterwards.
 func ref(t *testing.T, s *store) string {
 	t.Helper()
 
@@ -131,8 +128,6 @@ func TestUpsertTwiceKeepsOneRowAndReportsTheRepeat(t *testing.T) {
 		t.Fatalf("first upsert: changed=%v err=%v, want a new record", first, err)
 	}
 
-	// The same record polled again, as the mapper would hand it over: a new
-	// hazard_id and ingested_at, identical content.
 	again, err := s.upsert(context.Background(), hazard(sourcePVMBG, id))
 	if err != nil || again {
 		t.Fatalf("repeat upsert: changed=%v err=%v, want an identical repeat", again, err)
@@ -174,8 +169,7 @@ func TestChangedRecordUpdatesTheRowAndKeepsItsIdentity(t *testing.T) {
 	}
 }
 
-// P4 criterion 2: records from before and after the schema change live side by
-// side in the same table and read back unchanged, with no migration in between.
+// Records from before and after a schema change sit side by side in one table and read back unchanged, no migration.
 func TestAttributesRoundTripBeforeAndAfterSchemaChange(t *testing.T) {
 	t.Parallel()
 
@@ -294,7 +288,7 @@ func TestPoolIsCappedAndStillServesEveryCaller(t *testing.T) {
 	)
 
 	for range 25 {
-		id := ref(t, s) // each caller writes its own record, cleaned up afterwards
+		id := ref(t, s)
 
 		wg.Go(func() {
 			if _, err := s.upsert(context.Background(), hazard(sourcePVMBG, id)); err != nil {
@@ -391,9 +385,8 @@ func TestListByTypePagesFiltersAndSearchesLiterally(t *testing.T) {
 	t.Parallel()
 
 	s := testStore(t, 5)
-	tag := fmt.Sprintf("Zz%d", time.Now().UnixNano()) // keeps this test's rows apart from the shared table
+	tag := fmt.Sprintf("Zz%d", time.Now().UnixNano())
 
-	// Five volcanic events, one minute apart, newest last inserted first in the list.
 	for i, name := range []string{tag + " Alpha", tag + " Beta", tag + " 100% Gamma", tag + " Delta_x", tag + " Epsilon"} {
 		h := hazard(sourcePVMBG, ref(t, s))
 		h.AreaName = &name

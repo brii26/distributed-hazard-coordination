@@ -21,15 +21,12 @@ const (
 	grantAuthCode     = "authorization_code"
 	grantRefreshToken = "refresh_token"
 
-	// defaultRotateMargin is how long before expires_at a token loaded from the
-	// volume is rotated; freshly issued tokens rotate at a third of their TTL.
 	defaultRotateMargin = 20 * time.Second
 	defaultRetryDelay   = 5 * time.Second
 	maxTokenResponse    = 4096
 )
 
-// tokenFile is what lives in PVMBG_TOKEN_VOLUME_PATH (doc/TRD_M1.md 3.0).
-// ExpiresAt is absolute so a restart needs no record of when it was received.
+// Contents of the token volume file. ExpiresAt is absolute, so a restart needs no record of when it was received.
 type tokenFile struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
@@ -42,9 +39,7 @@ type tokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// tokenManager owns the PVMBG OAuth token: bootstrap with the one-time code on
-// the first ever start, rotation with the refresh token before expiry, and
-// persistence to the volume so a restart never needs the (single-use) code again.
+// Owns the PVMBG OAuth token: bootstrap with the one-time code, rotate with the refresh token, persist to the volume so a restart never needs the code again.
 type tokenManager struct {
 	baseURL      string
 	clientID     string
@@ -54,8 +49,6 @@ type tokenManager struct {
 	client       *http.Client
 	retryDelay   time.Duration
 
-	// mu guards cur, margin and lastErr: pollers read Token() while the
-	// rotation goroutine writes.
 	mu      sync.RWMutex
 	cur     tokenFile
 	margin  time.Duration
@@ -75,7 +68,7 @@ func newTokenManager(baseURL, clientID, clientSecret, oneTimeCode, path string) 
 	}
 }
 
-// Token returns the current access token, or "" while none has been obtained.
+// Current access token, or "" if none yet.
 func (m *tokenManager) Token() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -83,8 +76,7 @@ func (m *tokenManager) Token() string {
 	return m.cur.AccessToken
 }
 
-// LastError is the most recent bootstrap/rotation failure, nil after a success.
-// The PVMBG circuit breaker counts it like any failed poll.
+// Last bootstrap or rotation error (nil after a success). The PVMBG breaker counts it as a failed poll.
 func (m *tokenManager) LastError() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -92,9 +84,7 @@ func (m *tokenManager) LastError() error {
 	return m.lastErr
 }
 
-// load reads the persisted token, or bootstraps when there is none. A file that
-// cannot be read is treated as missing: the worst case is a bootstrap that PVMBG
-// rejects because the code was already spent, which run() keeps retrying.
+// Reads the stored token, or bootstraps if there is none. An unreadable file counts as missing.
 func (m *tokenManager) load() error {
 	b, err := os.ReadFile(m.path) //nolint:gosec // path is operator config (PVMBG_TOKEN_VOLUME_PATH), not request input
 	if err == nil {
@@ -116,9 +106,7 @@ func (m *tokenManager) load() error {
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
-// rotate exchanges the stored refresh token for a new pair.
-// errInvalidGrant is PVMBG refusing the grant itself (OAuth "invalid_grant"):
-// the refresh token is unknown to it, not a passing failure worth retrying.
+// Swaps the refresh token for a new pair. errInvalidGrant means PVMBG rejected the grant itself (unknown refresh token).
 var errInvalidGrant = errors.New("invalid_grant")
 
 func (m *tokenManager) rotate() error {
@@ -131,17 +119,12 @@ func (m *tokenManager) rotate() error {
 		return err
 	}
 
-	// PVMBG no longer knows our refresh token: it restarted and lost its token
-	// store, and with it the record that the one-time code was spent. Retrying the
-	// dead token would fail forever (#117), so bootstrap again (doc/TRD_M1.md 3.0,
-	// recovery). The stored pair is only replaced once a new one is obtained.
 	withID("").Warn("token bootstrap fallback", "reason", "refresh token rejected with invalid_grant")
 
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
-// obtain calls PVMBG's token endpoint and, on success, persists the new pair
-// before exposing it through Token().
+// Calls PVMBG's token endpoint and persists the new pair before exposing it through Token().
 func (m *tokenManager) obtain(grant string, form url.Values) error {
 	err := m.exchange(grant, form)
 
@@ -215,10 +198,9 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	}, ttl/3)
 }
 
-// store persists f (temp file + rename, so a crash never leaves a half-written
-// file) and only then makes it current, so the volume never trails what is in use.
+// Persists f (temp file, then rename) and only then makes it current, so the volume never lags behind.
 func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
-	b, err := json.Marshal(f) //nolint:gosec // persisting the token to the volume is the point (TRD 3.0)
+	b, err := json.Marshal(f) //nolint:gosec // persisting the token to the volume is the point
 	if err != nil {
 		return err
 	}
@@ -254,8 +236,7 @@ func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
 	return nil
 }
 
-// nextWait is how long run() sleeps before the next attempt: until the token is
-// due for rotation, or retryDelay while there is no token or the last attempt failed.
+// Waits until the token is due for rotation, or retryDelay if there is no token or the last attempt failed.
 func (m *tokenManager) nextWait() time.Duration {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -267,8 +248,7 @@ func (m *tokenManager) nextWait() time.Duration {
 	return max(time.Until(m.cur.ExpiresAt)-m.margin, 0)
 }
 
-// run keeps the token fresh until ctx is done. A failed attempt is logged and
-// retried; it never takes the process down.
+// Keeps the token fresh until ctx is done. Failures are logged and retried.
 func (m *tokenManager) run(ctx context.Context) {
 	for {
 		select {

@@ -18,9 +18,7 @@ import (
 
 var tracer = otel.Tracer(serviceName)
 
-// setupTracing sends spans to the OTLP endpoint in OTEL_EXPORTER_OTLP_ENDPOINT when
-// TRACING_ENABLED=true; otherwise tracing stays the no-op default. Export is batched
-// and asynchronous, so a Jaeger that is down costs a request nothing (#116).
+// Sends spans to OTLP when TRACING_ENABLED=true, otherwise a no-op. Export is batched and async, so a Jaeger that is down costs a request nothing.
 func setupTracing(ctx context.Context) (shutdown func(), err error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
@@ -48,9 +46,7 @@ func setupTracing(ctx context.Context) (shutdown func(), err error) {
 	}, nil
 }
 
-// traceIDOf is the trace ID in ctx as 32 hex characters, or "" when there is none.
-// With tracing on it doubles as the correlation ID, so a log line's correlation_id
-// is the Jaeger trace ID.
+// Trace ID in ctx (32 hex) or "". With tracing on it is also the correlation ID.
 func traceIDOf(ctx context.Context) string {
 	if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
 		return sc.TraceID().String()
@@ -61,8 +57,7 @@ func traceIDOf(ctx context.Context) string {
 
 type callKey struct{}
 
-// startCall opens a client span for one outbound call; logCall ends it with the
-// call's result, so the span duration is the call's latency.
+// Opens a client span for one outbound call, logCall ends it.
 func startCall(ctx context.Context, target string) context.Context {
 	ctx, sp := tracer.Start(ctx, target, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("correlation_id", correlationOf(ctx))))
@@ -84,7 +79,7 @@ func endCall(ctx context.Context, err error) {
 	sp.End()
 }
 
-// amqpCarrier lets the propagator read and write a message's AMQP headers.
+// Lets the propagator read and write AMQP headers.
 type amqpCarrier map[string]any
 
 func (c amqpCarrier) Get(k string) string { s, _ := c[k].(string); return s }

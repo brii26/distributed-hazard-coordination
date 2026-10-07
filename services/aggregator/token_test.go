@@ -18,8 +18,7 @@ const (
 	firstRefresh = "refresh-1"
 )
 
-// fakePVMBG is a minimal /oauth/token that counts grants and only accepts the
-// code once and the latest refresh token, like the real mock.
+// Minimal /oauth/token that counts grants and accepts the code once and only the latest refresh token.
 type fakePVMBG struct {
 	mu        sync.Mutex
 	codeCalls int
@@ -79,15 +78,14 @@ func (f *fakePVMBG) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// invalidGrant answers like the real mock's writeOAuthError.
+// Answers like the real mock's writeOAuthError.
 func invalidGrant(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 }
 
-// restart forgets every issued token and that the code was used, as the real
-// mock does when its process restarts.
+// Forgets every issued token and that the code was used, like the real mock restarting.
 func (f *fakePVMBG) restart() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -152,7 +150,6 @@ func TestRestartLoadsPersistedTokenWithoutCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A restarted Aggregator is a new manager over the same volume.
 	restarted := newTokenManager(m.baseURL, "client", "secret", "the-code", m.path)
 	if err := restarted.load(); err != nil {
 		t.Fatal(err)
@@ -170,7 +167,7 @@ func TestRestartLoadsPersistedTokenWithoutCode(t *testing.T) {
 func TestRotatesBeforeExpiry(t *testing.T) {
 	t.Parallel()
 
-	m, _ := newTestManager(t, 1) // 1s TTL: rotates at ~333ms
+	m, _ := newTestManager(t, 1)
 
 	if err := m.load(); err != nil {
 		t.Fatal(err)
@@ -189,7 +186,6 @@ func TestRotatesBeforeExpiry(t *testing.T) {
 		t.Fatal("token was not rotated")
 	}
 
-	// The volume was updated along with the in-memory token.
 	if f := readTokenFile(t, m.path); f.RefreshToken == firstRefresh {
 		t.Fatalf("file still holds the bootstrap pair: %+v", f)
 	}
@@ -234,7 +230,6 @@ func TestBootstrapFailureDoesNotCrashAndRetries(t *testing.T) {
 		t.Fatalf("expected a failed bootstrap, err=%v token=%q", err, m.Token())
 	}
 
-	// Operator fixes the config; run() picks it up on its retry.
 	m.mu.Lock()
 	m.oneTimeCode = "the-code"
 	m.mu.Unlock()
@@ -259,7 +254,7 @@ func TestRotationAfterAPVMBGRestartFallsBackToBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fake.restart() // the stored refresh token is now unknown to PVMBG
+	fake.restart()
 
 	if err := m.rotate(); err != nil {
 		t.Fatalf("rotation must recover through a fresh bootstrap, got %v", err)
@@ -281,7 +276,6 @@ func TestRotationAfterAPVMBGRestartFallsBackToBootstrap(t *testing.T) {
 		t.Fatalf("expected the one-time code once at start and once in the fallback, got %d", calls)
 	}
 
-	// The normal path is back: the next rotation uses the new refresh token, no code.
 	if err := m.rotate(); err != nil || m.Token() != "access-3" {
 		t.Fatalf("expected a normal rotation afterwards, got token=%q err=%v", m.Token(), err)
 	}
@@ -295,7 +289,6 @@ func TestAFailedFallbackKeepsTheStoredToken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// PVMBG did not restart: it rejects the refresh token and still remembers the code.
 	fake.mu.Lock()
 	fake.reject = true
 	fake.mu.Unlock()

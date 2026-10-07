@@ -1,9 +1,6 @@
 package main
 
-// Service-to-service suites: this Aggregator against the real BMKG and PVMBG
-// mocks, its Canonical Store and RabbitMQ, over the real network. Run them with
-// tests/integration/run.sh agg-bmkg or agg-pvmbg; without IT_AGG_GRPC_ADDR every
-// test here skips, so `go test ./...` stays offline.
+// Service-to-service suite: the Aggregator against the real BMKG and PVMBG mocks, Canonical Store and RabbitMQ. Run it with tests/integration/run.sh agg-bmkg or agg-pvmbg, without IT_AGG_GRPC_ADDR every test skips.
 
 import (
 	"context"
@@ -60,7 +57,7 @@ func aggIntegration(t *testing.T) itAgg {
 	}
 }
 
-// waitFor polls cond until it holds or the timeout passes.
+// Polls cond until it holds or the timeout passes.
 func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool) {
 	t.Helper()
 
@@ -73,7 +70,7 @@ func waitFor(t *testing.T, what string, timeout time.Duration, cond func() bool)
 	t.Fatalf("timed out after %v waiting for %s", timeout, what)
 }
 
-// hazards calls the Aggregator's read API the way the Client-Facing API does.
+// Calls the Aggregator's read API like the Client-Facing API does.
 func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -81,7 +78,7 @@ func (e itAgg) hazards(typ string) (*aggregatorpb.GetHazardsResponse, error) {
 	return e.read.GetHazards(ctx, &aggregatorpb.GetHazardsRequest{HazardType: typ})
 }
 
-// stored lists what the Canonical Store holds for a hazard type.
+// What the Canonical Store holds for a hazard type.
 func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	t.Helper()
 
@@ -93,7 +90,7 @@ func (e itAgg) stored(t *testing.T, typ string) []HazardEvent {
 	return events
 }
 
-// send makes one HTTP call with an optional header and returns the status and body.
+// One HTTP call with an optional header, returns status and body.
 func send(t *testing.T, method, url, headerKey, headerValue string) (int, []byte) {
 	t.Helper()
 
@@ -118,7 +115,7 @@ func send(t *testing.T, method, url, headerKey, headerValue string) (int, []byte
 	return resp.StatusCode, body
 }
 
-// itCompose runs a docker compose command against the suite's project.
+// Runs a docker compose command against the suite's project.
 func itCompose(t *testing.T, args ...string) string {
 	t.Helper()
 
@@ -130,7 +127,6 @@ func itCompose(t *testing.T, args ...string) string {
 	var stderr strings.Builder
 
 	cmd := exec.CommandContext(context.Background(), base[0], append(base[1:], args...)...) //nolint:gosec // IT_COMPOSE is set by tests/integration/run.sh
-	// compose prints warnings on stderr; only stdout is the answer.
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
@@ -140,8 +136,6 @@ func itCompose(t *testing.T, args ...string) string {
 
 	return strings.TrimSpace(string(out))
 }
-
-// ---- BMKG ----
 
 func (e itAgg) bmkgList(t *testing.T, path string) []map[string]any {
 	t.Helper()
@@ -179,7 +173,6 @@ func TestIntegrationBMKGKeyIsAcceptedAndRejected(t *testing.T) {
 		}
 	}
 
-	// The proof the Aggregator really sends the right key: BMKG data reached the store.
 	waitFor(t, "BMKG events in the Canonical Store", 30*time.Second, func() bool { return len(e.stored(t, typeSeismic)) > 0 })
 }
 
@@ -198,12 +191,9 @@ func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.
 
 	waitFor(t, "the seed events in the store", 30*time.Second, func() bool { return len(e.stored(t, typeSeismic)) >= len(all) })
 
-	// The generator keeps adding events, and they must keep arriving without
-	// re-reading everything (the Aggregator polls with its cursor).
 	before := len(e.stored(t, typeSeismic))
 	waitFor(t, "a newly generated event to arrive", 30*time.Second, func() bool { return len(e.stored(t, typeSeismic)) > before })
 
-	// Every stored event exists at the source, once.
 	known := map[string]bool{}
 
 	for _, ev := range e.bmkgList(t, "/seismic-events") {
@@ -222,7 +212,7 @@ func TestIntegrationBMKGSinceCursorIsHonouredAndPollingIsIncremental(t *testing.
 	}
 }
 
-// wantSeverity is TRD 3.2's rule, written out independently of the mapper.
+// Severity rule written out separately from the mapper.
 func wantSeverity(magnitude float64, warnings []map[string]any) string {
 	rank := map[string]int{"Waspada": 1, "Siaga": 2, "Awas": 3}
 	best := ""
@@ -326,9 +316,7 @@ func TestIntegrationBMKGEventsAndWarningsAreMappedAndStored(t *testing.T) { //no
 	}
 }
 
-// ---- PVMBG ----
-
-// toggle flips one of the mock's admin switches and returns its JSON answer.
+// Flips one of the mock's admin switches and returns its JSON answer.
 func (e itAgg) toggle(t *testing.T, path string) map[string]any {
 	t.Helper()
 
@@ -345,7 +333,7 @@ func (e itAgg) toggle(t *testing.T, path string) map[string]any {
 	return out
 }
 
-// pvmbgStatus is the state of PVMBG as the read API reports it, or "" when the call fails.
+// PVMBG state as the read API reports it, or "" if the call fails.
 func (e itAgg) pvmbgStatus() string {
 	resp, err := e.hazards(typeVolcanic)
 	if err != nil {
@@ -359,8 +347,6 @@ func (e itAgg) pvmbgStatus() string {
 func TestIntegrationPVMBGOAuthBootstrapFeedsTheStore(t *testing.T) {
 	e := aggIntegration(t)
 
-	// The mock only hands out tokens for its one-time code and Bearer-protects
-	// /volcanic-reports, so reports in the store prove bootstrap and the Bearer call.
 	if code, _ := send(t, http.MethodGet, e.pvmbgURL+"/volcanic-reports", "", ""); code != http.StatusUnauthorized {
 		t.Fatalf("/volcanic-reports without a token must be 401, got %d", code)
 	}
@@ -391,19 +377,16 @@ func TestIntegrationPVMBGOutageGoesStaleThenRecoversAndSeismicIsUnaffected(t *te
 
 	waitFor(t, "the PVMBG breaker to open", 30*time.Second, func() bool { return e.pvmbgStatus() == statusDown })
 
-	// Stored data is still served, marked stale.
 	vol, err := e.hazards(typeVolcanic)
 	if err != nil || len(vol.GetData()) == 0 || vol.GetMeta().GetStaleSince() == nil || vol.GetMeta().GetLastSuccessAt() == nil {
 		t.Fatalf("a down PVMBG with stored data must serve it with stale_since and last_success_at, got %v %v", vol, err)
 	}
 
-	// BMKG is untouched.
 	seis, err := e.hazards(typeSeismic)
 	if err != nil || len(seis.GetData()) == 0 || seis.GetMeta().GetSourceStatus() == statusDown || seis.GetMeta().GetStaleSince() != nil {
 		t.Fatalf("seismic must be unaffected by a PVMBG outage, got %v %v", seis, err)
 	}
 
-	// Switching it off recovers without a restart.
 	if e.toggle(t, "/admin/outage")["outage_active"] != false {
 		t.Fatal("expected the toggle to switch the outage off")
 	}
@@ -467,13 +450,12 @@ func TestIntegrationPVMBGSchemaChangeAddsConfidenceLevelWithoutARestart(t *testi
 		t.Fatalf("stored reports went from %d to %d: the schema change lost data", before, after)
 	}
 
-	// The read path keeps working with the new field.
 	if _, err := e.hazards(typeVolcanic); err != nil {
 		t.Fatalf("the read API failed after the schema change: %v", err)
 	}
 }
 
-// tokenFile reads the PVMBG token the Aggregator keeps on its volume.
+// Reads the PVMBG token the Aggregator keeps on its volume.
 func tokenFileOf(t *testing.T) tokenFile {
 	t.Helper()
 
@@ -496,15 +478,12 @@ func TestIntegrationPVMBGTokenRotatesAndASpentCodeIsNotNeededAfterARestart(t *te
 		t.Fatalf("expected a persisted token pair, got %+v", first)
 	}
 
-	// Fresh tokens last 60 s and rotate at a third of that.
 	waitFor(t, "the refresh token to rotate", 60*time.Second, func() bool { return tokenFileOf(t).RefreshToken != first.RefreshToken })
 
 	if e.pvmbgStatus() == statusDown {
 		t.Fatal("PVMBG went down while the token rotated")
 	}
 
-	// The one-time code is spent (the mock takes it once), so coming back after a
-	// restart can only work from the token on the volume.
 	itCompose(t, "restart", "aggregator")
 
 	waitFor(t, "PVMBG UP again after the restart", 90*time.Second, func() bool {

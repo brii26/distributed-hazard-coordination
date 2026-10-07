@@ -12,33 +12,30 @@ import (
 )
 
 const (
-	// ponytail: fixed; make it config if a slow database ever makes it matter.
+	// ponytail: fixed. Make it config if a slow database ever makes it matter.
 	ingestBuffer = 16
 	retryBase    = 200 * time.Millisecond
 	retryMax     = 5 * time.Second
 )
 
-// ingest is one source's second stage (doc/TRD_M1.md 3.5): map the records the
-// poller handed over, upsert each event, publish the new or changed ones. One per
-// source, so a slow write for one never holds up the other.
+// Second stage per source: map the poller's records, upsert them, publish the new or changed ones.
 type ingest struct {
-	name     string
-	in       <-chan pollResult
-	mapBatch func(pollResult) ([]HazardEvent, error)
-	upsert   func(context.Context, HazardEvent) (bool, error)
-	// publish hands a new or changed event, with its poll cycle's correlation ID, to the broker publisher.
+	name                string
+	in                  <-chan pollResult
+	mapBatch            func(pollResult) ([]HazardEvent, error)
+	upsert              func(context.Context, HazardEvent) (bool, error)
 	publish             func(ctx context.Context, h HazardEvent, correlationID string)
 	retryBase, retryMax time.Duration
 }
 
-// run ingests until the poller closes the channel, so queued records are still written on shutdown.
+// Runs until the poller closes the channel, so queued records are still written on shutdown.
 func (i *ingest) run(ctx context.Context) {
 	for res := range i.in {
 		i.handle(ctx, res)
 	}
 }
 
-// handle maps one poll's records and writes them in order; a rejected record is skipped.
+// Maps one poll and writes it in order. Rejected records are skipped.
 func (i *ingest) handle(ctx context.Context, res pollResult) {
 	start := time.Now()
 	ctx, span := tracer.Start(trace.ContextWithRemoteSpanContext(ctx, res.trace), "ingest "+i.name)
@@ -61,7 +58,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 			l.Warn("ingest upsert failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
 
 			if ctx.Err() != nil {
-				break // shutting down with the database unreachable: give up the rest
+				break
 			}
 
 			continue
@@ -78,12 +75,9 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 		"rejected", len(res.records)-len(events), "changed", changed, "duration_ms", time.Since(start).Milliseconds())
 }
 
-// write upserts h. An outage is retried with a growing delay, which holds the batch:
-// the channel fills and the poller waits, so nothing is lost. A data error cannot
-// succeed on retry and is returned at once. Shutdown ends the retrying.
+// Upserts h. An outage is retried with a growing delay and holds the batch (the poller waits too), a data error returns at once.
 func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	for attempt := 0; ; attempt++ {
-		// Not cancelled with ctx, so a draining shutdown still writes.
 		changed, err := i.upsert(context.WithoutCancel(ctx), h)
 		if err == nil || isPermanent(err) {
 			return changed, err
@@ -99,20 +93,20 @@ func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	}
 }
 
-// isPermanent reports a Postgres data exception (class 22) or constraint violation (23).
+// A Postgres data exception (class 22) or constraint violation (23), pointless to retry.
 func isPermanent(err error) bool {
 	var pg *pgconn.PgError
 
 	return errors.As(err, &pg) && (strings.HasPrefix(pg.Code, "22") || strings.HasPrefix(pg.Code, "23"))
 }
 
-// pipeline is one source's whole path: poller, channel, ingest.
+// One source's whole path: poller, channel, ingest.
 type pipeline struct {
 	poller *poller
 	ingest *ingest
 }
 
-// run runs both stages until ctx is done and the ingest side has drained.
+// Runs both stages until ctx is done and ingest has drained.
 func (p pipeline) run(ctx context.Context) {
 	var wg sync.WaitGroup
 
@@ -122,7 +116,7 @@ func (p pipeline) run(ctx context.Context) {
 	wg.Wait()
 }
 
-// newPipelines builds one pipeline per source; all share the one upsert (the store's pool).
+// One pipeline per source, all sharing the same upsert.
 func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) []pipeline {
 	m := newMapper()
 	mappers := map[string]func(pollResult) ([]HazardEvent, error){
