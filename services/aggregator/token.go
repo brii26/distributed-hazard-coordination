@@ -144,9 +144,22 @@ func (m *tokenManager) obtain(grant string, form url.Values) error {
 
 	if err != nil {
 		log.Printf("pvmbg token %s failed: %v", grant, err)
+
+		return err
 	}
 
-	return err
+	msg := "token bootstrapped"
+	if grant == grantRefreshToken {
+		msg = "token rotated"
+	}
+
+	m.mu.RLock()
+	expires := m.cur.ExpiresAt
+	m.mu.RUnlock()
+
+	withID("").Info(msg, "grant", grant, "expires_at", expires.Format(time.RFC3339), "result", "success")
+
+	return nil
 }
 
 func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
