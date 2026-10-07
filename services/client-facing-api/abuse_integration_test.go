@@ -1001,6 +1001,14 @@ func TestAbuseSustainedLoadAndHeadOfLine(t *testing.T) {
 //nolint:paralleltest // shares the docker stack
 func TestAbusePoisonMessagesDoNotStopTheConsumers(t *testing.T) {
 	e := abuseEnv(t)
+
+	user, password := os.Getenv("RABBITMQ_USER"), os.Getenv("RABBITMQ_PASSWORD")
+	if user == "" || password == "" {
+		t.Skip("RABBITMQ_USER and RABBITMQ_PASSWORD not set (run tests/integration/run.sh abuse)")
+	}
+
+	basic := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
+
 	e.reset(t)
 
 	received := func() int { return logCount(t, "notifier", `"message":"message received"`) }
@@ -1009,7 +1017,7 @@ func TestAbusePoisonMessagesDoNotStopTheConsumers(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{"properties": map[string]any{}, "routing_key": "", "payload": payload, "payload_encoding": "string"})
 
 		out := composeOut(t, "exec", "-T", "rabbitmq", "wget", "-qO-",
-			"--header", "Content-Type: application/json", "--header", "Authorization: Basic Z3Vlc3Q6Z3Vlc3Q=",
+			"--header", "Content-Type: application/json", "--header", "Authorization: Basic "+basic,
 			"--post-data", string(body), "http://127.0.0.1:15672/api/exchanges/%2F/hazard.events/publish")
 		if !strings.Contains(out, `"routed":true`) {
 			t.Fatalf("poison message %.20q was not routed to the consumers: %s", payload, out)
