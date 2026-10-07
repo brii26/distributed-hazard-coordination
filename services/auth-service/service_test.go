@@ -104,13 +104,17 @@ func newTestServer() *authServer {
 
 	return &authServer{
 		store: &fakeStore{
-			users:  map[string]user{lapEmail: mk("lap", roleLapangan), "op@x.example": mk("op", roleOperator)},
+			users: map[string]user{
+				lapEmail:       mk("lap", roleLapangan),
+				"op@x.example": mk("op", roleOperator),
+				"md@x.example": mk("md", roleMedia),
+			},
 			tokens: map[string]string{},
 		},
-		salt:        testSalt,
-		secret:      []byte(testSecret),
-		lapanganTTL: 60 * time.Second,
-		now:         func() time.Time { return testNow },
+		salt:      testSalt,
+		secret:    []byte(testSecret),
+		accessTTL: 60 * time.Second,
+		now:       func() time.Time { return testNow },
 	}
 }
 
@@ -153,23 +157,19 @@ func TestLoginIssuesVerifiableJWT(t *testing.T) {
 
 	s := newTestServer()
 
-	lap, err := s.Login(context.Background(), &authpb.LoginRequest{Email: lapEmail, Password: "pw-lap"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Every role gets the same configured TTL.
+	for id, role := range map[string]string{"lap": roleLapangan, "op": roleOperator, "md": roleMedia} {
+		email := id + "@x.example"
 
-	c := claimsOf(t, lap.GetJwt())
-	if c.Role != roleLapangan || c.Email != lapEmail || c.Exp-c.Iat != 60 || lap.GetExpiresIn() != 60 || len(lap.GetRefreshToken()) != 64 {
-		t.Fatalf("unexpected Lapangan claims/response: %+v %v", c, lap)
-	}
+		resp, err := s.Login(context.Background(), &authpb.LoginRequest{Email: email, Password: "pw-" + id})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	op, err := s.Login(context.Background(), &authpb.LoginRequest{Email: "op@x.example", Password: "pw-op"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if c := claimsOf(t, op.GetJwt()); c.Role != roleOperator || c.Exp-c.Iat != int64(otherRolesTTL.Seconds()) {
-		t.Fatalf("unexpected Operator claims: %+v", c)
+		c := claimsOf(t, resp.GetJwt())
+		if c.Role != role || c.Email != email || c.Exp-c.Iat != 60 || resp.GetExpiresIn() != 60 || len(resp.GetRefreshToken()) != 64 {
+			t.Fatalf("unexpected %s claims/response: %+v %v", role, c, resp)
+		}
 	}
 }
 
