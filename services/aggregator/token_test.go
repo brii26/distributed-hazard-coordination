@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -323,5 +324,36 @@ func TestRejectRenewsTheTokenAtOnce(t *testing.T) {
 
 	if m.Token() == firstAccess {
 		t.Fatal("a rejected token was not renewed")
+	}
+}
+
+//nolint:paralleltest // swaps the global logger
+func TestTokenBootstrapAndRotationAreLoggedWithoutSecrets(t *testing.T) {
+	buf := captureLogs(t)
+	m, _ := newTestManager(t, 60)
+
+	if err := m.load(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.rotate(); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := jsonLines(t, buf.String())
+
+	boot, rot := find(lines, "token bootstrapped"), find(lines, "token rotated")
+	if boot == nil || boot["grant"] != grantAuthCode || boot["result"] != "success" {
+		t.Fatalf("bootstrap line missing or wrong: %v", boot)
+	}
+
+	if rot == nil || rot["grant"] != grantRefreshToken || rot["expires_at"] == "" {
+		t.Fatalf("rotation line missing or wrong: %v", rot)
+	}
+
+	for _, secret := range []string{firstAccess, firstRefresh, m.Token()} {
+		if strings.Contains(buf.String(), secret) {
+			t.Fatalf("log leaks a token value %q", secret)
+		}
 	}
 }
