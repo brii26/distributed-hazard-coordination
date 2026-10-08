@@ -51,3 +51,17 @@ git checkout -b 18-volcanic-mapping 17-seismic-mapping
 Open B's PR targeting A's branch (not `main`). Note in B's PR description that it's stacked, e.g. "Stacked on #<A's PR number> — review that first." When A merges into `main`, retarget B's PR to `main` (GitHub usually does this automatically once the base branch is gone) and it'll only show B's actual diff from then on.
 
 Keep stacks shallow — two or three deep at most. If a stack is growing past that, it's usually a sign the underlying issue breakdown needs splitting further, not that the stack needs to get taller.
+
+## Building the LaTeX report
+
+The report lives in `doc/latex/` (entry point `main.tex`) and builds to `doc/latex/build/main.pdf`. Pick one of two ways:
+
+1. **devenv (simplest):** run `devenv shell`, then from the repo root:
+   - `tex-build` builds the PDF once.
+   - `tex-watch` rebuilds on every save, so you can keep the PDF open in a viewer that reloads on change.
+
+2. **Your own toolchain:** install TeX Live with `xelatex`, `latexmk` and the TeX Gyre fonts (Termes), the same set devenv's `texliveFull` gives you. Then from the repo root:
+   - one-off build: `latexmk -xelatex -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex`
+   - rebuild on save: same command with `-pvc -view=none` added.
+
+   The mono font (Roboto Mono) is loaded from `doc/latex/fonts/`, so nothing else needs installing. `pandoc`, `libreoffice` and `poppler-utils` in devenv are only for converting and comparing documents and aren't needed to build.
