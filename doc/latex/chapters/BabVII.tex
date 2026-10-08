@@ -1,0 +1,334 @@
+\chapter{Problem 2 - Concurrency, Availability, \& Graceful Degradation}
+
+\section{Rancangan Solusi}
+
+\subsection{Pemisahan Jalur Ingest dan Jalur Pelayanan}
+
+Sistem memisahkan dua jalur yang sebelumnya menyatu dalam satu alur:
+
+\begin{itemize}
+\tightlist
+\item
+  Jalur ingest: Aggregator melakukan polling ke BMKG dan PVMBG di belakang, memetakan hasilnya ke HazardEvent, lalu menyimpannya ke Canonical Store.\\
+\item
+  Jalur pelayanan: permintaan client diterima Client-Facing API, diteruskan ke read API milik Aggregator, dan dijawab dari Canonical Store.
+\end{itemize}
+
+Dengan pemisahan ini, permintaan client tidak pernah menunggu respons BMKG maupun PVMBG secara langsung. Latensi PVMBG (500 ms-3 detik) hanya berdampak pada seberapa cepat data vulkanik baru masuk ke store, bukan pada latensi permintaan client.
+
+Endpoint penyajian dipisah berdasarkan jenis bahaya:
+
+\begin{itemize}
+\tightlist
+\item
+  GET /hazards?type=SEISMIC -\textgreater{} hanya membaca data bersumber BMKG\\
+\item
+  GET /hazards?type=VOLCANIC -\textgreater{} hanya membaca data bersumber PVMBG
+\end{itemize}
+
+Permintaan ``BMKG-only'' pada kriteria penyelesaian merujuk ke endpoint seismik, yang sama sekali tidak menyentuh status maupun data PVMBG.
+
+\subsection{Poller Independen per Sumber}
+
+Setiap sumber memiliki poller sendiri yang berjalan sebagai task asinkron terpisah di dalam Agregator:
+
+\begin{itemize}
+\tightlist
+\item
+  Poller BMKG dan poller PVMBG memiliki loop, interval, dan timeout masing-masing, sehingga poller BMKG tidak pernah menunggu poller PVMBG.\\
+\item
+  Setiap poller hanya menjalankan satu panggilan dalam satu waktu (single in-flight), panggilan berikutnya baru dimulai setelah panggilan sebelumnya selesai atau terkena timeout. Waktu tunggu sebelum panggilan berikutnya dihitung sebagai interval polling dikurangi durasi panggilan sebelumnya. Jika durasi panggilan melebihi interval, panggilan berikutnya langsung dijalankan tanpa menunggu. Dengan demikian, jarak antar panggilan tetap sebesar interval saat sumber normal, tidak melebihi durasi timeout saat sumber melambat, dan panggilan tidak pernah menumpuk.\\
+\item
+  Setiap panggilan keluar diberi timeout eksplisit. Panggilan yang melewati timeout dibatalkan dan dihitung sebagai kegagalan.\\
+\item
+  Setiap poller dibungkus circuit breaker tersendiri.
+\end{itemize}
+
+Model konkurensi yang digunakan adalah asynchronous non-blocking I/O: menunggu respons jaringan tidak memblokir thread, sehingga poller dan penanganan permintaan client dapat berjalan bersamaan tanpa saling menahan.
+
+\subsection{Pembatasan Konkurensi}
+
+Untuk mencegah lonjakan akses menghabiskan resource, sistem menerapkan batas di beberapa lapisan:
+
+\begin{itemize}
+\tightlist
+\item
+  Global concurrency cap (Client-Facing API dan read API Aggregator): jumlah permintaan yang diproses bersamaan dibatasi oleh semaphore. Permintaan yang datang saat kapasitas penuh langsung ditolak dengan HTTP 429 beserta header Retry-After (load shedding).\\
+\item
+  Rate limit per client (Client-Facing API): setiap identitas client (Media, Tim Lapangan, BNPB Ops) dibatasi dengan algoritma token bucket. Lapisan ini berfungsi sebagai pembagi kapasitas yang adil agar satu client tidak memonopoli sistem, bukan sebagai pelindung kapasitas utama.\\
+\item
+  Timeout per hop: setiap panggilan Client-Facing API -\textgreater{} Aggregator dan Aggregator -\textgreater{} Canonical Store memiliki batas waktu, sehingga tidak ada permintaan yang menggantung dan menahan resource.\\
+\item
+  Connection pool terbatas: koneksi HTTP ke Aggregator dan koneksi ke Canonical Store memakai pool berukuran tetap.
+\end{itemize}
+
+\subsection{Status Kebaruan Data dan Degradasi}
+
+Aggregator menyimpan status untuk setiap sumber
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|}
+\hline
+Attributes & Value \\
+\hline
+\endhead
+\endlastfoot
+source & BMKG \\
+\hline
+status & UP \\
+\hline
+last\_success\_at & Waktu polling terakhir yang berhasil \\
+\hline
+stale\_since & Waktu data mulai dianggap basi (null bila UP) \\
+\hline
+consecutive\_fail & jumlah kegagalan polling berturut-turut \\
+\hline
+\end{longtable}
+
+Status ini dikendalikan oleh circuit breaker per sumber:
+
+\begin{itemize}
+\tightlist
+\item
+  CLOSED: polling berjalan normal, status UP.\\
+\item
+  OPEN: setelah N kegagalan berturut-turut, breaker terbuka dan status menjadi DOWN. Polling ke sumber dihentikan sementara (fail fast) agar resource tidak terbuang untuk sumber yang mati, dan stale\_since diisi dengan last\_success\_at.\\
+\item
+  HALF-OPEN: setelah durasi tertentu, satu panggilan percobaan dikirim. Jika berhasil, breaker kembali CLOSED, status kembali UP, dan stale\_since dikosongkan tanpa restart. Jika gagal, breaker kembali OPEN.
+\end{itemize}
+
+Perilaku respons berdasarkan kondisi sumber:
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|}
+\hline
+Kondisi & Respons \\
+\hline
+\endhead
+\endlastfoot
+Sumber UP & 200, data terbaru \\
+\hline
+Sumber DOWN, store berisi data & 200, data terakhir + meta.stale\_since \\
+\hline
+Sumber DOWN, store kosong tersedia & 503, body exkplisit: sumber tidak tersedia \\
+\hline
+Permintaan untuk sumber lain & tidak terpengaruh \\
+\hline
+\end{longtable}
+
+Setiap respons menyertakan metadata kebaruan, contoh:
+
+\begin{codebox}
+{
+"data": [ ...HazardEvent... ],
+"meta": {
+     "source": "PVMBG",
+     "source_status": "DOWN",
+     "last_success_at": "2026-10-01T10:15:02Z",
+     "stale_since": "2026-10-01T10:15:02Z" }
+}
+\end{codebox}
+
+Dengan demikian, selama outage PVMBG permintaan seismik tetap dilayani normal, permintaan vulkanik dijawab dengan data terakhir beserta penanda kebaruan, tidak ada respons 500, dan tidak ada permintaan yang menggantung hingga timeout client.
+
+\subsection{Parameter Konfigurasi}
+
+Seluruh parameter dibaca dari environment variable:
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|}
+\hline
+Variabel & Default & Keterangan \\
+\hline
+\endhead
+\endlastfoot
+POLL\_INTERVAL\_MS & 3000 & Interval polling per sumber \\
+\hline
+POLL\_TIMEOUT\_MS & 4000 & Timeout satu panggilan polling \\
+\hline
+CB\_FAILURE\_THRESHOLD & 3 & Kegagalan berturut-turut sebelum OPEN \\
+\hline
+CB\_OPEN\_DURATION\_MS & 10000 & Durasi OPEN sebelum HALF-OPEN \\
+\hline
+MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (Semaphore) \\
+\hline
+RATE\_LIMIT\_RPS & 50 & Token bucket per client \\
+\hline
+UPSTREAM\_TIMEOUT\_MS & 1000 & Timeout Client APi -\textgreater{} Aggregator \\
+\hline
+DB\_POOL\_SIZE & 20 & Ukuran connection pool Canonical Store \\
+\hline
+\end{longtable}
+
+\section{Alasan Keputusan}
+
+\subsection{Pemisahan Jalur Ingest dan Jalur Akses}
+
+Alternatif yang dipertimbangkan:
+
+\begin{itemize}
+\tightlist
+\item
+  Proxy langsung: setiap permintaan client diteruskan secara real-time ke BMKG/PVMBG. Ini adalah pendekatan prototipe awal dan merupakan sumber utama head-of-line blocking, karena latensi client ikut menanggung latensi sumber yang paling lambat.\\
+\item
+  Scatter-gather parallel per permintaan: BMKG dan PVMBG dipanggil paralel saat ada permintaan. Pendekatan ini menghilangkan urutan sekuensial, tetapi permintaan yang membutuhkan PVMBG tetap menunggu hingga 3 detik, setiap permintaan client melipatgandakan beban ke sumber, dan outage sumber langsung terasa oleh client.\\
+\item
+  Cache dengan TTL di depan sumber: mengurangi beban, tetapi saat cache kedaluwarsa permintaan kembali menunggu sumber (cache miss), sehingga latensi menjadi tidak konsisten.
+\end{itemize}
+
+Pendekatan yang dipilih (polling di \emph{background}, client membaca dari \emph{Canonical Store}) dipilih karena latensi client sepenuhnya lepas dari latensi dan ketersediaan sumber. Selain itu, spesifikasi sudah menetapkan pola ingest berupa polling, sehingga \emph{Canonical Store} secara alami menjadi sumber jawaban bagi client.
+
+Trade-off:\\
+data yang diterima client bersifat eventually consistent, dengan keterlambatan maksimal sebesar interval polling ditambah latensi sumber. Untuk kebutuhan koordinasi kebencanaan dengan interval 2-5 detik, keterlambatan ini dapat diterima.
+
+\subsection{Model Konkurensi Asynchronous Non-Blocking I/O}
+
+Alternatif yang dipertimbangkan:
+
+\begin{itemize}
+\tightlist
+\item
+  Thread-per-request: sederhana, tetapi setiap permintaan yang menunggu I/O menahan satu thread beserta memorinya. Pada lonjakan akses, jumlah thread tumbuh tanpa batas dan menjadi penyebab \emph{resource exhaustion} itu sendiri.\\
+\item
+  \emph{Worker pool} dengan thread tetap: jumlah thread terkendali, tetapi thread tetap menganggur selama menunggu I/O, sehingga kapasitas efektif terbatas pada jumlah thread.
+\end{itemize}
+
+Beban kerja sistem didominasi I/O (panggilan jaringan ke sumber, Aggregator, dan Canonical Store), bukan komputasi. Asynchronous non-blocking I/O memungkinkan ribuan operasi menunggu secara bersamaan dengan biaya yang kecil per operasi, sehingga poller dan permintaan client dapat berjalan berdampingan tanpa saling menahan.
+
+Trade-off: seluruh operasi di dalam event loop wajib non-blocking. Satu operasi blocking atau komputasi berat dapat menahan seluruh event loop. Karena pemetaan skema bersifat ringan, risiko ini dinilai kecil.
+
+\subsection{Poller Independen dengan Single In-Flight}
+
+Alternatif yang dipertimbangkan:
+
+\begin{itemize}
+\tightlist
+\item
+  Satu loop polling sekuensial (BMKG lalu PVMBG): siklus BMKG tertahan oleh PVMBG, sehingga data seismik ikut terlambat masuk ke store.\\
+\item
+  Satu loop yang memanggil kedua sumber secara paralel lalu menunggu keduanya: urutan tidak lagi sekuensial, tetapi siklus berikutnya tetap menunggu sumber yang paling lambat.
+\end{itemize}
+
+Poller terpisah per sumber membuat laju ingest BMKG sama sekali tidak bergantung pada PVMBG. Aturan single in-flight dipilih agar panggilan ke sumber yang melambat tidak menumpuk dan tidak memperparah beban pada sumber tersebut.
+
+Trade-off: saat sumber melambat, sebagian siklus polling dilewati sehingga data baru dari sumber tersebut masuk sedikit lebih lambat.
+
+\subsection{Load Shedding pada Global Concurrency Cap}
+
+Alternatif yang dipertimbangkan:
+
+\begin{itemize}
+\tightlist
+\item
+  Tanpa batas: setiap permintaan diterima dan diproses. Ini adalah kondisi yang menyebabkan resource exhaustion.\\
+\item
+  Antrian tanpa batas: permintaan tidak ditolak, tetapi antrian tumbuh terus saat lonjakan, latensi meningkat tanpa batas, dan memori habis.\\
+\item
+  Antrian berbatas dengan waktu tunggu: permintaan menunggu giliran, tetapi menambah latensi pada semua permintaan saat sistem sibuk.
+\end{itemize}
+
+Penolakan langsung dengan HTTP 429 dipilih karena menjaga latensi permintaan yang diterima tetap rendah dan memberi sinyal yang jelas kepada client untuk mencoba kembali (Retry-After). Sistem tetap melayani sebagian permintaan dengan baik.
+
+Trade-off: sebagian client menerima 429 saat puncak beban dan perlu melakukan retry.
+
+\subsection{Rate Limiting Token Bucket per Client}
+
+Alternatif yang dipertimbangkan:
+
+\begin{itemize}
+\tightlist
+\item
+  Fixed window: sederhana, tetapi memungkinkan lonjakan dua kali lipat di sekitar batas window.\\
+\item
+  Sliding window log: akurat, tetapi harus menyimpan timestamp setiap permintaan sehingga boros memori.\\
+\item
+  Leaky bucket: menghasilkan laju keluaran yang rata, tetapi permintaan diantrikan terlebih dahulu sehingga menambah latensi dan berisiko melanggar target p95 \textless{} 300 ms.\\
+\item
+  Sliding window counter: menyeimbangkan akurasi dan memory dengan weighted average antar window, tetapi hasilnya tetap estimasi (asumsi distribusi request merata di window sebelumnya) sehingga bisa sedikit meleset saat traffic bursty/tidak uniform.
+\end{itemize}
+
+Token bucket dipilih karena mengizinkan burst singkat yang wajar, tidak menambah latensi pada permintaan yang lolos, dan hanya membutuhkan dua nilai per client (jumlah token dan waktu isi ulang terakhir).
+
+Kunci rate limit berupa client\_id dari klaim JWT, bukan alamat IP, karena beberapa client dapat berbagi IP yang sama (misalnya di balik NAT atau saat load testing) dan identitas client sudah terverifikasi oleh Client-Facing API.
+
+Trade-off: state token bucket disimpan in-memory sehingga hilang saat Client-Facing API di-restart dan tidak dapat dibagi antar-instance. Karena Client-Facing API berjalan sebagai satu instance pada M1, hal ini dapat diterima (lihat 7.3).
+
+\subsection{Circuit Breaker dan Respons Stale dengan Penanda}
+
+Alternatif yang dipertimbangkan:
+
+\begin{itemize}
+\tightlist
+\item
+  Mengembalikan error saat sumber mati: sederhana, tetapi membuang data terakhir yang masih berguna. Ini adalah perilaku yang menyebabkan dashboard BNPB kosong.\\
+\item
+  Menyajikan data terakhir tanpa penanda: client tidak dapat membedakan data terkini dari data basi, yang berbahaya dalam konteks kebencanaan karena status gunung api dapat berubah selama outage.\\
+\item
+  Retry terus-menerus tanpa circuit breaker: membuang resource untuk sumber yang sudah jelas mati dan memperbanyak error log.
+\end{itemize}
+
+Kombinasi circuit breaker dan respons stale dengan penanda (stale\_since, source\_status) dipilih karena data terakhir tetap tersedia bagi client, client mengetahui secara eksplisit sejak kapan data tersebut tidak diperbarui, dan sistem berhenti membuang resource untuk sumber yang mati. Status HALF-OPEN memungkinkan pemulihan otomatis tanpa restart ketika sumber kembali hidup.\\
+Respons 503 dengan body eksplisit dipilih untuk kondisi store kosong, karena mengembalikan 200 dengan data kosong dapat disalahartikan sebagai ``tidak ada aktivitas vulkanik''.
+
+Trade-off: deteksi outage tidak instan, melainkan membutuhkan N kegagalan berturut-turut (CB\_FAILURE\_THRESHOLD). Pemulihan juga tertunda hingga durasi OPEN berakhir (CB\_OPEN\_DURATION\_MS). Nilai keduanya dapat dikonfigurasi untuk menyeimbangkan kecepatan deteksi dan ketahanan terhadap gangguan sesaat.
+
+\section{Batasan Yang Disadari}
+
+\subsection{Data Bersifat Eventual Consistent}
+
+Client membaca dari Canonical Store, sehingga data yang diterima tertinggal paling lama sebesar interval polling ditambah latensi sumber. Hal ini merupakan konsekuensi dari pola ingest polling yang ditetapkan spesifikasi, dan dengan interval 2-5 detik keterlambatan ini masih dapat diterima untuk kebutuhan koordinasi.
+
+\subsection{Deteksi Outage Tidak Instan}
+
+Circuit breaker baru terbuka setelah CB\_FAILURE\_THRESHOLD kegagalan berturut-turut, sehingga selama jeda tersebut data vulkanik masih disajikan dengan status UP. Ambang ini sengaja dipasang agar gangguan sesaat tidak langsung dianggap outage. Setelah status berubah, stale\_since tetap akurat karena diisi dengan last\_success\_at.
+
+\subsection{Sumber yang Sangat Lambat Diperlakukan Sama dengan Sumber yang Mati}
+
+Panggilan yang melewati POLL\_TIMEOUT\_MS dihitung sebagai kegagalan, karena sumber yang lambat maupun mati sama-sama tidak menghasilkan data tepat waktu. Nilai default timeout sengaja diatur di atas delay maksimum PVMBG pada spesifikasi (3 detik).
+
+\subsection{Load shedding tidak memprioritaskan client}
+
+Global concurrency cap berlaku sama untuk semua client, sehingga saat beban puncak permintaan Tim Lapangan dapat ditolak sama seperti permintaan Media.
+
+\subsection{Satu instance per service dan state in-memory}
+
+Client-Facing API dan Aggregator masing-masing berjalan sebagai satu instance, dengan state token bucket dan status sumber disimpan in-memory. State ini hilang saat restart dan akan terbentuk ulang dari permintaan dan hasil polling berikutnya. Skala horizontal membutuhkan penyimpanan state bersama (misalnya Redis) yang menambah komponen baru, sedangkan satu instance sudah cukup untuk kriteria M1.
+
+\subsection{Aggregator dan Canonical Store Merupakan Dependensi Jalur Akses}
+
+Jika Aggregator atau Canonical Store mati, seluruh permintaan data tidak dapat dilayani. Client-Facing API mengembalikan 503 eksplisit tanpa menggantung, tetapi tidak menyediakan data cadangan.
+
+\subsection{Hasil load testing bergantung pada lingkungan pengujian}
+
+Load testing dijalankan pada satu mesin yang juga menjalankan seluruh container, sehingga load generator dan sistem berbagi CPU dan memori. Angka yang dilaporkan bertujuan membuktikan perilaku sistem di bawah beban, bukan mengukur kapasitas produksi.
+
+\section{Bukti Penyelesaian}
+
+\subsection{Uji p95 BMKG-only saat PVMBG delay 3 detik}
+
+\textless placeholder\textgreater{}
+
+\subsection{Load Testing (≥50 koneksi, 60 detik)}
+
+\textless placeholder\textgreater{}
+
+\subsection{Demo Outage PVMBG}
+
+\textless placeholder\textgreater{}
+
+\section{Model Konkurensi dan Mitigasi Kegagalan}
+
+\subsection{Model Konkurensi}
+
+Sistem menggunakan asynchronous concurrency berbasis non-blocking I/O. Beban kerja sistem didominasi operasi I/O (panggilan jaringan ke sumber, Aggregator, dan Canonical Store), bukan komputasi, sehingga parallelism tidak menjadi fokus rancangan. Poller BMKG, poller PVMBG, dan penanganan permintaan client berjalan sebagai task asinkron independen di atas event loop, dengan jumlah permintaan bersamaan dibatasi oleh semaphore.
+
+\subsection{Mitigasi Head-of-Line Blocking}
+
+Client tidak pernah memicu panggilan langsung ke BMKG maupun PVMBG. Permintaan client dijawab Aggregator dari Canonical Store, sehingga latensi PVMBG tidak masuk ke jalur permintaan client. Poller per sumber juga berjalan independen, sehingga ingest data seismik tidak tertahan oleh PVMBG yang lambat (7.1.1, 7.1.2).
+
+\subsection{Mitigasi Resource Exhaustion}
+
+Semaphore membatasi jumlah permintaan yang diproses bersamaan, dan permintaan yang melebihi kapasitas langsung ditolak dengan HTTP 429. Rate limiting per client dengan token bucket mencegah satu client memonopoli kapasitas, sementara timeout di setiap hop dan connection pool terbatas mencegah permintaan menggantung dan menahan resource (7.1.3).
+
+\subsection{Mitigasi Ketiadaan Degradasi Terkendali}
+
+Circuit breaker per sumber mendeteksi sumber yang mati secara otomatis di level polling, lalu mencatat stale\_since. Selama sumber DOWN, data sumber tersebut dijawab dari Canonical Store beserta stale\_since, sedangkan sumber lain tidak terpengaruh. Setelah sumber hidup kembali, circuit breaker memulihkan status secara otomatis tanpa restart (7.1.4).
+
+\section{Konfigurasi dan Tooling Load Testing}

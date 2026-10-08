@@ -1,0 +1,136 @@
+\chapter{Problem 5 - Fan-out Event Distribution/Pub-sub}
+
+\section{Rancangan Solusi}
+
+Aggregator mempublikasikan HazardEvent ke RabbitMQ melalui satu fanout exchange. Hanya HazardEvent yang baru atau berubah berdasarkan hasil upsert ke Canonical Store yang dipublikasikan, sehingga data yang diterima ulang akibat polling berulang tidak dipublikasikan kembali. Correlation ID dibawa melalui properti AMQP correlation\_id, terpisah dari payload HazardEvent.
+
+Setiap consumer (Dashboard Updater, Notifier, dan Audit Logger) mendeklarasikan durable queue miliknya sendiri dan mengikatnya ke exchange tersebut. Tidak ada queue yang dibagi antar-consumer, sehingga setiap consumer menerima salinan dari setiap pesan. Aggregator hanya mengenal nama exchange dan tidak mengetahui keberadaan consumer. Audit Logger digunakan untuk mendemonstrasikan penambahan consumer baru tanpa perubahan kode producer.
+
+Di sisi producer, publish() memasukkan pesan ke buffer in-memory berukuran terbatas dan langsung mengembalikan kendali, sehingga loop polling Aggregator tidak menunggu broker. Task latar belakang mengirim pesan dengan publisher confirms dan melakukan retry saat gagal. Jika buffer penuh akibat outage broker yang berkepanjangan, pesan tertua dibuang dan dicatat ke log beserta hazard\_id-nya.
+
+Queue dideklarasikan sebagai durable dan pesan dipublikasikan sebagai persistent (delivery\_mode = 2), sehingga pesan yang terbit saat consumer mati tetap tersimpan di queue dan diproses setelah consumer menyala kembali.
+
+Seluruh consumer menggunakan manual acknowledgment: pesan baru di-ack setelah selesai diproses, sehingga pesan yang sedang diproses saat consumer crash akan dikirim ulang. Karena redelivery dapat menghasilkan duplikat, setiap consumer dibuat idempoten: - Dashboard Updater melakukan upsert ke state map in-memory berkunci hazard\_id, sehingga memproses pesan yang sama dua kali menghasilkan state yang sama. - Notifier dan Audit Logger mencatat pasangan (hazard\_id, severity) yang sudah diproses, dan melewati pesan dengan pasangan yang sudah tercatat. Penggunaan severity dalam kunci memastikan eskalasi tingkat ancaman pada event yang sama, misalnya dari SIAGA menjadi AWAS, tetap diproses.
+
+Catatan (hazard\_id, severity) disimpan pada berkas di disk milik masing-masing consumer. Agar pemeriksaan tidak dibebani latensi I/O, isi berkas dimuat ke memori setiap kali service dinyalakan, dan pemeriksaan dilakukan terhadap data di memori. Setelah pesan berhasil diproses, catatan ditambahkan ke memori sekaligus ditulis ke disk, baru kemudian pesan di-ack. Dengan demikian, catatan tetap ada setelah crash dan restart.
+
+\section{Alasan Keputusan}
+
+\subsection{Pemilihan Broker}
+
+RabbitMQ, Kafka, and NATS were each evaluated against the five Problem 5 criteria and against the team's operational constraints under a fixed deadline.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|}
+\hline
+Aspek & RabbitMQ (dipilih) & Kafka & NATS (core) \\
+\hline
+\endhead
+\endlastfoot
+Fan-out ke consumer independen & Fanout exchange bawaan & Consumer group terpisah per consumer & Subscription terpisah \\
+\hline
+Catch-up setelah consumer restart & Durable queue dan persistent message & Offset consumer group & Tidak didukung tanpa JetStream \\
+\hline
+History event untuk consumer baru & Tidak ada & Ada, sesuai log retension & Tidak ada tanpa JetStream \\
+\hline
+Kebutuhan Spesifikasi (M1) & Satu container, ringan & Lebih berat (KRaft, Partition) & Paling ringan, sampai JetSream diaktifkan \\
+\hline
+\end{longtable}
+
+RabbitMQ dipilih karena mendukung at-least-once secara bawaan (durable queue, persistent message, publisher confirms) dan fanout exchange-nya sesuai langsung dengan kebutuhan distribusi ke banyak consumer. Keunggulan Kafka dalam menyediakan history event bagi consumer baru tidak dibutuhkan pada M1, karena history HazardEvent sudah tersedia melalui API Aggregator.
+
+\subsection{Jenis Exchange}
+
+Topic exchange dengan pola catch-all, berperilaku sama dengan fanout pada kebutuhan saat ini, tetapi menambah beban merancang skema routing key yang belum terpakai. Fanout dipilih karena lebih sederhana, dan peralihan ke topic exchange tetap dapat dilakukan kemudian.
+
+\subsection{Queue per Consumer}
+
+Consumer yang berbagi satu queue akan menerima pesan secara bergiliran, sehingga setiap pesan hanya sampai ke satu consumer. Queue per consumer memastikan setiap consumer menerima setiap event.
+
+\subsection{Kebijakan Buffer Producer}
+
+Buffer tanpa batas berisiko menghabiskan memori saat outage broker, sedangkan buffer yang memblokir membuat producer tertahan. Buffer terbatas yang membuang pesan tertua dipilih karena event terbaru lebih relevan secara operasional, dan event yang dibuang tetap tersimpan di Canonical Store.
+
+\subsection{Manual Acknowledgement}
+
+Automatic acknowledgment menyebabkan pesan hilang bila consumer crash di tengah pemrosesan. Manual acknowledgment dipilih karena kehilangan HazardEvent lebih berbahaya daripada duplikat, dengan konsekuensi setiap consumer wajib idempoten.
+
+\subsection{Kunci Deduplikasi}
+
+Kunci hazard\_id saja membuat eskalasi severity pada event yang sama, misalnya SIAGA menjadi AWAS, dianggap duplikat dan tidak diproses. Kunci (hazard\_id, severity) menangani kasus ini tanpa menambah field pada format kanonik.
+
+\subsection{Penyimpanan Status Deduplikasi}
+
+Pemeriksaan langsung ke disk menambah latensi I/O, sedangkan penyimpanan hanya di memori hilang saat crash, yang justru memicu redelivery. Karena itu, catatan dimuat dari disk ke memori saat service dinyalakan, diperiksa di memori, dan ditulis ke keduanya sebelum pesan di-ack.
+
+\section{Batasan Yang Disadari}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Event dapat tidak terpublikasi saat broker atau Aggregator bermasalah Jika outage broker melebihi kapasitas buffer, pesan tertua dibuang. Buffer juga berada di memori, sehingga pesan yang belum terkirim hilang bila Aggregator crash. Event tersebut tetap tersimpan di Canonical Store, tetapi tidak dipublikasikan ulang karena pola outbox tidak diterapkan.\\
+\item
+  Consumer baru tidak menerima riwayat event Queue dideklarasikan oleh consumer saat pertama kali dijalankan, sehingga event yang terbit sebelum itu tidak diterima. Riwayat HazardEvent tetap dapat diperoleh melalui API Aggregator.\\
+\item
+  Queue consumer yang mati dapat tumbuh tanpa batas Selama consumer mati, pesan terus menumpuk di queue-nya karena batas panjang queue maupun TTL pesan tidak dikonfigurasi.\\
+\item
+  Duplikat masih mungkin terjadi Jika consumer crash setelah memproses pesan tetapi sebelum catatan deduplikasi tersimpan, pesan tersebut akan diproses ulang setelah redelivery, misalnya peringatan terkirim dua kali. Konsekuensi ini diterima karena peringatan ganda lebih aman daripada peringatan yang terlewat.\\
+\item
+  State Dashboard Updater hilang saat restart State map disimpan di memori dan hanya terbentuk kembali dari event yang diterima setelah restart. Sinkronisasi ulang dari API Aggregator saat start tidak diimplementasikan.\\
+\item
+  Kunci deduplikasi tidak menangani severity yang naik kembali Dengan kunci (hazard\_id, severity), jika severity sebuah event turun lalu naik kembali ke tingkat yang pernah diproses, misalnya SIAGA menjadi WASPADA lalu kembali SIAGA, kenaikan kedua dianggap duplikat. Pola perubahan ini dinilai jarang terjadi pada cakupan M1.\\
+\item
+  Catatan deduplikasi tidak pernah dibersihkan Berkas catatan (hazard\_id, severity) terus bertambah dan dimuat seluruhnya ke memori setiap kali service dinyalakan. Pada skala M1 ukurannya tidak signifikan.\\
+\item
+  RabbitMQ berjalan sebagai satu instance Broker berjalan tanpa clustering, sehingga selama broker mati distribusi event terhenti. Pesan yang sudah berada di queue tetap aman karena bersifat persistent dan tersimpan pada Docker volume.
+\end{enumerate}
+
+\section{Bukti Penyelesaian}
+
+\subsection{Publish ke Broker}
+
+\textless placeholder\textgreater{}
+
+\subsection{Dua Consumer Independen}
+
+\textless placeholder\textgreater{}
+
+\subsection{Case Consumer Mati}
+
+\textless placeholder\textgreater{}
+
+\subsection{Penambahan Consumer Baru Tanpa Ubah Producer}
+
+\textless placeholder\textgreater{}
+
+\section{Broker, Pola, dan Semantik Pengiriman}
+
+\subsection{Broker dan Pola}
+
+Sistem menggunakan RabbitMQ dengan pola publish-subscribe berbasis fanout exchange. Setiap consumer memiliki durable queue sendiri yang terikat ke exchange, sehingga setiap consumer menerima setiap HazardEvent secara independen dari consumer lain.
+
+\subsection{Semantik Pengiriman}
+
+Semantik pengiriman dibedakan untuk dua jalur:
+
+\begin{itemize}
+\tightlist
+\item
+  Producer ke broker: at-least-once melalui publisher confirms dan retry. Semantik ini turun menjadi at-most-once hanya bila outage broker berlangsung melebihi kapasitas buffer, karena pesan tertua dibuang dan dicatat ke log.\\
+\item
+  Broker ke consumer: at-least-once untuk seluruh consumer melalui manual acknowledgment. Pesan yang sedang diproses saat consumer crash akan dikirim ulang, dan pesan yang terbit saat consumer mati tetap tertampung di durable queue hingga consumer menyala kembali.
+\end{itemize}
+
+\subsection{Konsekuensi bagi Consumer}
+
+Karena pengiriman bersifat at-least-once, consumer dapat menerima pesan yang sama lebih dari sekali, sehingga setiap consumer wajib idempoten:
+
+\begin{itemize}
+\tightlist
+\item
+  Dashboard Updater: upsert ke state map berkunci hazard\_id, sehingga pesan duplikat menghasilkan state yang sama.\\
+\item
+  Notifier dan Audit Logger: melewati pesan dengan pasangan (hazard\_id, severity) yang sudah tercatat. Catatan disimpan di disk dan dimuat ke memori saat service dinyalakan, sehingga tetap berlaku setelah crash dan restart.
+\end{itemize}
+
+Duplikat masih dapat terjadi bila consumer crash setelah memproses pesan tetapi sebelum catatannya tersimpan. Konsekuensi ini diterima karena peringatan ganda lebih aman daripada peringatan yang terlewat.

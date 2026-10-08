@@ -45,3 +45,6 @@ tests/load/results/
 # graphify: generated graph, caches and ignore rules
 /graphify-out/
 .graphify*
+
+# LaTeX report build output
+/doc/latex/build/
