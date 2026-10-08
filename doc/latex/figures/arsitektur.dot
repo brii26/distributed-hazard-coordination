@@ -10,13 +10,13 @@ digraph arsitektur {
   pengguna [label="Client\n(Media, Tim Lapangan,\nBNPB Ops)", shape=tab, fillcolor="white", style="filled,dashed"];
 
   subgraph cluster_sumber {
-    label="Sumber (simulasi)"; style=dashed; fontname="TeX Gyre Termes";
+    label="Third Party"; style=dashed; fontname="TeX Gyre Termes";
     bmkg  [label="BMKG mock\n:8081", fillcolor="#e8e8e8"];
     pvmbg [label="PVMBG mock\n:8082", fillcolor="#e8e8e8"];
   }
 
   subgraph cluster_bnpb {
-    label="BNPB (Docker network default)"; style=solid; fontname="TeX Gyre Termes";
+    label="BNPB Internal Network"; labeljust=l; style=solid; fontname="TeX Gyre Termes";
 
     web  [label="Web Server\n(nginx)\n:3000", shape=component, fillcolor="#d5ecd4"];
     cfa  [label="Client-Facing API\n:8080"];
@@ -47,7 +47,7 @@ digraph arsitektur {
   pengguna -> cfa  [label="REST/JSON"];
   cfa -> auth      [label="gRPC\n(login, refresh)"];
   cfa -> agg       [label="gRPC\n(read API)"];
-  cfa -> dash      [label="HTTP SSE\n(live update)"];
+  dash -> cfa      [label="SSE push\n(live update)"];
   auth -> userdb   [label="PostgreSQL\nprotocol"];
   agg -> store     [label="PostgreSQL\nprotocol"];
   agg -> bmkg      [label="REST\nX-BMKG-Key"];
