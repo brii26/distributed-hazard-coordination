@@ -3,20 +3,114 @@
 
 \section{Ringkasan}
 
-Langkah menjalankan sistem dari kondisi awal, daftar variabel konfigurasi, dan cara memicu setiap skenario pengujian ditulis di \texttt{README.md} pada repositori kode. Bab ini hanya merangkum alurnya.
+Bab ini memuat langkah yang cukup bagi penilai untuk menjalankan sistem dari \textit{clone} baru, membuka antarmuka yang tersedia, dan memicu skenario pengujian Problem 1 sampai Problem 5. Seluruh perintah dijalankan dari direktori utama repositori. Daftar lengkap variabel konfigurasi ada pada bagian \textit{Configuration reference} di \texttt{README.md}.
 
 \section{Menjalankan dari \textit{Clone} Baru}
 
-Prasyarat yang dibutuhkan adalah Go 1.26 atau lebih baru, Docker beserta Docker Compose, \texttt{git}, serta \texttt{curl} dan \texttt{jq} untuk perintah skenario. Dari \textit{clone} baru, sistem dijalankan dengan tiga perintah:
+Prasyarat yang dibutuhkan adalah Go 1.26 atau lebih baru, Docker beserta Docker Compose, \texttt{git}, serta \texttt{curl} dan \texttt{jq} untuk perintah skenario. Dari \textit{clone} baru, sistem dijalankan dengan perintah berikut:
 
-\begin{enumerate}
-\item \texttt{cp .env.example .env}. Nilai contoh pada berkas ini sudah cukup untuk menjalankan sistem secara lokal.
-\item \texttt{docker compose up -d --build --wait}. Perintah ini membangun seluruh \textit{image} dan baru selesai setelah semua \textit{health check} lolos.
-\item \texttt{docker compose ps}. Semua \textit{service} harus berstatus \textit{running}, dan yang memiliki \textit{health check} berstatus \textit{healthy}.
-\end{enumerate}
+\begin{codebox}
+git clone https://github.com/brii26/distributed-hazard-coordination.git
+cd distributed-hazard-coordination
+cp .env.example .env
+docker compose up -d --build --wait
+docker compose ps
+\end{codebox}
 
-Setelah itu, antarmuka web tersedia di \texttt{http://localhost:3000} dan Client-Facing API di \texttt{http://localhost:8080}. Akun operator awal memakai \texttt{SEED\_OPERATOR\_EMAIL} dan \texttt{SEED\_OPERATOR\_PASSWORD} dari \texttt{.env}. Bila sebuah \textit{port} sudah dipakai, nilainya diubah di \texttt{.env}. Sistem dihentikan dengan \texttt{docker compose down}, dan opsi \texttt{-v} menghapus seluruh data untuk memulai dari nol.
+Nilai contoh pada \texttt{.env} sudah cukup untuk menjalankan sistem secara lokal. Perintah \texttt{docker compose up} membangun seluruh \textit{image} dan baru selesai setelah semua \textit{health check} lolos, sehingga ketika perintah itu kembali sistem sudah siap. \textit{Build} pertama memerlukan beberapa menit. Pada \texttt{docker compose ps}, semua \textit{service} harus berstatus \textit{running}, dan yang memiliki \textit{health check} berstatus \textit{healthy}. Sistem dihentikan dengan \texttt{docker compose down}, dan opsi \texttt{-v} menghapus basis data, token PVMBG, dan berkas deduplikasi \textit{consumer} untuk memulai dari nol.
 
-\section{Variabel Konfigurasi dan Skenario Pengujian}
+\section{Antarmuka yang Tersedia}
 
-Seluruh variabel konfigurasi dijelaskan pada bagian \textit{Configuration reference} di README. Perintah \textit{copy-paste} untuk memicu skenario Problem 1 sampai Problem 5, beserta hasil yang diharapkan, ada pada bagian \textit{Test scenarios}.
+Setelah sistem berjalan, antarmuka berikut dapat dibuka dari \textit{host}. Bila sebuah \textit{port} sudah terpakai, nilainya diubah di \texttt{.env} (\texttt{CLIENT\_FACING\_API\_PORT}, \texttt{WEB\_FRONTEND\_PORT}, \texttt{BMKG\_PORT}, \texttt{PVMBG\_PORT}, \texttt{RABBITMQ\_MANAGEMENT\_PORT}, atau \texttt{JAEGER\_UI\_PORT}).
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.34\linewidth}|>{\raggedright\arraybackslash}p{0.6\linewidth}|}
+\hline
+\textbf{Alamat} & \textbf{Fungsi} \\
+\hline
+\endhead
+\texttt{http://localhost:3000} & Antarmuka web. Masuk sebagai \texttt{SEED\_OPERATOR\_EMAIL} dengan \texttt{SEED\_OPERATOR\_PASSWORD} dari \texttt{.env}. \\
+\hline
+\texttt{http://localhost:8080} & Client-Facing API, satu-satunya API publik (\texttt{/auth/*}, \texttt{/accounts}, \texttt{/me}, \texttt{/hazards}, \texttt{/health}). \\
+\hline
+\texttt{http://localhost:8081} & \textit{Mock} BMKG, untuk dicoba langsung dengan header \texttt{X-BMKG-Key}. \\
+\hline
+\texttt{http://localhost:8082} & \textit{Mock} PVMBG, termasuk sakelar demo \texttt{/admin/outage} dan \texttt{/admin/schema-version} dengan header \texttt{X-Admin-Key}. \\
+\hline
+\texttt{http://localhost:15672} & Antarmuka manajemen RabbitMQ, dengan \texttt{RABBITMQ\_USER} dan \texttt{RABBITMQ\_PASSWORD} dari \texttt{.env}. \\
+\hline
+\texttt{http://localhost:16686} & Antarmuka Jaeger, tanpa login. \\
+\hline
+\end{longtable}
+
+\textit{Aggregator}, Auth Service, kedua basis data, dan para \textit{consumer} tidak membuka \textit{port} ke \textit{host}. Kesehatannya diperiksa dari dalam, misalnya dengan \texttt{docker compose exec aggregator wget -qO- localhost:8091/health}. Setiap \texttt{/health} menjawab status \texttt{ok}, \texttt{degraded}, atau \texttt{down}.
+
+\subsection{Membuka Jaeger}
+
+Jaeger menampilkan jejak permintaan lintas \textit{service}. Buka \texttt{http://localhost:16686}, pilih \textit{service} pada kolom \textit{Service}, misalnya Client-Facing API, lalu tekan \textit{Find Traces}. Satu jejak menunjukkan rangkaian panggilan dari Client-Facing API ke \textit{Aggregator}. ID jejak sama dengan \texttt{correlation\_id} pada log, sehingga sebuah permintaan dapat dilacak dari log ke jejaknya. Tab \textit{Monitor} menampilkan laju permintaan, galat, dan latensi per \textit{service}. Jejak hanya muncul bila \texttt{TRACING\_ENABLED} bernilai \texttt{true}, yang merupakan nilai bawaan. Jejak dan metrik berada di memori sehingga hilang saat Jaeger dijalankan ulang, dan Jaeger yang mati tidak memengaruhi \textit{service} lain.
+
+\section{Skenario Problem 1 sampai Problem 5}
+
+Setiap problem punya satu skrip di \texttt{tests/scenarios/} yang dijalankan terhadap sistem yang sudah berjalan. Skrip membaca \texttt{.env}, menjalankan langkah pemicu, mencetak perintah dan keluarannya apa adanya, lalu menilai tiap pemeriksaan dengan baris \texttt{PASS} atau \texttt{FAIL}. Baris terakhir adalah \texttt{RESULT: PASS} atau \texttt{RESULT: FAIL}, dan kode keluar skrip tidak nol bila ada yang gagal. Keluaran yang sama dipakai sebagai bukti pada subbab Bukti Penyelesaian di Bab VI sampai X.
+
+\begin{codebox}
+tests/scenarios/problem1.sh
+tests/scenarios/problem2.sh
+tests/scenarios/problem3.sh
+tests/scenarios/problem4.sh
+tests/scenarios/problem5.sh
+tests/scenarios/all.sh
+\end{codebox}
+
+Perintah \texttt{all.sh} menjalankan kelimanya berurutan dan menutup dengan satu baris hasil per problem. Skrip berhenti dengan kode 2 dan pesan yang jelas bila \texttt{.env} belum ada atau sistem belum berjalan.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.13\linewidth}|>{\raggedright\arraybackslash}p{0.37\linewidth}|>{\raggedright\arraybackslash}p{0.4\linewidth}|}
+\hline
+\textbf{Skrip} & \textbf{Yang dilakukan} & \textbf{Yang dinilai} \\
+\hline
+\endhead
+\texttt{problem1.sh} & Mengembalikan PVMBG ke skema \texttt{legacy}, lalu menjalankan sakelar \texttt{/admin/schema-version} sehingga PVMBG menambahkan \texttt{confidence\_level}. Skrip menunggu laporan baru masuk dan membandingkan isi Canonical Store. & Laporan terbaru memuat \texttt{confidence\_level} di \texttt{attributes}, laporan lama tanpa field itu tetap tersimpan di tabel yang sama, dan \textit{Aggregator} tidak dijalankan ulang. Sekitar 1 menit. \\
+\hline
+\texttt{problem2.sh} & Mengatur latensi PVMBG ke 3 detik dan mengirim lima permintaan gempa, lalu menyalakan \textit{outage} lewat \texttt{/admin/outage}, memeriksa status, dan mematikannya. & Permintaan gempa tetap di bawah 0,3 detik. Saat \textit{outage}, sumber vulkanik berstatus \texttt{DOWN} dengan \texttt{stale\_since} terisi dan data tetap disajikan, sedangkan BMKG tetap \texttt{UP}. Setelah itu statusnya kembali \texttt{UP}, \texttt{stale\_since} kosong, dan tidak ada yang dijalankan ulang. Sekitar 3 menit. \\
+\hline
+\texttt{problem3.sh} & Mengirim kredensial yang tertukar antara BMKG dan PVMBG, meminta data sebagai Media dan Operator, lalu menunggu \textit{access token} Tim Lapangan kedaluwarsa. & Kredensial tertukar ditolak (\texttt{401} dan \texttt{403}). Media tidak menerima koordinat dan \texttt{attributes}, dan permintaan field mentah dijawab \texttt{403}. Sesi yang kedaluwarsa disegarkan otomatis dengan \textit{cookie} baru, dan \textit{cookie} lama ditolak dengan \texttt{401}. Sekitar 80 detik. \\
+\hline
+\texttt{problem4.sh} & Menghentikan Notifier, membangun ulang, dan menjalankannya lagi, lalu memeriksa dari setiap \textit{container} apakah kedua basis data dapat dijangkau. & Hanya Notifier yang berhenti, API tetap melayani, dan \textit{Aggregator} serta Client-Facing API tidak dijalankan ulang. Hanya \textit{Aggregator} yang menjangkau Canonical Store, dan hanya Auth Service yang menjangkau User DB. \\
+\hline
+\texttt{problem5.sh} & Menghentikan Notifier selama 30 detik, menjalankannya lagi, lalu menghapus dan menambahkan kembali Audit Logger. & \textit{Queue} Notifier menumpuk lalu kembali mendekati nol dan pesan diproses ulang. Audit Logger langsung mencatat \textit{event} baru, dan \textit{Aggregator} tidak dijalankan ulang. Sekitar 2 menit. \\
+\hline
+\end{longtable}
+
+Dua opsi tersedia pada \texttt{problem2.sh}. Opsi \texttt{--load} menambahkan uji beban k6 di bawah. Opsi \texttt{--destructive} menghapus laporan vulkanik yang tersimpan untuk memperlihatkan jawaban \texttt{503} saat tidak ada data sama sekali, sehingga dijalankan setelah \texttt{problem1.sh}. Mengubah latensi PVMBG membuat ulang \textit{container}-nya, dan skrip memulihkannya setelah selesai.
+
+\subsection{Mengambil Bukti untuk Laporan}
+
+Untuk bukti pada Bab VI sampai X, tangkap layar terminal pada bagian berikut, atau simpan keluarannya dengan \texttt{tests/scenarios/problemN.sh | tee bukti-problemN.txt}.
+
+\begin{itemize}
+\item Problem 1: kedua daftar \texttt{confidence}, sebelum dan sesudah sakelar, serta tabel \texttt{hazard\_events} dengan kolom \texttt{has\_confidence}.
+\item Problem 2: lima waktu respons gempa, kedua keluaran \texttt{.meta} saat \textit{outage}, dan keluaran \texttt{.meta} setelah pulih. Hasil uji beban ada pada \texttt{tests/load/results/}. Grafik jejak dapat diambil dari Jaeger.
+\item Problem 3: tiga kode status kredensial tertukar, daftar \textit{key} untuk Media, dan tiga baris \texttt{HTTP}, \texttt{jwt}, dan \texttt{refresh\_token} saat penyegaran.
+\item Problem 4: keluaran \texttt{docker compose ps} saat Notifier berhenti dan daftar keterjangkauan basis data.
+\item Problem 5: kedua keluaran \texttt{list\_queues} serta jumlah baris log audit sebelum dan sesudah. Antrean juga terlihat di antarmuka RabbitMQ.
+\end{itemize}
+
+\section{Tes Otomatis}
+
+Selain perintah manual, repositori menyediakan skrip yang menjalankan sistem dalam proyek Compose terpisah dan menghapusnya setelah selesai. Semuanya memakai \texttt{.env.example}, sehingga \texttt{.env} tidak diperlukan dan \textit{port}-nya tidak bentrok dengan sistem yang sedang berjalan.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.46\linewidth}|>{\raggedright\arraybackslash}p{0.48\linewidth}|}
+\hline
+\textbf{Perintah} & \textbf{Yang diperiksa} \\
+\hline
+\endhead
+\texttt{tests/smoke/run.sh} & Seluruh sistem sebagai satu kesatuan: \texttt{/health} semua \textit{service}, Operator dapat \textit{login}, \texttt{/hazards} berisi data dari kedua \textit{mock}, dan menjalankan ulang satu \textit{consumer} tidak memengaruhi yang lain. Sekitar satu menit. \\
+\hline
+\texttt{tests/load/run.sh} & Uji beban Problem 2 dengan k6: \texttt{bmkg\_only} 20 permintaan per detik selama 30 detik dengan p95 di bawah 300 ms, dan \texttt{mixed} 50 koneksi selama 60 detik dengan galat di bawah 1\%. Hasil disimpan di \texttt{tests/load/results/}. \\
+\hline
+\texttt{tests/integration/run.sh all} & Tes antar pasangan \textit{service}: Client-Facing API dengan Auth Service, serta \textit{Aggregator} dengan \textit{mock} BMKG dan PVMBG. \\
+\hline
+\texttt{tests/integration/run.sh abuse input} & Input salah, kredensial salah, dan batas laju, sekitar satu menit. Tanpa \texttt{input}, suite \texttt{abuse} memakan sekitar 10 menit. \\
+\hline
+\end{longtable}
+
+Seluruh skrip memerlukan Docker Compose. Tes integrasi juga memerlukan Go, dan uji beban memakai k6 dari \textit{image} Docker sehingga tidak perlu dipasang. Angka uji beban bergantung pada mesin yang dipakai.

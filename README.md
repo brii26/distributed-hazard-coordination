@@ -124,6 +124,8 @@ Fixed in `docker-compose.yml` rather than `.env`, because they only wire the con
 
 ## Test scenarios (Problems 1 to 5)
 
+Each problem also has a script that runs these steps and prints PASS or FAIL per check: `tests/scenarios/problem1.sh` to `problem5.sh`, or `tests/scenarios/all.sh`.
+
 Run from the repository root with the stack up (`docker compose up -d --build --wait`). Needs `curl` and `jq`. Each block is copy-paste; the expected outcome follows it. Load the values the stack runs with and log in as the seeded Operator once:
 
 ```bash
