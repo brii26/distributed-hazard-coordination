@@ -58,15 +58,9 @@ digraph arsitektur {
   mq -> audit      [label="AMQP\nqueue sendiri"];
 
   edge [color="#777777", fontcolor="#555555"];
-  agg -> jaeger    [label="OTLP gRPC"];
-  cfa -> jaeger;
-  auth -> jaeger;
-  dash -> jaeger;
-  noti -> jaeger;
-  audit -> jaeger;
+  cfa -> jaeger    [ltail=cluster_bnpb, label="OTLP gRPC\n(service Go)"];
   prom -> jaeger   [label="scrape metrik", constraint=false];
 
   edge [style=dotted, penwidth=1.6];
-  bmkg -> jaeger;
-  pvmbg -> jaeger;
+  bmkg -> jaeger   [ltail=cluster_sumber];
 }
