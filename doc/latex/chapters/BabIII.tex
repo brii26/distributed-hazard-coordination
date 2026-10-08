@@ -1,21 +1,34 @@
+% sumber: doc/TRD_M1.md, docker-compose.yml, go.mod, services/web-frontend/package.json dan nginx.conf
 \chapter{Daftar Teknologi Terpilih}
 
-\section{Subbab}
+\section{Bahasa dan \textit{Runtime}}
 
-\subsection{Sub Subbab1}
+Seluruh \textit{service} backend ditulis dalam Go 1.26. Setiap \textit{service} adalah satu \textit{module} Go dengan Dockerfile sendiri. Tahap \textit{build} memakai \texttt{golang:1.26-alpine}, dan hasilnya dijalankan di atas \texttt{alpine:3.22}. Go dipilih karena lebih mudah dibaca dibandingkan Rust dan ekosistemnya sudah matang, termasuk pustaka gRPC, klien RabbitMQ, dan OpenTelemetry yang dipakai sistem ini.
 
-\textless placeholder\textgreater{}
+\section{Komunikasi Antar-\textit{Service}}
 
-\subsection{Sub Subbab1}
+Komunikasi internal memakai gRPC. gRPC dipilih karena latensinya lebih rendah daripada REST dan kontrak antar-\textit{service} ditetapkan lewat berkas \textit{protobuf}. REST hanya dipakai pada batas luar, yaitu antara \textit{client} dan Client-Facing API, serta antara \textit{Aggregator} dan sumber data BMKG dan PVMBG, karena kedua batas itu memang menuntut fleksibilitas REST.
 
-\textless placeholder\textgreater{}
+Pembaruan \textit{real-time} ke browser memakai SSE, singkatan dari \textit{Server-Sent Events}, bukan WebSocket. Arah datanya satu arah dari server ke browser, dan browser menyambung ulang otomatis saat koneksi putus, sehingga fitur dua arah WebSocket tidak dibutuhkan.
 
-\section{Subbab}
+\section{Penyimpanan}
 
-\subsection{Sub Subbab1}
+Data disimpan di PostgreSQL 16. \textit{Canonical Store} memiliki kolom bertipe untuk sepuluh \textit{field} kanonik dan kolom JSONB \texttt{attributes} untuk atribut spesifik sumber, sehingga \textit{field} baru dapat tersimpan tanpa migrasi skema. User DB memakai PostgreSQL yang terpisah. Perbandingan dengan relasional kolom tetap, \textit{document store}, dan \textit{key-value store} dibahas pada Bab IX.
 
-\textless placeholder\textgreater{}
+\section{\textit{Message Broker}}
 
-\subsection{Sub Subbab1}
+Distribusi \textit{event} memakai RabbitMQ 3.13 dengan \textit{fanout exchange} \texttt{hazard}. Setiap \textit{consumer} memiliki \textit{durable queue} sendiri yang terikat ke \textit{exchange} tersebut. Alasan memilih RabbitMQ dibandingkan Kafka dan NATS dibahas pada Bab X.
 
-\textless placeholder\textgreater{}
+\section{Autentikasi}
+
+Autentikasi \textit{client} memakai JWT dengan algoritma HS256 yang disimpan sebagai \textit{cookie} \textit{HttpOnly}, sehingga tidak dapat dibaca JavaScript. Akses ke PVMBG memakai OAuth 2.0 dengan rotasi \textit{refresh token}, sedangkan akses ke BMKG memakai \textit{API key}. Alasan tiap mekanisme dibahas pada Bab VIII.
+
+\section{Frontend dan \textit{Web Server}}
+
+Antarmuka dibangun dengan SvelteKit 3 dan Svelte 5 karena lebih sederhana daripada menulis HTML, CSS, dan JavaScript native secara manual. Hasil \textit{build} berupa berkas statis yang disajikan oleh nginx 1.27.
+
+nginx juga meneruskan \textit{path} \texttt{/api} ke Client-Facing API. Dengan cara ini browser memanggil API pada \textit{origin} yang sama dengan halaman, sehingga \textit{cookie} autentikasi tidak membutuhkan konfigurasi CORS (konfigurasi ada di \texttt{services/web-frontend/nginx.conf}).
+
+\section{Deployment dan \textit{Observability}}
+
+Seluruh \textit{container} dijalankan dengan Docker Compose, sesuai ketentuan spesifikasi. Setiap \textit{service} mengirim \textit{trace} lewat OpenTelemetry ke Jaeger 2.22, sehingga satu permintaan dapat dilacak melewati beberapa \textit{service}. Prometheus 3.6 menyediakan metrik laju permintaan, galat, dan latensi per \textit{service} yang ditampilkan pada tab Monitor Jaeger.
