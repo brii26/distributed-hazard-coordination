@@ -7,7 +7,7 @@ digraph arsitektur {
   node [fontname="TeX Gyre Termes", fontsize=15, shape=box, style="filled", fillcolor="#dbe8f5", margin="0.12,0.07"];
   edge [fontname="TeX Gyre Termes", fontsize=12];
 
-  pengguna [label="Browser pengguna\n(Media / Tim Lapangan /\nBNPB Ops)\nSvelteKit SPA berjalan di sini", shape=tab, fillcolor="white", style="filled,dashed"];
+  pengguna [label="Client\n(Media, Tim Lapangan,\nBNPB Ops)", shape=tab, fillcolor="white", style="filled,dashed"];
 
   subgraph cluster_sumber {
     label="Sumber (simulasi)"; style=dashed; fontname="TeX Gyre Termes";
@@ -18,7 +18,7 @@ digraph arsitektur {
   subgraph cluster_bnpb {
     label="BNPB (Docker network default)"; style=solid; fontname="TeX Gyre Termes";
 
-    web  [label="Web Server\n(nginx, berkas statis\nSvelteKit)\n:3000", shape=component, fillcolor="#d5ecd4"];
+    web  [label="Web Server\n(nginx)\n:3000", shape=component, fillcolor="#d5ecd4"];
     cfa  [label="Client-Facing API\n:8080"];
     auth [label="Auth / Token Service"];
     agg  [label="Aggregator"];
@@ -42,8 +42,9 @@ digraph arsitektur {
     {rank=same; jaeger [label="Jaeger", shape=oval, fillcolor="#eeeeee"]; prom [label="Prometheus", shape=oval, fillcolor="#eeeeee"];}
   }
 
-  pengguna -> web  [label="HTTPS\nberkas statis"];
-  pengguna -> cfa  [label="REST/JSON\ncookie JWT"];
+  pengguna -> web  [label="HTTPS"];
+  web -> cfa       [label="proxy /api"];
+  pengguna -> cfa  [label="REST/JSON"];
   cfa -> auth      [label="gRPC\n(login, refresh)"];
   cfa -> agg       [label="gRPC\n(read API)"];
   cfa -> dash      [label="HTTP SSE\n(live update)"];
