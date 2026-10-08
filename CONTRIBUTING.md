@@ -59,8 +59,10 @@ The report lives in `doc/latex/` (entry point `main.tex`) and builds to `doc/lat
 1. **devenv (simplest):** run `devenv shell`, then from the repo root:
    - `tex-build` builds the PDF once.
    - `tex-watch` rebuilds on every save, so you can keep the PDF open in a viewer that reloads on change.
+   - Both first render the diagrams in `doc/latex/figures/*.dot` to PDF with Graphviz.
 
-2. **Your own toolchain:** install TeX Live with `xelatex`, `latexmk` and the TeX Gyre fonts (Termes), the same set devenv's `texliveFull` gives you. Then from the repo root:
+2. **Your own toolchain:** install TeX Live with `xelatex`, `latexmk` and the TeX Gyre fonts (Termes), the same set devenv's `texliveFull` gives you, plus `graphviz`. Then from the repo root:
+   - diagrams first: `for f in doc/latex/figures/*.dot; do dot -Tpdf "$f" -o "${f%.dot}.pdf"; done`
    - one-off build: `latexmk -xelatex -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex`
    - rebuild on save: same command with `-pvc -view=none` added.
 

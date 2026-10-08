@@ -49,3 +49,5 @@ GitHub's `blocked-by`/`blocking` links are manual — nothing auto-creates, clea
 - **Opening a new issue that depends on an existing one:** set the link at creation time (`gh issue create ... ` then `gh issue edit --add-blocked-by`), and add the issue as a new node/edge in `doc/BACKLOG_DEPENDENCIES.md` in the same PR/session — don't leave it for later.
 - **Before telling the user an issue is "ready to start":** verify against current `blocked-by` state (`gh issue view <n>`), not against a stale reading of the doc — the doc can lag reality between edits.
 - Whenever you touch the graph, keep the doc and GitHub's native links in sync in the same action — don't update one without the other.
+
+Untuk apa pun di bawah `doc/latex/`, baca `doc/latex/AGENTS.md` dulu.
