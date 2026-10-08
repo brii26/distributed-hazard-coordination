@@ -1,21 +1,22 @@
+% sumber: README.md
 \chapter{Petunjuk Menjalankan Sistem}
 
-\section{Subbab}
+\section{Ringkasan}
 
-\subsection{Sub Subbab1}
+Langkah menjalankan sistem dari kondisi awal, daftar variabel konfigurasi, dan cara memicu setiap skenario pengujian ditulis di \texttt{README.md} pada repositori kode. Bab ini hanya merangkum alurnya.
 
-\textless placeholder\textgreater{}
+\section{Menjalankan dari \textit{Clone} Baru}
 
-\subsection{Sub Subbab1}
+Prasyarat yang dibutuhkan adalah Go 1.26 atau lebih baru, Docker beserta Docker Compose, \texttt{git}, serta \texttt{curl} dan \texttt{jq} untuk perintah skenario. Dari \textit{clone} baru, sistem dijalankan dengan tiga perintah:
 
-\textless placeholder\textgreater{}
+\begin{enumerate}
+\item \texttt{cp .env.example .env}. Nilai contoh pada berkas ini sudah cukup untuk menjalankan sistem secara lokal.
+\item \texttt{docker compose up -d --build --wait}. Perintah ini membangun seluruh \textit{image} dan baru selesai setelah semua \textit{health check} lolos.
+\item \texttt{docker compose ps}. Semua \textit{service} harus berstatus \textit{running}, dan yang memiliki \textit{health check} berstatus \textit{healthy}.
+\end{enumerate}
 
-\section{Subbab}
+Setelah itu, antarmuka web tersedia di \texttt{http://localhost:3000} dan Client-Facing API di \texttt{http://localhost:8080}. Akun operator awal memakai \texttt{SEED\_OPERATOR\_EMAIL} dan \texttt{SEED\_OPERATOR\_PASSWORD} dari \texttt{.env}. Bila sebuah \textit{port} sudah dipakai, nilainya diubah di \texttt{.env}. Sistem dihentikan dengan \texttt{docker compose down}, dan opsi \texttt{-v} menghapus seluruh data untuk memulai dari nol.
 
-\subsection{Sub Subbab1}
+\section{Variabel Konfigurasi dan Skenario Pengujian}
 
-\textless placeholder\textgreater{}
-
-\subsection{Sub Subbab1}
-
-\textless placeholder\textgreater{}
+Seluruh variabel konfigurasi dijelaskan pada bagian \textit{Configuration reference} di README. Perintah \textit{copy-paste} untuk memicu skenario Problem 1 sampai Problem 5, beserta hasil yang diharapkan, ada pada bagian \textit{Test scenarios}.
