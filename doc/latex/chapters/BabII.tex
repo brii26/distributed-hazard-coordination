@@ -1,21 +1,45 @@
+% DONE[Bab II] sumber: doc/TRD_M1.md (§0, §13), docker-compose.yml
 \chapter{Diagram Arsitektur Sistem}
 
 \section{Diagram Arsitektur}
 
-\subsection{Sub Subbab1}
+\subsection{Diagram Keseluruhan}
 
-\textless placeholder\textgreater{}
+Gambar \ref{fig:arsitektur} menunjukkan seluruh \textit{service} pada sistem, protokol di setiap sambungan, pemilik tiap penyimpanan, alur \textit{event}, dan batas \textit{container}. Setiap kotak adalah satu \textit{container} dengan Dockerfile sendiri. Silinder adalah penyimpanan, dan kotak putus-putus berisi komponen di luar sistem atau komponen pendukung.
 
-\subsection{Sub Subbab1}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{figures/arsitektur.pdf}
+\caption{Diagram arsitektur sistem}
+\label{fig:arsitektur}
+\end{figure}
 
-\textless placeholder\textgreater{}
+\subsection{Keterangan Komponen}
+
+\begin{itemize}
+\item \textit{Aggregator}: satu-satunya \textit{service} yang berhubungan langsung dengan BMKG dan PVMBG. Komponen ini melakukan \textit{polling}, memetakan data ke \texttt{HazardEvent}, menyimpannya ke \textit{Canonical Store}, dan mempublikasikan \textit{event} ke \textit{broker}.
+\item \textit{Canonical Store}: PostgreSQL yang menyimpan \texttt{HazardEvent}, dimiliki \textit{Aggregator} saja.
+\item \textit{Client-Facing API}: pintu masuk REST untuk \textit{client} downstream. Komponen ini memverifikasi JWT, membaca data lewat gRPC ke \textit{Aggregator}, dan meneruskan login atau \textit{refresh} ke \textit{Auth/Token Service}.
+\item \textit{Auth/Token Service} dan \textit{User DB}: penerbit token untuk Media, Tim Lapangan, dan Operator, dengan PostgreSQL terpisah yang dimiliki \textit{Auth/Token Service} saja.
+\item \textit{Web Frontend}: aplikasi SvelteKit yang dipakai pengguna lewat \textit{browser} dan hanya berbicara ke \textit{Client-Facing API}.
+\item RabbitMQ: \textit{broker} dengan satu \textit{fanout exchange} bernama \texttt{hazard.events}.
+\item \textit{Dashboard Updater}, \textit{Notifier}, dan \textit{Audit Logger}: tiga \textit{consumer} yang masing-masing memiliki \textit{queue} sendiri pada \textit{exchange} tersebut.
+\item BMKG \textit{mock} dan PVMBG \textit{mock}: simulasi kedua instansi sesuai kontrak spesifikasi.
+\item Jaeger dan Prometheus: Jaeger menerima \textit{trace} dari semua \textit{service} Go, dan Prometheus menyimpan metrik yang diturunkan Jaeger dari \textit{span}.
+\end{itemize}
 
 \section{Penjelasan Naratif Diagram}
 
-\subsection{Sub Subbab1}
+\subsection{Alur Data dan Event}
 
-\textless placeholder\textgreater{}
+\textit{Aggregator} melakukan \textit{polling} berkala ke BMKG \textit{mock} dengan header \texttt{X-BMKG-Key} dan ke PVMBG \textit{mock} dengan header \texttt{Authorization: Bearer} berisi token OAuth. Kedua \textit{mock} hanya menjawab permintaan dan tidak mengirim data sendiri. Setiap rekaman yang diterima dipetakan ke \texttt{HazardEvent}, disimpan ke \textit{Canonical Store}, lalu dipublikasikan ke \textit{exchange} \texttt{hazard.events}.
 
-\subsection{Sub Subbab1}
+\textit{Exchange} tersebut mengirim salinan setiap pesan ke \textit{queue} milik \textit{Dashboard Updater}, \textit{Notifier}, dan \textit{Audit Logger}. \textit{Aggregator} tidak mengetahui jumlah atau identitas \textit{consumer}, sehingga \textit{consumer} baru cukup mendeklarasikan \textit{queue} dan mengikatnya ke \textit{exchange}.
 
-\textless placeholder\textgreater{}
+Jalur \textit{client} terpisah dari jalur \textit{ingest}. Pengguna membuka \textit{Web Frontend} lewat HTTPS, dan \textit{Web Frontend} memanggil \textit{Client-Facing API} dengan REST dan cookie JWT. \textit{Client-Facing API} meminta data ke \textit{Aggregator} lewat gRPC, sedangkan login dan \textit{refresh} diteruskan ke \textit{Auth/Token Service} lewat gRPC. Peran \textit{client} dan \textit{correlation ID} dibawa sebagai gRPC \textit{metadata} pada panggilan internal.
+
+\subsection{Kepemilikan Storage dan Batas Container}
+
+Setiap penyimpanan dimiliki tepat satu \textit{service}. \textit{Canonical Store} hanya dapat dijangkau \textit{Aggregator} karena berada pada \textit{network} \texttt{canonical-net} yang bersifat \textit{internal} dan hanya diikuti \textit{Aggregator}. \textit{User DB} berada pada \texttt{userdb-net} dengan aturan yang sama dan hanya diikuti \textit{Auth/Token Service}. \textit{Service} lain yang membutuhkan data tersebut harus melewati API milik pemiliknya.
+
+Setiap \textit{service} berjalan sebagai \textit{container} sendiri dan seluruh sistem dinyalakan dengan satu perintah \texttt{docker compose up}. Port yang dipublikasikan ke \textit{host} adalah \textit{Client-Facing API} (8080), \textit{Web Frontend} (3000), BMKG \textit{mock} (8081), PVMBG \textit{mock} (8082), Jaeger UI, dan port manajemen RabbitMQ. Dalam konfigurasi \textit{compose}, kedua \textit{mock} berada pada \textit{network} yang sama dengan \textit{service} BNPB, tetapi diperlakukan sebagai pihak luar karena hanya dijangkau lewat REST dengan kredensial masing-masing.

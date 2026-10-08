@@ -8,7 +8,7 @@ check() {
   if grep -nEi "$2" "${files[@]}"; then echo "^^ $1"; bad=1; fi
 }
 check "kalimat pembuka generik" 'di era (globalisasi|digital)|seiring (dengan )?(pesatnya|perkembangan)|tidak dapat dipungkiri'
-check "terjemahan dalam tanda kurung" '\\textit\{[^}]*\} ?\(|\([^)]*\\textit\{'
+check "terjemahan dalam tanda kurung" '\\textit\{[^}]*\} ?\([A-Za-z]|\([^)]*\\textit\{'
 check "jangan menulis zero trust" 'zero[ -]trust'
 check "placeholder tersisa" '<placeholder>|\\textless\{?\}? ?placeholder'
 exit $bad
