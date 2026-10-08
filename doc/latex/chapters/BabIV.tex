@@ -1,21 +1,83 @@
+% sumber: issue Known limitation (#184 sampai #197), doc/IF4031 - Tugas Besar - M1.md, Bab I, Bab VI sampai X
 \chapter{Asumsi}
 
-\section{Subbab}
+Bab ini memuat asumsi yang diambil dalam perancangan dan implementasi. Setiap asumsi menyatakan kondisi yang dianggap berlaku, alasan asumsi itu cukup untuk Milestone 1, dan akibatnya bila kondisi tersebut tidak terpenuhi. Batasan per problem yang lebih rinci tetap ada pada subbab Batasan yang Disadari di Bab VI sampai X.
 
-\subsection{Sub Subbab1}
+\section{Sumber Data dan Lingkup}
 
-\textless placeholder\textgreater{}
+\subsection{Sumber Data Adalah Simulasi}
 
-\subsection{Sub Subbab1}
+BMKG dan PVMBG diganti oleh \textit{mock service} yang dibangun sesuai kontrak pada spesifikasi. Layanan instansi yang sebenarnya dapat berbeda dalam autentikasi, batas laju, waktu respons, dan kestabilan identifier. Salah satu contohnya, \textit{mock} memberi nomor identifier dari awal setiap kali dijalankan, sedangkan instansi sungguhan diasumsikan tidak memakai ulang identifier. Perilaku yang terbukti terhadap \textit{mock} menjadi bukti bagi rancangan, bukan bagi sistem produksi.
 
-\textless placeholder\textgreater{}
+\subsection{Aturan dari Spesifikasi Diterima Apa Adanya}
 
-\section{Subbab}
+Pemetaan severity, pembagian field menjadi \textit{Ringkasan} dan \textit{Mentah}, serta matriks akses untuk tiga \textit{client} berasal dari spesifikasi dan diimplementasikan sebagaimana tertulis. Kelompok tidak mengubah atau mempertanyakan aturan tersebut karena spesifikasi menetapkan kontrak yang sama untuk semua kelompok. Lingkup dibatasi pada dua instansi, dua jenis bencana, BNPB sebagai simpul koordinasi, dan \textit{client} yang hanya membaca.
 
-\subsection{Sub Subbab1}
+\subsection{Perubahan Skema Sumber Mengikuti Kebijakan Field Tak Dikenal}
 
-\textless placeholder\textgreater{}
+Sistem diasumsikan hanya menghadapi perubahan skema yang dapat ditampung kebijakan \textit{attributes}. Field baru, field yang berganti nama, dan field yang berganti tipe masuk ke \textit{attributes} tanpa merusak sistem, dan field yang dihapus bernilai \textit{null}. Namun field kanonik yang bergantung pada nama atau tipe lama menjadi kosong. Bila \texttt{magnitude} berganti nama atau berubah menjadi \textit{string}, severity tidak dapat dihitung. Hal yang sama berlaku bagi koordinat episentrum, nama wilayah, dan tingkat siaga. Bila field identifier atau waktu berubah, rekaman ditolak dan dihitung sebagai ditolak. Perubahan makna pada field yang namanya dan tipenya tetap, misalnya satuan atau skala, tidak terdeteksi. Selain itu, tabel referensi gunung api bersifat statis sehingga \texttt{volcano\_id} baru tersimpan tanpa nama dan koordinat sampai tabel diubah, dan severity tunggal dari \texttt{NORMAL} sampai \texttt{AWAS} hanya menyisakan nuansa skala asal sumber di \textit{attributes}.
 
-\subsection{Sub Subbab1}
+\section{Kebaruan Data dan Semantik Pengiriman}
 
-\textless placeholder\textgreater{}
+\subsection{Keterlambatan Sebesar Interval Polling Dapat Diterima}
+
+\textit{Aggregator} mengambil data dengan \textit{polling} karena sumber tidak pernah mendorong data, sehingga \textit{client} dapat tertinggal beberapa detik sesuai \texttt{POLL\_INTERVAL\_MS}. Status basi dilaporkan per sumber lewat \texttt{stale\_since}, bukan per rekaman, sehingga satu rekaman tidak membawa informasi umurnya sendiri. Pembaca diasumsikan dapat bekerja dengan data yang sedikit lama, dan tidak mengetahui umur pasti setiap rekaman.
+
+\subsection{Pengiriman At-Least-Once dengan Consumer Idempoten}
+
+Pengiriman dari \textit{broker} bersifat \textit{at-least-once}, dan setiap \textit{consumer} diasumsikan menangani pesan yang sama dua kali lewat penyimpanan deduplikasi. Bila \textit{service} \textit{crash} setelah mengirim peringatan tetapi sebelum mencatatnya, peringatan yang sama dapat terkirim dua kali. Peringatan ganda dinilai lebih aman daripada peringatan yang terlewat.
+
+\subsection{Feed Langsung Bukan Catatan yang Tahan Lama}
+
+\textit{Client} yang terputus tidak menerima \textit{event} yang terbit selama terputus, dan diasumsikan mengambil ulang daftar dari API. \textit{Feed} langsung berfungsi sebagai kemudahan, bukan sebagai log. Canonical Store, \textit{event} di \textit{broker}, dan \textit{feed} juga dapat berbeda sesaat setelah sebuah penulisan, karena konsistensi sistem bersifat \textit{eventual}.
+
+\section{Kepercayaan dan Keamanan}
+
+\subsection{Jaringan Internal Dipercaya}
+
+Batas kepercayaan sistem berada di tepi, yaitu di Client-Facing API, dan tidak di antara setiap pasangan \textit{service}. Hanya Client-Facing API yang memverifikasi JWT. Saat memanggil \textit{Aggregator} lewat gRPC, JWT tidak diteruskan. Peran pemanggil dikirim sebagai metadata biasa dan dipercaya oleh \textit{Aggregator}, tanpa TLS, singkatan dari \textit{Transport Layer Security}, pada tautan tersebut. Asumsinya, hanya komponen sistem yang dapat menjangkau \textit{port} \textit{Aggregator}, karena \textit{Aggregator}, basis data, dan \textit{port} AMQP \textit{broker} tidak dipublikasikan ke \textit{host} dan basis data berada di jaringan terisolasi. Selain itu:
+
+\begin{itemize}
+\item Kunci penandatangan JWT dipegang oleh dua \textit{service}, yaitu Auth Service dan Client-Facing API. Bila salah satunya terkompromi, token dapat dipalsukan.
+\item Tepi sistem tidak memakai HTTPS pada demo. \textit{Cookie} bersifat \texttt{Secure} secara \textit{default}, sehingga demo lewat HTTP biasa memerlukan \texttt{COOKIE\_SECURE=false}.
+\item Kontrol akses bersifat kasar: tiga peran tetap, \textit{client} hanya membaca, dan tidak ada izin per sumber daya atau per wilayah.
+\item Masa berlaku token dibandingkan dengan satu sumber waktu tanpa toleransi selisih. Pada satu \textit{host} sumber waktunya sama, sedangkan pada beberapa \textit{host} waktu harus disinkronkan.
+\end{itemize}
+
+\subsection{Host Penjalan Sistem Berada di Jaringan Tepercaya}
+
+Antarmuka manajemen RabbitMQ pada \textit{port} 15672 dan antarmuka Jaeger dipublikasikan ke \textit{host}. Jaeger tidak memiliki login, dan RabbitMQ memakai pengguna \texttt{guest} dengan tag administrator dan kata sandi tetap. Asumsinya, siapa pun yang dapat menjangkau \textit{host} adalah pihak tepercaya. Konsekuensinya, pihak yang menjangkau \textit{port} RabbitMQ dapat menerbitkan \texttt{HazardEvent} sendiri, misalnya dengan severity \texttt{AWAS}. \textit{Notifier} akan mengirim peringatan dan \textit{feed} menampilkannya, padahal \textit{event} itu tidak pernah melewati \textit{Aggregator} dan Canonical Store, karena \textit{consumer} tidak memeriksa siapa penerbit pesan. Pengguna yang sama juga dapat mengosongkan \textit{queue}. Jejak di Jaeger memuat jalur, \textit{query string}, \textit{correlation id}, waktu, pesan galat, dan struktur sistem. Sepanjang pengetahuan tim, jejak tidak memuat \textit{cookie}, token, atau isi permintaan, tetapi setiap atribut belum diperiksa satu per satu.
+
+\subsection{Pemasang Mengganti Seluruh Nilai Contoh}
+
+Berkas \texttt{.env.example} berisi nilai contoh yang langsung berfungsi, misalnya \texttt{JWT\_SIGNING\_SECRET}, \texttt{SECRET\_SALT}, dan \texttt{SEED\_OPERATOR\_PASSWORD} yang berawalan \texttt{change-me}. Tidak ada \textit{service} yang menolak berjalan dengan nilai ini. Asumsinya, pihak yang memasang sistem mengganti semua nilai \texttt{change-me} sebelum sistem dapat dijangkau pihak lain. Bila tidak, siapa pun yang membaca berkas contoh di repositori dapat menandatangani token Operator yang sah atau masuk sebagai Operator awal.
+
+\subsection{Penyimpanan Kata Sandi Tidak Dikeraskan terhadap Tebakan Luring}
+
+Kata sandi disimpan sebagai heksadesimal dari SHA-256 atas kata sandi ditambah \texttt{SECRET\_SALT}, yaitu satu \textit{salt} untuk semua pengguna. Rumus ini sama bagi skrip pembuat Operator awal dan Auth Service sehingga keduanya konsisten tanpa pustaka tambahan. Asumsinya, User DB tidak bocor, karena basis data hanya dapat dijangkau Auth Service lewat jaringan \texttt{userdb-net}. Bila basis data bocor bersama \textit{salt}, penyerang dapat menguji tebakan dalam jumlah besar terhadap semua akun sekaligus, dan dua pengguna dengan kata sandi sama memiliki hash yang sama.
+
+\subsection{Refresh Token Tidak Kedaluwarsa}
+
+Spesifikasi meminta access token berumur pendek dan alur \textit{refresh} tanpa login manual, tetapi tidak meminta umur \textit{refresh token}. \textit{Refresh token} berlaku sampai dipakai satu kali (rotasi) atau pengguna keluar, tanpa batas waktu dan tanpa batas jumlah per pengguna. Baris untuk sesi yang ditinggalkan tidak pernah dihapus. Asumsinya, rotasi cukup karena token yang sudah dipakai menjadi tidak berguna. \textit{Cookie} yang bocor tetap berlaku selama belum dipakai, dan tabelnya terus membesar karena registrasi terbuka dan \textit{login} hanya dibatasi per alamat IP.
+
+\subsection{Keberadaan Akun Dapat Diperiksa Lewat Registrasi}
+
+Registrasi terbuka menjawab \texttt{409} bila surel sudah terdaftar dan \texttt{201} bila belum. Pengguna perlu mengetahui bahwa alamat sudah terpakai, sedangkan menyembunyikannya memerlukan verifikasi surel yang berada di luar M1. Asumsinya, daftar akun tidak dianggap rahasia. Siapa pun dapat menguji apakah sebuah surel memiliki akun, misalnya surel Tim Lapangan atau Operator, dan pembatas laju 10 permintaan per detik hanya memperlambatnya. \textit{Login} tidak memiliki masalah ini karena mengembalikan satu \texttt{401} umum untuk surel yang tidak dikenal maupun kata sandi yang salah.
+
+\section{Beban dan Penerapan}
+
+\subsection{Tidak Ada Client yang Sengaja Menahan Slot}
+
+Client-Facing API membatasi 100 permintaan yang berjalan bersamaan untuk seluruh server, tanpa batas per \textit{client}. Sebuah permintaan memegang \textit{slot} sejak \textit{header} tiba sampai \textit{handler} selesai, sehingga \textit{client} yang mengirim isi permintaan \textit{login} sangat lambat menahan \textit{slot} sampai batas waktu baca 10 detik. Pembatas laju per IP baru berjalan setelah \textit{handler} dimulai, dan angka 10 permintaan per detik cukup untuk menjaga sekitar 100 \textit{slot} tetap terpakai. Selama itu, permintaan lain selain \texttt{/health} menerima \texttt{429}. Asumsinya, tidak ada \textit{client} yang sengaja menyalahgunakan hal ini pada M1. Spesifikasi mengizinkan penolakan terkendali di bawah beban, \texttt{429} tidak dihitung sebagai galat pada Problem 2, dan efeknya berakhir beberapa detik setelah \textit{client} berhenti. Kondisi ini diketahui dari pembacaan kode dan belum diuji.
+
+\subsection{Satu Instance per Service di Satu Host}
+
+Sistem terdiri dari satu salinan tiap \textit{service} pada satu \textit{host}: satu \textit{broker}, satu basis data per \textit{service}, satu \textit{Aggregator}, dan satu Client-Facing API. Setiap \textit{service} dapat dihentikan, dibangun ulang, dan dijalankan ulang sendiri, tetapi tidak ada yang menggantikannya selagi mati sehingga tiap komponen menjadi titik kegagalan tunggal. Beberapa \textit{state} tersimpan di memori satu proses, yaitu pembatas laju per akun, \textit{refresh} bersama, status \textit{circuit breaker}, dan kursor \textit{polling} \textit{Aggregator}. Menjalankan dua salinan akan memecah \textit{state} tersebut sehingga tiap salinan menghitung, membatasi, dan memutuskan sendiri. Spesifikasi meminta \textit{container} yang independen dan degradasi terkendali, bukan replikasi atau penskalaan horizontal. Angka performa pada laporan diukur pada satu mesin terhadap \textit{mock}, sehingga hanya membuktikan bahwa rancangan bertahan pada beban itu dan tidak menunjukkan kapasitas penerapan sungguhan.
+
+\subsection{Tanpa Jalur Upgrade, Backup, Retensi, dan Pengumpulan Log}
+
+Skema basis data hanya dijalankan pada \textit{volume} baru, karena berkas skema dipasang pada direktori inisialisasi yang hanya dibaca Postgres saat membuat direktori data. \textit{Volume} yang sudah ada memerlukan perubahan manual. Event, log audit, dan surel pengguna disimpan tanpa batas waktu dan tidak disalin ke tempat lain, sehingga data pribadi berupa surel tidak memiliki masa simpan yang dinyatakan. Pengamatan bersifat upaya terbaik: \textit{tracing} dapat dimatikan dengan \texttt{TRACING\_ENABLED=false}, penyimpanan jejak tidak persisten, dan log tinggal di keluaran tiap \textit{container}. Asumsinya, demo berjalan dari \textit{clone} bersih dan dalam waktu singkat, dan spesifikasi menilai independensi \textit{service} serta format penyimpanan yang fleksibel, bukan perkakas operasional.
+
+\subsection{Log Audit dan Berkas Deduplikasi Dapat Tumbuh Tanpa Batas}
+
+Audit Logger menambahkan setiap \textit{event} ke log audit dan setiap pasangan \texttt{(hazard\_id, severity)} ke berkas deduplikasi. \textit{Notifier} menyimpan berkas deduplikasi serupa. Tidak ada berkas yang dirotasi atau dipangkas, dan tiap \textit{service} memuat seluruh kuncinya ke memori saat mulai. Dengan laju data demo, yaitu satu \textit{event} setiap beberapa detik per sumber, hal ini baru berpengaruh setelah waktu yang sangat lama. Asumsinya, demo berjalan singkat. Pada pemakaian panjang, \textit{volume} dapat penuh, waktu mulai melambat, dan memori himpunan deduplikasi membesar. Bila disk penuh, Audit Logger gagal menulis dan pesan dimasukkan kembali ke \textit{queue}.
