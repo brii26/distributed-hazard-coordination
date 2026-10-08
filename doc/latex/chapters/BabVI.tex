@@ -1,0 +1,127 @@
+\chapter{Problem 1 - Arsitektur \& Interoperabilitas Data}
+
+\section{Rancangan Solusi}
+
+Menggunakan REST sebagai metode komunikasi antara BNPB dengan BMKG/PVMBG. Kontrak GET API BMKG akan terlihat berikut ini:\\
+GET /seismic-events?since=\textless timestamp\textgreater{}
+
+\begin{codebox}
+{
+    "event_id": <string_value>,
+    "magnitude": <float_value>,
+    "depth_km": <float_value>,
+    "epicenter_lat": <float_value>,
+    "epicenter_lon": <float_value>,
+    "region_name": <string_value>,
+    "occurred_at": <datetime_value_in_string>,
+    "potential_tsunami": <boolean_value>,
+}
+\end{codebox}
+
+GET /tsunami-warnings?since=\textless timestamp\textgreater{}
+
+\begin{codebox}
+{
+    "warning_id": <string_value>,
+    "related_event_id": <string_value>,
+    "threat_level": <enum_value_in_string>,
+    "affected_zones":
+    [
+        <string_value>,
+        <string_value>,
+    ],
+    "estimated_arrival": <date_time>,
+}
+\end{codebox}
+
+Sedangkan, Kontrak GET API PVMBG akan terlihat seperti berikut ini:\\
+GET /volcanic-reports?since=\textless timestamp\textgreater{}
+
+\begin{codebox}
+{
+    "report_id": <string_value>,
+    "volcano_id": <string_value>,
+    "alert_level": <enum_value_in_string>,
+    "eruption_count_24h": <integer_value>,
+    "ash_column_height_m": <float_value>,
+    "reported_at": <datetime_value>,
+}
+\end{codebox}
+
+Kontrak API di atas merupakan yang terdefinisikan dalam BNPB dan bagaimana cara BNBP memetakan nilainya sesuai dengan \href{https://docs.google.com/document/d/1QOSgL0U4eBN-16b3Hkr7ohzDLYPmPC0tlI-CoFZSRm8/edit?tab=t.0\#heading=h.ql4pp1hq9xtx}{spesifikasi tugas besar}. Untuk seluruh \emph{field} yang belum didefinisikan tapi muncul dalam JSON yang dikembalikan, BNBP akan memetakan field baru tersebut ke dalam field \emph{attributes}. Untuk seluruh \emph{fields} yang sudah didefinisikan tapi tidak ada dalam JSON yang dikembalikan, field terkait bernilai \emph{null}. Untuk seluruh field yang di-\emph{rename}, mekanisme sebelumnya (field removal dan field addition) akan secara otomatis menangani masalah ini. Untuk tipe data yang diubah, field terkait akan dimasukkan ke \emph{attribute field} dengan nama key yang sama.
+
+\section{Alasan Keputusan}
+
+Pertama, kebijakan penanganan yang didefinisikan seperti demikian. Kedua, tertulis bahwa penambahan field baru oleh PVMBG adalah perubahan internal mereka sendiri, bukan urusan BNPB. Bagaimana cara PVMBG mengembalikan struktur JSON itu terserah PVMBG, tidak ada perjanjian yang dibuat antara BNPB dengan PVMBG. Dengan itu, BNPB harus bisa secara fleksibel support sudden schema change dari kedua BMKG dan PVMBG. Opsi lain seperti gRPC mendukung atribut yang fleksibel. Contohnya menggunakan gRPC, \emph{message} dapat didefinisikan agar mensimulasikan JSON (Paani, 2023):
+
+\begin{codebox}
+message Person
+{
+   string name = 1;
+   int32 age = 2;
+   google.protobuf.Struct additionalInfo = 3;
+
+}
+\end{codebox}
+
+Atau menggunakan map string string dalam Thrift (roger, 2015):
+
+\begin{codebox}
+struct QuerySetRecord {
+    ...
+    4:map<string,string> dataMap,
+    ...
+}
+\end{codebox}
+
+Sedangkan GraphQL tidak support dynamic fields. Pendefinisian skema \emph{dynamic field} tersebut bisa dipakai jika PVMBG dan BMKG peduli terhadap urusan BNPB. Semisal pakai gRPC, ada dua pendekatan:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Tambah message yang support \emph{dynamic field} dalam protobuf, sehingga field baru dimasukkan masing-masing oleh PVMBG dan BMKG ke dalam field dinamis tersebut sebelum dikembalikan ke BNPB. Pendekatan ini sama sekali tidak merepresentasikan yang ditulis oleh spek. PVMBG tidak peduli bagaimana cara skema mereka di-\emph{parse} oleh server luar. Pasti mereka akan prioritaskan kebutuhan internal mereka (tanpa menggunakan field dinamis sama sekali dalam skema protobuf).\\
+\item
+  Skema dari PVMBG atau BMKG diubah secara internal. Pendekatan ini tidak mendukung kebijakan yang sudah didefinisikan, karena walaupun BNPB masih bisa parse tanpa error, field yang baru ditambahkan itu tidak akan berhasil di-\emph{parse} (skema internal BNPB belum berubah, sebelum field baru ditambahkan). Belum lagi kalau urutan skema dalam sebuah message berbeda.
+\end{enumerate}
+
+Untuk thrift, pendekatannya sama seperti penjelasan di atas. Dengan demikian, pendekatan REST JSON yang fleksibel merupakan pilihan yang tepat untuk \emph{problem set} 1. REST JSON tidak memerlukan field tersendiri khusus field dinamis, dan masih dapat di-\emph{parse} secara utuh oleh BNPB-nya.
+
+\section{Batasan Yang Disadari}
+
+Pendekatan ini mendukung berbagai macam perubahan yang terjadi dalam skema API nya:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Penambahan field baru: dimasukkan ke dalam field attribute.\\
+\item
+  Pengurangan field: nilai field terkait menjadi null.\\
+\item
+  Perubahan nama field: dimasukkan ke dalam field attribute, dan field terkait nama sebelumnya bernilai \emph{null}.\\
+\item
+  Perubahan tipe data: dimasukkan ke dalam field attribute dengan key yang sama.
+\end{enumerate}
+
+\section{Bukti Penyelesaian}
+
+\subsection{Aggregator Menghasilkan HazardEvent}
+
+\textless placeholder\textgreater{}
+
+\subsection{Picu Perubahan Skema PVMBG}
+
+\textless placeholder\textgreater{}
+
+\subsection{Aggregator Tetap Menghasilkan HazardEvent}
+
+\textless placeholder\textgreater{}
+
+\section{Kebijakan Penanganan Field Tak Dikenal}
+
+Semua perubahan data yang tidak didefinisikan dalam code dimasukkan ke attributes.
+
+\section{Mekanisme yang Dipilih}
+
+Mekanisme yang dipilih adalah dynamic field mapping. Seperti yang disebutkan di atas, jenis perubahan yang didukung berupa \emph{field addition}, \emph{removal}, \emph{rename}, dan \emph{data type change}.

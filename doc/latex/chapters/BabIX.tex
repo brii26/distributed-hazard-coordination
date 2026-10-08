@@ -1,0 +1,125 @@
+\chapter{Problem 4 - Arsitektur Microservice \& Flexible Storage}
+
+\section{Rancangan Solusi}
+
+Terdapat tiga layanan utama yang relevan dengan Problem 4, yaitu Aggregator, Client-Facing API, dan Auth/Token Service, serta sekelompok event consumer yang terhubung melalui message broker.
+
+Pertama, Aggregator merupakan satu-satunya komponen yang berkomunikasi langsung dengan BMKG dan PVMBG. Komponen ini melakukan polling ke kedua sumber, menerapkan pemetaan yang toleran terhadap perubahan skema sebagaimana didefinisikan pada Problem 1 (field yang tidak dikenal atau baru ditambahkan, seperti confidence\_level, diarahkan ke field attributes), dan merupakan pemilik tunggal Canonical Store. Tidak ada service lain yang memiliki kredensial database maupun connection string ke penyimpanan ini. Selain itu, Canonical Store ditempatkan pada jaringan Docker internal yang hanya diikuti oleh Aggregator, sehingga service lain tidak dapat menjangkaunya secara jaringan.
+
+Kedua, Client-Facing API merupakan proxy read-only. Komponen ini tidak pernah meng-query Canonical Store secara langsung, setiap permintaan data dilayani dengan memanggil API milik Aggregator. Permintaan client diautentikasi dengan memverifikasi JWT secara lokal menggunakan signature dan klaim exp milik token tersebut. Untuk permintaan dengan token yang masih valid, tidak ada panggilan ke Auth/Token Service pada jalur permintaan. Client-Facing API hanya menghubungi Auth/Token Service pada dua kondisi: meneruskan permintaan login, dan melakukan refresh secara transparan ketika access token client telah kedaluwarsa (lihat 8.1.2).
+
+Ketiga, Auth/Token Service bertanggung jawab menerbitkan JWT bertanda tangan dengan TTL pendek yang dapat dikonfigurasi (default 60 detik), serta mengelola refresh token. Komponen ini memiliki penyimpanannya sendiri, yaitu User DB, yang berisi data akun dan refresh token dan tidak diakses oleh service lain. Auth/Token Service tidak memiliki ketergantungan terhadap Aggregator, karena Aggregator tidak pernah menerbitkan maupun mengonsumsi token client. Hubungannya dengan Client-Facing API bersifat satu arah dan terbatas pada login dan refresh.
+
+Terakhir, event consumer (Dashboard, Notifier, dan Audit Logger) berjalan sebagai service terpisah yang berlangganan HazardEvent melalui RabbitMQ. Aggregator hanya mengenal exchange, bukan consumer, sehingga consumer dapat dihentikan, di-rebuild, atau ditambahkan tanpa memengaruhi Aggregator (lihat Problem 5).
+
+HazardEvent disimpan di PostgreSQL dengan skema \emph{hybrid}. Sepuluh field kanonik yang strukturnya ditetapkan spesifikasi (hazard\_id, source, source\_ref\_id, hazard\_type, severity, area\_name, latitude, longitude, occurred\_at, ingested\_at) disimpan sebagai kolom bertipe. Constraint NOT NULL hanya diterapkan pada field wajib (hazard\_id, source, source\_ref\_id, hazard\_type, occurred\_at, ingested\_at), sedangkan field lain bersifat nullable sesuai kebijakan pada Problem 1. Kombinasi (source, source\_ref\_id) diberi unique constraint untuk mencegah duplikasi record akibat polling berulang. Field attributes, yang diperuntukkan bagi atribut spesifik sumber tanpa padanan kanonik, disimpan sebagai kolom JSONB, sehingga field baru seperti confidence\_level dapat tersimpan tanpa migrasi skema.
+
+\section{Alasan Keputusan}
+
+Keputusan pada Problem 4 mencakup dua hal: penentuan batas service dan cara HazardEvent disimpan. Perbandingan alternatif secara lengkap dijabarkan pada 9.5.
+
+\subsection{Batas Service}
+
+Sistem dipecah berdasarkan tanggung jawab fungsional, bukan dipertahankan sebagai monolith. Pada monolith, polling, pemetaan, autentikasi, dan penyajian berada dalam satu unit deploy, sehingga perubahan kecil pada autentikasi memaksa seluruh sistem di-deploy ulang, termasuk bagian pemetaan yang tidak berubah. Pemecahan dilakukan mengikuti tiga pertimbangan:
+
+\begin{itemize}
+\tightlist
+\item
+  Laju perubahan yang berbeda: logika pemetaan berubah mengikuti skema sumber, sedangkan logika autentikasi berubah mengikuti kebijakan keamanan. Keduanya perlu dapat di-deploy terpisah.\\
+\item
+  Domain of trust yang berbeda: hanya Aggregator yang memegang kredensial BMKG dan PVMBG, dan hanya Auth/Token Service yang memegang kunci penandatanganan token. Pemisahan service membatasi dampak apabila salah satu komponen terkompromi.\\
+\item
+  Isolasi kegagalan: matinya satu service tidak menghentikan service lain yang tidak bergantung padanya.
+\end{itemize}
+
+Salah satu konsekuensi penting dari batas ini adalah verifikasi JWT dilakukan secara lokal di Client-Facing API. Alternatifnya, memanggil Auth/Token Service secara sinkron pada setiap permintaan, ditolak karena menciptakan coupling langsung, restart Auth/Token Service akan melumpuhkan seluruh lalu lintas Client-Facing API. Dengan verifikasi lokal, ketergantungan Client-Facing API terhadap Auth/Token Service terbatas pada login dan refresh. Selama Auth/Token Service di-restart, permintaan dengan token yang masih valid tetap dilayani, hanya login dan refresh yang gagal sementara dan dijawab dengan 503 eksplisit.
+
+\section{Batasan Yang Disadari}
+
+\subsection{Restart Auth/Token Service berdampak pada login dan refresh}
+
+Permintaan dengan token yang masih valid tetap dilayani, tetapi login dan refresh gagal sementara dengan 503 selama Auth/Token Service di-restart.
+
+\subsection{Aggregator merupakan dependensi utama jalur data}
+
+Restart Aggregator menghentikan sementara ingest dan permintaan data, yang dijawab Client-Facing API dengan 503 eksplisit. Login, refresh, dan consumer tetap berjalan.
+
+\subsection{Canonical Store berjalan sebagai satu instance}
+
+PostgreSQL berjalan tanpa replikasi, sehingga kegagalan database menghentikan jalur data. Data tetap aman karena tersimpan pada Docker volume.
+
+\subsection{Fleksibilitas skema hanya berlaku untuk atribut sumber}
+
+Field baru dari sumber diserap attributes tanpa migrasi, tetapi perubahan format kanonik itu sendiri tetap membutuhkan migrasi. Hal ini dapat diterima karena format kanonik dikendalikan BNPB, bukan instansi sumber.
+
+\subsection{Isi attributes tidak divalidasi dan tidak di-index}
+
+Kolom attributes menerima tipe nilai apa pun dan belum diberi GIN index. Index dapat ditambahkan kemudian tanpa migrasi data.
+
+\section{Bukti Penyelesaian}
+
+\subsection{Restart Independen Container}
+
+\textless placeholder\textgreater{}
+
+\subsection{Record Sebelum/Sesudah Schema Change}
+
+\textless placeholder\textgreater{}
+
+\subsection{Canonical Store Hanya Diakses Aggregator}
+
+\textless placeholder\textgreater{}
+
+\section{Batas Service dan Alternatif Penyimpanan}
+
+\subsection{Alternatif Batasan Service}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|}
+\hline
+Pendekatan & Deskripsi & Hasil \\
+\hline
+\endhead
+\endlastfoot
+Role Based & Satu service per tanggung jawab fungsional: Aggregator, Client-Facing API, Auth/Token Service, serta consumer terpisah untuk setiap pihak yang berlangganan event. & Dipilih \\
+\hline
+Monolith & Polling, pemetaan, autentikasi, dan penyajian dalam satu unit deploy. & Ditolak \\
+\hline
+Source-adapter & Adapter BMKG dan adapter PVMBG terpisah, diikuti service mapper inti. & Ditolak \\
+\hline
+Pemisahan ingest dan read & Aggregator dipecah menjadi service ingest (polling dan pemetaan) dan service read (melayani query). & Ditolak \\
+\hline
+Event sourcing / CQRS & HazardEvent disimpan sebagai log append-only, dengan service read-side yang membentuk proyeksi. & Ditolak \\
+\hline
+\end{longtable}
+
+Monolith (B) ditolak karena perubahan pada satu bagian, misalnya autentikasi, memaksa seluruh sistem di-deploy ulang, termasuk bagian yang tidak berubah. Ini persis masalah yang diangkat Problem 4.
+
+Adapter per sumber (C) memberikan isolasi kegagalan antar-sumber, tetapi isolasi tersebut sudah diperoleh di dalam Aggregator melalui poller independen dan circuit breaker per sumber (Problem 2). Pendekatan ini hanya menambah network hop dan jumlah service tanpa manfaat tambahan pada cakupan dua sumber.
+
+Pemisahan ingest dan read (D) ditolak karena kedua service akan membutuhkan akses langsung ke Canonical Store, sehingga melanggar ketentuan bahwa setiap storage dimiliki tepat satu service. Alasan inilah yang membuat ingest dan penyajian data tetap berada dalam satu batas service, yaitu Aggregator.
+
+Event sourcing / CQRS (E) ditolak karena menambah kompleksitas pemeliharaan log dan proyeksi, serta memperkenalkan jeda konsistensi antara keduanya, tanpa kebutuhannya untuk sekarang. Kebutuhan distribusi event sudah dipenuhi oleh message broker pada Problem 5.
+
+\subsection{Alternatif Penyimpanan Canonical Store}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-10\tabcolsep)/5\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-10\tabcolsep)/5\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-10\tabcolsep)/5\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-10\tabcolsep)/5\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-10\tabcolsep)/5\relax}|}
+\hline
+Aspek & PostgreSQL + JSONB (dipilih) & Relasional kolom tetap & Document store (MongoDB) & Key-value store (Redis) \\
+\hline
+\endhead
+\endlastfoot
+Field baru (confidence\_level) & Diserap kolom JSONB attributes, tanpa migrasi & Wajib migrasi (ALTER TABLE) dan deploy bersama & Diserap secara native, tanpa migrasi & Diserap secara native, tanpa migrasi \\
+\hline
+Validasi field kanonik (severity, hazard\_type) & Bawaan definisi tabel melalui ENUM, CHECK, dan NOT NULL & Bawaan definisi tabel & Tersedia melalui json schema, tetapi opsional dan dikonfigurasi terpisah & Tidak tersedia, sepenuhnya di level aplikasi \\
+\hline
+Deduplikasi (source, source\_ref\_id) & UNIQUE constraint bawaan & UNIQUE constraint bawaan & Unique index & Hanya melalui desain key, tanpa jaminan atomik lintas operasi \\
+\hline
+Query field kanonik (hazard\_type, severity, occurred\_at) & B-tree index bawaan & B-tree index bawaan & Secondary index didukung & Tidak didukung secara native, index harus dibangun dan dirawat manual \\
+\hline
+Query berdasarkan isi attributes & Dapat ditambahkan melalui GIN index tanpa migrasi data & Tidak berlaku (tidak ada kolom fleksibel) & Didukung secara native & Tidak didukung, harus membaca setiap value \\
+\hline
+\end{longtable}
+
+PostgreSQL dengan JSONB dipilih karena merupakan satu-satunya opsi yang sekaligus menyerap field baru tanpa migrasi dan menegakkan validasi serta deduplikasi field kanonik sebagai bagian bawaan dari definisi tabel. Relasional dengan kolom tetap memberikan validasi yang sama, tetapi setiap field baru dari sumber mewajibkan migrasi, sehingga coupling dari Problem 1 muncul kembali melalui jalur storage. Document store memenuhi kebutuhan tanpa migrasi dan dapat melakukan validasi melalui \emph{jsonSchema}, tetapi validasi tersebut bersifat opsional dan terpisah dari penyimpanan data, sedangkan fleksibilitas skema penuhnya tidak dibutuhkan karena hanya attributes yang berubah-ubah. Key-value store paling sederhana, tetapi tidak mendukung query berdasarkan field selain key, padahal Client-Facing API membutuhkan filter berdasarkan hazard\_type dan waktu.
+
+Konsekuensi dari pilihan ini adalah dua model data dalam satu tabel, field kanonik tervalidasi ketat, sedangkan isi attributes tidak tervalidasi di tingkat database (lihat 9.3).
