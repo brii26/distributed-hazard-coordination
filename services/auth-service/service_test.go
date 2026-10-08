@@ -107,10 +107,10 @@ func newTestServer() *authServer {
 			users:  map[string]user{lapEmail: mk("lap", roleLapangan), "op@x.example": mk("op", roleOperator)},
 			tokens: map[string]string{},
 		},
-		salt:      testSalt,
-		secret:    []byte(testSecret),
-		accessTTL: 60 * time.Second,
-		now:       func() time.Time { return testNow },
+		salt:        testSalt,
+		secret:      []byte(testSecret),
+		lapanganTTL: 60 * time.Second,
+		now:         func() time.Time { return testNow },
 	}
 }
 
@@ -168,7 +168,7 @@ func TestLoginIssuesVerifiableJWT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if c := claimsOf(t, op.GetJwt()); c.Role != roleOperator || c.Exp-c.Iat != 60 {
+	if c := claimsOf(t, op.GetJwt()); c.Role != roleOperator || c.Exp-c.Iat != int64(otherRolesTTL.Seconds()) {
 		t.Fatalf("unexpected Operator claims: %+v", c)
 	}
 }
@@ -357,30 +357,5 @@ func TestEmailIsCaseInsensitiveAndNULNeverReachesTheStore(t *testing.T) {
 
 	if _, err := s.Login(ctx, &authpb.LoginRequest{Email: "a\x00b", Password: "x"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("NUL in login email: expected Unauthenticated, got %v", err)
-	}
-}
-
-func TestEveryRoleGetsTheConfiguredTokenLifetime(t *testing.T) {
-	t.Parallel()
-
-	s := newTestServer()
-
-	if _, err := s.Register(context.Background(), &authpb.RegisterRequest{Email: "media@x.example", Password: testPassword}); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, c := range []struct{ email, password, role string }{
-		{"media@x.example", testPassword, roleMedia},
-		{lapEmail, "pw-lap", roleLapangan},
-		{"op@x.example", "pw-op", roleOperator},
-	} {
-		tok, err := s.Login(context.Background(), &authpb.LoginRequest{Email: c.email, Password: c.password})
-		if err != nil {
-			t.Fatalf("%s login: %v", c.role, err)
-		}
-
-		if cl := claimsOf(t, tok.GetJwt()); cl.Role != c.role || cl.Exp-cl.Iat != 60 || tok.GetExpiresIn() != 60 {
-			t.Errorf("%s token lifetime: %+v expires_in=%d, want 60", c.role, cl, tok.GetExpiresIn())
-		}
 	}
 }
