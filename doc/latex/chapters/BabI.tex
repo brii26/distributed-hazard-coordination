@@ -1,21 +1,28 @@
+% sumber: doc/IF4031 - Tugas Besar - M1.md, doc/IF4031 - Tugas Besar - Dokumen Terpusat.md, Bab II, Bab VI sampai X
 \chapter{Deskripsi Umum Sistem}
 
 \section{Gambaran Ringkas Sistem}
 
-\subsection{Sub Subbab1}
+Platform Koordinasi Kebencanaan adalah sistem yang menjadikan BNPB simpul koordinasi bagi data kebencanaan dari dua instansi otonom, yaitu BMKG untuk gempa dan potensi tsunami, serta PVMBG untuk aktivitas gunung api. Sistem mengambil data dari kedua instansi, menyatukannya dalam satu format kanonik bernama \texttt{HazardEvent}, menyimpannya, lalu menyajikannya kepada pihak downstream sesuai hak aksesnya.
 
-\textless placeholder\textgreater{}
+Sistem ini diperlukan karena kedua instansi dibangun dengan asumsi, format data, dan kecepatan yang berbeda, dan tidak saling berkomunikasi. BNPB yang menerima data dari keduanya harus menyamakan format sebelum data dapat dipakai bersama. Instansi sumber juga tidak berkoordinasi ketika mengubah skema, sehingga gateway tidak boleh bergantung pada bentuk data yang dianggap tetap. Selain itu, satu sumber yang lambat atau mati tidak boleh membuat data dari sumber lain ikut tidak tersedia.
 
-\subsection{Sub Subbab1}
+Alurnya dimulai dari \textit{Aggregator} yang melakukan \textit{polling} berkala ke BMKG dan PVMBG. Setiap rekaman dipetakan ke \texttt{HazardEvent}, disimpan ke \textit{Canonical Store}, lalu dipublikasikan ke \textit{message broker} yang menyalurkannya ke beberapa \textit{consumer} independen. Tiga jenis \textit{client} downstream, yaitu Media atau Pers, Tim Lapangan, dan BNPB Pusat atau Internal Ops, membaca data lewat \textit{Client-Facing API} dengan token yang dikeluarkan \textit{Auth/Token Service}. Media hanya menerima field berklasifikasi \textit{Ringkasan}, sedangkan dua \textit{client} lainnya menerima seluruh field termasuk yang \textit{Mentah}. Gambar arsitektur dan penjelasan tiap komponen ada di Bab II.
 
-=\textless placeholder\textgreater{}
+Dua skenario menggambarkan kebutuhan ini. Pertama, PVMBG menambahkan field \texttt{confidence\_level} pada laporan saat sistem sedang berjalan, dan \textit{Aggregator} harus tetap menghasilkan \texttt{HazardEvent} yang valid tanpa \textit{restart}. Kedua, PVMBG berhenti merespons, dan permintaan data gempa dari BMKG harus tetap dilayani normal, sedangkan permintaan data vulkanik dijawab dengan data terakhir atau status ketidaktersediaan yang eksplisit.
 
-\section{Diagram arsitektur sistem}
+BMKG dan PVMBG pada sistem ini adalah simulasi berupa \textit{mock service} yang dibangun kelompok sesuai kontrak pada spesifikasi, bukan sistem kedua instansi yang sebenarnya.
 
-\subsection{Sub Subbab1}
+\section{Lingkup Milestone 1}
 
-\textless placeholder\textgreater{}
+Cakupan Milestone 1 dibatasi pada dua instansi sumber (BMKG dan PVMBG), dua jenis bencana (seismik dan vulkanik), dan BNPB sebagai simpul koordinasi. Seluruh \textit{client} bersifat \textit{read-only}. Lima problem pada spesifikasi dikerjakan di atas satu sistem yang sama:
 
-\subsection{Sub Subbab1}
+\begin{itemize}
+\item Bab VI, Problem 1: arsitektur dan interoperabilitas data: pemetaan ke \texttt{HazardEvent} yang tetap bekerja ketika skema PVMBG berubah.
+\item Bab VII, Problem 2: \textit{concurrency}, \textit{availability}, dan \textit{graceful degradation}: sumber yang lambat atau mati tidak menahan permintaan lain.
+\item Bab VIII, Problem 3: autentikasi dan kepercayaan antar-\textit{service}: kredensial yang terpisah per instansi dan token ber-\textit{scope} untuk \textit{client}.
+\item Bab IX, Problem 4: arsitektur \textit{microservice} dan \textit{flexible storage}: tiap komponen berjalan sebagai \textit{container} sendiri dengan penyimpanan yang menerima atribut dinamis.
+\item Bab X, Problem 5: distribusi \textit{event} secara \textit{fan-out}: \textit{broker} yang menyalurkan \texttt{HazardEvent} ke banyak \textit{consumer}.
+\end{itemize}
 
-\textless placeholder\textgreater{}
+Di luar lingkup Milestone 1 adalah jenis bencana lain (kebakaran hutan dan hidrometeorologi), jalur pelaporan dari lapangan ke BNPB, serta menjalankan sistem pada banyak \textit{instance} dan volume data yang melonjak, yang menjadi bahan Milestone 2.
