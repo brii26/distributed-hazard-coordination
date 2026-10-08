@@ -12,6 +12,7 @@
 \usepackage{tocloft}
 \usepackage{fancyhdr}
 \usepackage{fvextra}
+\usepackage{float}
 \usepackage{xurl}
 \usepackage[hidelinks]{hyperref}
 
@@ -65,6 +66,7 @@
 }
 \pagestyle{plain}
 
+\renewcommand{\thefigure}{\arabic{chapter}.\arabic{figure}}
 \DefineVerbatimEnvironment{codebox}{Verbatim}{%
   fontsize=\fontsize{10}{12}\selectfont, frame=single, framesep=3mm,
   breaklines=true, breakanywhere=true}

@@ -48,3 +48,4 @@ tests/load/results/
 
 # LaTeX report build output
 /doc/latex/build/
+/doc/latex/figures/*.pdf
