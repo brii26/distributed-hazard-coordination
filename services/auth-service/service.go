@@ -31,15 +31,18 @@ const (
 
 var validRoles = map[string]bool{roleMedia: true, roleLapangan: true, roleOperator: true}
 
+// TTL for Media and Operator. Only Tim Lapangan's short TTL is fixed (ACCESS_TOKEN_TTL_S), keeping it short makes transparent refresh demoable.
+const otherRolesTTL = 15 * time.Minute
+
 type authServer struct {
 	authpb.UnimplementedAuthServer
 
-	store     userStore
-	ping      func(context.Context) error // User DB reachability, for /health
-	salt      string
-	secret    []byte
-	accessTTL time.Duration
-	now       func() time.Time
+	store       userStore
+	ping        func(context.Context) error // User DB reachability, for /health
+	salt        string
+	secret      []byte
+	lapanganTTL time.Duration
+	now         func() time.Time
 }
 
 // hex(sha256(password + salt)), matching the Operator seed in migrations/002_seed_operator.sh.
@@ -58,10 +61,18 @@ func newRefreshToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+func (s *authServer) ttlFor(role string) time.Duration {
+	if role == roleLapangan {
+		return s.lapanganTTL
+	}
+
+	return otherRolesTTL
+}
+
 // Signs a JWT for u, the caller supplies the refresh token.
 func (s *authServer) tokenResponse(ctx context.Context, u user, refreshToken string) (*authpb.TokenResponse, error) {
 	iat := s.now()
-	exp := iat.Add(s.accessTTL)
+	exp := iat.Add(s.ttlFor(u.Role))
 
 	jwt, err := signJWT(s.secret, jwtClaims{Name: u.Email, Email: u.Email, Role: u.Role, Iat: iat.Unix(), Exp: exp.Unix()})
 	if err != nil {
