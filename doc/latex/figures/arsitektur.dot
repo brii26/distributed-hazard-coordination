@@ -18,7 +18,7 @@ digraph arsitektur {
   subgraph cluster_bnpb {
     label="BNPB (Docker network default)"; style=solid; fontname="TeX Gyre Termes";
 
-    web  [label="Web Frontend\n(nginx: berkas statis\n+ reverse proxy /api)\n:3000", shape=component, fillcolor="#d5ecd4"];
+    web  [label="Web Server\n(nginx, berkas statis\nSvelteKit)\n:3000", shape=component, fillcolor="#d5ecd4"];
     cfa  [label="Client-Facing API\n:8080"];
     auth [label="Auth / Token Service"];
     agg  [label="Aggregator"];
@@ -42,8 +42,8 @@ digraph arsitektur {
     {rank=same; jaeger [label="Jaeger", shape=oval, fillcolor="#eeeeee"]; prom [label="Prometheus", shape=oval, fillcolor="#eeeeee"];}
   }
 
-  pengguna -> web  [label="HTTPS\nberkas statis dan /api\ncookie JWT"];
-  web -> cfa       [label="REST/JSON\nreverse proxy"];
+  pengguna -> web  [label="HTTPS\nberkas statis"];
+  pengguna -> cfa  [label="REST/JSON\ncookie JWT"];
   cfa -> auth      [label="gRPC\n(login, refresh)"];
   cfa -> agg       [label="gRPC\n(read API)"];
   cfa -> dash      [label="HTTP SSE\n(live update)"];
