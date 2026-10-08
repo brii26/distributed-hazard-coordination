@@ -5,11 +5,11 @@
 
 \subsection{Diagram Keseluruhan}
 
-Gambar \ref{fig:arsitektur} menunjukkan seluruh \textit{service} pada sistem, protokol di setiap sambungan, pemilik tiap penyimpanan, alur \textit{event}, dan batas \textit{container}. Setiap kotak adalah satu \textit{container} dengan Dockerfile sendiri. Silinder adalah penyimpanan. Garis tegas menunjukkan alur pada sistem sebagaimana mestinya, sedangkan garis titik-titik menunjukkan alur yang ada untuk keperluan pengembangan, yaitu pengiriman \textit{trace} ke Jaeger dan pengambilan metrik oleh Prometheus.
+Gambar \ref{fig:arsitektur} menunjukkan seluruh \textit{service} pada sistem, protokol di setiap sambungan, pemilik tiap penyimpanan, alur \textit{event}, dan batas \textit{container}. Setiap kotak adalah satu \textit{container} dengan Dockerfile sendiri. Silinder adalah penyimpanan. Garis tegas menunjukkan alur pada sistem sebagaimana mestinya, sedangkan garis titik-titik menunjukkan alur yang hanya ada pada simulasi, yaitu pengiriman \textit{trace} dari BMKG \textit{mock} dan PVMBG \textit{mock} ke Jaeger.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/arsitektur.pdf}
+\includegraphics[width=\linewidth,height=0.58\textheight,keepaspectratio]{figures/arsitektur.pdf}
 \caption{Diagram arsitektur sistem}
 \label{fig:arsitektur}
 \end{figure}
@@ -25,7 +25,7 @@ Gambar \ref{fig:arsitektur} menunjukkan seluruh \textit{service} pada sistem, pr
 \item RabbitMQ: \textit{broker} dengan satu \textit{fanout exchange} bernama \texttt{hazard.events}.
 \item \textit{Dashboard Updater}, \textit{Notifier}, dan \textit{Audit Logger}: tiga \textit{consumer} yang masing-masing memiliki \textit{queue} sendiri pada \textit{exchange} tersebut.
 \item BMKG \textit{mock} dan PVMBG \textit{mock}: simulasi kedua instansi sesuai kontrak spesifikasi.
-\item Jaeger dan Prometheus: alat bantu pengembangan. Jaeger menerima \textit{trace} dari semua \textit{service} Go, dan Prometheus menyimpan metrik yang diturunkan Jaeger dari \textit{span}. Kedua \textit{mock} ikut mengirim \textit{trace} agar satu siklus \textit{polling} terlihat utuh sampai ke sumber. Pada sistem sebenarnya, BMKG dan PVMBG tidak akan mengirim \textit{trace} ke Jaeger milik BNPB.
+\item Jaeger dan Prometheus: alat bantu pemantauan di sisi BNPB. Jaeger menerima \textit{trace} dari semua \textit{service} Go, dan Prometheus menyimpan metrik yang diturunkan Jaeger dari \textit{span}. Kedua \textit{mock} ikut mengirim \textit{trace} agar satu siklus \textit{polling} terlihat utuh sampai ke sumber. Pada sistem sebenarnya, BMKG dan PVMBG tidak akan mengirim \textit{trace} ke Jaeger milik BNPB, sehingga garis dari kedua \textit{mock} digambar titik-titik.
 \end{itemize}
 
 \section{Penjelasan Naratif Diagram}

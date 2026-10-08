@@ -38,7 +38,7 @@ digraph arsitektur {
   }
 
   subgraph cluster_obs {
-    label="Observability (pengembangan)"; style=dotted; fontname="TeX Gyre Termes";
+    label="Observability"; style=solid; fontname="TeX Gyre Termes";
     {rank=same; jaeger [label="Jaeger", shape=oval, fillcolor="#eeeeee"]; prom [label="Prometheus", shape=oval, fillcolor="#eeeeee"];}
   }
 
@@ -56,14 +56,16 @@ digraph arsitektur {
   mq -> noti       [label="AMQP\nqueue sendiri"];
   mq -> audit      [label="AMQP\nqueue sendiri"];
 
-  edge [style=dotted, penwidth=1.6, color="#777777", fontcolor="#555555"];
+  edge [color="#777777", fontcolor="#555555"];
   agg -> jaeger    [label="OTLP gRPC"];
   cfa -> jaeger;
   auth -> jaeger;
   dash -> jaeger;
   noti -> jaeger;
   audit -> jaeger;
+  prom -> jaeger   [label="scrape metrik", constraint=false];
+
+  edge [style=dotted, penwidth=1.6];
   bmkg -> jaeger;
   pvmbg -> jaeger;
-  prom -> jaeger   [label="scrape metrik", constraint=false];
 }
