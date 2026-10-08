@@ -4,54 +4,66 @@ digraph arsitektur {
   nodesep=0.35;
   ranksep=0.6;
   fontname="TeX Gyre Termes";
-  node [fontname="TeX Gyre Termes", fontsize=15, shape=box, style="rounded", margin="0.12,0.07"];
+  node [fontname="TeX Gyre Termes", fontsize=15, shape=box, style="filled", fillcolor="#dbe8f5", margin="0.12,0.07"];
   edge [fontname="TeX Gyre Termes", fontsize=12];
 
-  pengguna [label="Media / Tim Lapangan /\nBNPB Ops\n(browser)", shape=box, style="rounded,dashed"];
+  pengguna [label="Media / Tim Lapangan /\nBNPB Ops\n(browser)", shape=tab, fillcolor="white", style="filled,dashed"];
 
   subgraph cluster_sumber {
     label="Sumber (simulasi)"; style=dashed; fontname="TeX Gyre Termes";
-    bmkg  [label="BMKG mock\n:8081"];
-    pvmbg [label="PVMBG mock\n:8082"];
+    bmkg  [label="BMKG mock\n:8081", fillcolor="#e8e8e8"];
+    pvmbg [label="PVMBG mock\n:8082", fillcolor="#e8e8e8"];
   }
 
   subgraph cluster_bnpb {
     label="BNPB (Docker network default)"; style=solid; fontname="TeX Gyre Termes";
 
-    web  [label="Web Frontend\n(SvelteKit SPA)\n:3000"];
+    web  [label="Web Frontend\n(SvelteKit SPA)\n:3000", shape=component, fillcolor="#d5ecd4"];
     cfa  [label="Client-Facing API\n:8080"];
     auth [label="Auth / Token Service"];
     agg  [label="Aggregator"];
-    mq   [label="RabbitMQ\nexchange hazard.events\n(fanout)", shape=box, style="rounded,bold"];
-    dash [label="Dashboard Updater"];
-    noti [label="Notifier"];
-    audit[label="Audit Logger"];
-    all  [label="Semua service Go", style="rounded,dashed"];
-    jaeger [label="Jaeger"];
-    prom   [label="Prometheus"];
+    mq   [label="RabbitMQ\nexchange hazard.events\n(fanout)", shape=cds, fillcolor="#fbe0b5"];
+    dash [label="Dashboard Updater", fillcolor="#f3d9e8"];
+    noti [label="Notifier", fillcolor="#f3d9e8"];
+    audit[label="Audit Logger", fillcolor="#f3d9e8"];
 
     subgraph cluster_userdb {
       label="userdb-net (internal)"; style=dotted; fontname="TeX Gyre Termes";
-      userdb [label="User DB\n(PostgreSQL)", shape=cylinder, style=""];
+      userdb [label="User DB\n(PostgreSQL)", shape=cylinder, fillcolor="#fff2b3"];
     }
     subgraph cluster_canon {
       label="canonical-net (internal)"; style=dotted; fontname="TeX Gyre Termes";
-      store [label="Canonical Store\n(PostgreSQL)", shape=cylinder, style=""];
+      store [label="Canonical Store\n(PostgreSQL)", shape=cylinder, fillcolor="#fff2b3"];
     }
+  }
+
+  subgraph cluster_obs {
+    label="Observability"; style=dashed; fontname="TeX Gyre Termes";
+    {rank=same; jaeger [label="Jaeger", shape=oval, fillcolor="#eeeeee"]; prom [label="Prometheus", shape=oval, fillcolor="#eeeeee"];}
   }
 
   pengguna -> web  [label="HTTPS"];
   web -> cfa       [label="REST/JSON\ncookie JWT"];
   cfa -> auth      [label="gRPC\n(login, refresh)"];
   cfa -> agg       [label="gRPC\n(read API)"];
-  auth -> userdb   [label="SQL"];
-  agg -> store     [label="SQL"];
+  cfa -> dash      [label="HTTP SSE\n(live update)"];
+  auth -> userdb   [label="PostgreSQL\nprotocol"];
+  agg -> store     [label="PostgreSQL\nprotocol"];
   agg -> bmkg      [label="REST\nX-BMKG-Key"];
   agg -> pvmbg     [label="REST\nBearer OAuth"];
   agg -> mq        [label="AMQP\npublish"];
   mq -> dash       [label="AMQP\nqueue sendiri"];
   mq -> noti       [label="AMQP\nqueue sendiri"];
   mq -> audit      [label="AMQP\nqueue sendiri"];
-  all -> jaeger    [label="OTLP gRPC", style=dashed];
-  jaeger -> prom   [label="metrik dari span", style=dashed];
+
+  edge [style=dashed, color="#777777", fontcolor="#555555"];
+  agg -> jaeger    [label="OTLP gRPC"];
+  cfa -> jaeger;
+  auth -> jaeger;
+  dash -> jaeger;
+  noti -> jaeger;
+  audit -> jaeger;
+  bmkg -> jaeger;
+  pvmbg -> jaeger;
+  prom -> jaeger   [label="scrape metrik", constraint=false];
 }
