@@ -108,7 +108,7 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `DB_POOL_SIZE` | aggregator | 20 | Connection pool to the Canonical Store |
 | `JWT_SIGNING_SECRET` | auth-service, client-facing-api | none | Shared HMAC secret for JWTs |
 | `SECRET_SALT` | user-db, auth-service | none | Salt in `sha256(password + salt)`; the User DB seed uses it too |
-| `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Tim Lapangan access token lifetime (seconds) |
+| `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Access token lifetime for every role (seconds) |
 | `SEED_OPERATOR_EMAIL` / `SEED_OPERATOR_PASSWORD` | user-db, auth-service | none | The Operator account created on a fresh User DB |
 | `CLIENT_FACING_API_PORT` | client-facing-api | 8080 | Host port of the public API |
 | `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` | client-facing-api | 100 | Global concurrency cap (429 + `Retry-After` beyond it) |
@@ -211,7 +211,7 @@ curl -s -b media.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.data[0] | keys' 
 curl -s -o /dev/null -w 'Media asks for latitude: %{http_code}\n' -b media.jar "$API/hazards?type=SEISMIC&fields=latitude"   # 403
 ```
 
-A Tim Lapangan token expires after `ACCESS_TOKEN_TTL_S` (60 s) and is refreshed behind the next request:
+An access token, for any role, expires after `ACCESS_TOKEN_TTL_S` (60 s) and is refreshed behind the next request. Shown here with a Tim Lapangan account:
 
 ```bash
 curl -s -b op.jar -X POST $API/accounts -d '{"email":"field@demo.example","password":"field-pass-1","role":"Lapangan"}' -w 'create: %{http_code}\n'   # 201 (409 on a rerun)

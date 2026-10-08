@@ -144,6 +144,7 @@ func (e abEnv) hazards(t *testing.T, jar cookies, query string) (reply, hazardPa
 	t.Helper()
 
 	r := e.quiet(http.MethodGet, "/hazards?"+query, "", jar, nil)
+	r.keep(jar) // like a browser, so a session that outlives its access token keeps working
 
 	var p hazardPage
 
@@ -295,8 +296,6 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 	e := abuseEnv(t)
 	e.reset(t)
 
-	jar := e.operator(t)
-
 	order := append(slices.DeleteFunc(slices.Clone(allServices), func(s string) bool { return s == svcPVMBG }), svcPVMBG)
 
 	for _, svc := range order {
@@ -305,6 +304,9 @@ func TestAbuseRestartEachServiceAlone(t *testing.T) {
 			// 1 again, so they upsert over existing rows and the row count stays put.
 			ingested := func() int { return logCount(t, "aggregator", `"message":"ingest"`, `"source":"PVMBG"`) }
 			pvmbg := ingested()
+
+			// A fresh session, an expired one can't refresh while auth-service or user-db is down.
+			jar := e.operator(t)
 
 			composeOut(t, "stop", svc)
 
@@ -379,6 +381,8 @@ func TestAbuseBrokerStoreAndUserDBDown(t *testing.T) {
 	})
 
 	t.Run("user-db", func(t *testing.T) {
+		jar := e.operator(t) // fresh, an expired session can't refresh while user-db is down
+
 		composeOut(t, "stop", "user-db")
 		time.Sleep(3 * time.Second)
 
