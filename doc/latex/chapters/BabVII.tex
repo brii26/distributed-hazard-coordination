@@ -230,7 +230,7 @@ Alternatif yang dipertimbangkan:
   Antrian berbatas dengan waktu tunggu: permintaan menunggu giliran, tetapi menambah latensi pada semua permintaan saat sistem sibuk.
 \end{itemize}
 
-Penolakan langsung dengan HTTP 429 dipilih karena menjaga latensi permintaan yang diterima tetap rendah dan memberi sinyal yang jelas kepada client untuk mencoba kembali (Retry-After). Sistem tetap melayani sebagian permintaan dengan baik.
+Penolakan langsung dengan HTTP 429 dipilih, mengikuti praktik \emph{load shedding} pada sistem yang kelebihan beban (Cuervo, 2016), karena menjaga latensi permintaan yang diterima tetap rendah dan memberi sinyal yang jelas kepada client untuk mencoba kembali (Retry-After). Sistem tetap melayani sebagian permintaan dengan baik.
 
 Trade-off: sebagian client menerima 429 saat puncak beban dan perlu melakukan retry.
 
@@ -270,7 +270,7 @@ Alternatif yang dipertimbangkan:
   Retry terus-menerus tanpa circuit breaker: membuang resource untuk sumber yang sudah jelas mati dan memperbanyak error log.
 \end{itemize}
 
-Kombinasi circuit breaker dan respons stale dengan penanda (stale\_since, source\_status) dipilih karena data terakhir tetap tersedia bagi client, client mengetahui secara eksplisit sejak kapan data tersebut tidak diperbarui, dan sistem berhenti membuang resource untuk sumber yang mati. Status HALF-OPEN memungkinkan pemulihan otomatis tanpa restart ketika sumber kembali hidup.\\
+Kombinasi circuit breaker (Fowler, 2014) dan respons stale dengan penanda (stale\_since, source\_status) dipilih karena data terakhir tetap tersedia bagi client, client mengetahui secara eksplisit sejak kapan data tersebut tidak diperbarui, dan sistem berhenti membuang resource untuk sumber yang mati. Status HALF-OPEN memungkinkan pemulihan otomatis tanpa restart ketika sumber kembali hidup.\\
 Respons 503 dengan body eksplisit dipilih untuk kondisi store kosong, karena mengembalikan 200 dengan data kosong dapat disalahartikan sebagai ``tidak ada aktivitas vulkanik''.
 
 Trade-off: deteksi outage tidak instan, melainkan membutuhkan N kegagalan berturut-turut (CB\_FAILURE\_\allowbreak THRESHOLD). Pemulihan juga tertunda hingga durasi OPEN berakhir (CB\_OPEN\_\allowbreak DURATION\_MS). Nilai keduanya dapat dikonfigurasi untuk menyeimbangkan kecepatan deteksi dan ketahanan terhadap gangguan sesaat.
