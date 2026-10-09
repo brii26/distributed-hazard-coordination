@@ -213,7 +213,7 @@ Asumsi utama dalam perancangan autentikasi antar-service adalah bahwa BMKG dan P
   OAuth 2.0 menghasilkan access token berumur pendek yang terpisah dari kredensial utama.
 \end{itemize}
 
-OAuth 2.0 dipilih untuk PVMBG karena memenuhi kewajiban Bearer token dengan struktur tersendiri sekaligus membatasi dampak token yang bocor. Grant authorization\_code dengan rotasi refresh token dipilih dibandingkan client\_credentials karena untuk memperoleh token baru dibutuhkan client secret sekaligus refresh token yang valid. Rotasi refresh token juga membuat penggunaan token curian tidak valid lagi.
+OAuth 2.0 (Hardt, 2012) dipilih untuk PVMBG karena memenuhi kewajiban Bearer token (Jones \& Hardt, 2012) dengan struktur tersendiri sekaligus membatasi dampak token yang bocor. Grant authorization\_code dengan rotasi refresh token dipilih dibandingkan client\_credentials karena untuk memperoleh token baru dibutuhkan client secret sekaligus refresh token yang valid. Rotasi refresh token juga membuat penggunaan token curian tidak valid lagi.
 
 Trade-off: Aggregator harus mengelola siklus hidup token, yaitu memperbarui access token sebelum kedaluwarsa dan menyimpan refresh token hasil rotasi ke volume sebelum digunakan. Client secret tetap merupakan kredensial jangka panjang, dampak kebocorannya dibatasi dengan kemampuan PVMBG untuk mencabutnya dan kebutuhan one time code untuk mengakses resource.
 
@@ -229,7 +229,7 @@ Trade-off: PVMBG menanggung penyimpanan token dan kehilangan semua token bila re
 
 Session-based memudahkan revokasi, tetapi mewajibkan Client-Facing API memeriksa sesi ke Auth/Token Service pada setiap permintaan. Hal ini menambah satu hop jaringan dan menjadikan Auth/Token Service titik kegagalan bagi seluruh permintaan.
 
-JWT dipilih untuk access token karena dapat diverifikasi secara lokal di masing-masing servis sehingga tidak menambah latensi dan permintaan dengan token yang masih valid tetap dilayani walaupun Auth/Token Service sedang di-restart. Keterbatasan JWT dalam hal revokasi diimbangi dengan masa berlaku pendek yang dapat dikonfigurasi lewat ACCESS\_TOKEN\_TTL\_S dan refresh token yang bersifat stateful di User DB. Dengan demikian, validasi access token bersifat stateless, sedangkan pengelolaan sesi jangka panjang bersifat stateful.
+JWT (Jones et al., 2015) dipilih untuk access token karena dapat diverifikasi secara lokal di masing-masing servis sehingga tidak menambah latensi dan permintaan dengan token yang masih valid tetap dilayani walaupun Auth/Token Service sedang di-restart. Keterbatasan JWT dalam hal revokasi diimbangi dengan masa berlaku pendek yang dapat dikonfigurasi lewat ACCESS\_TOKEN\_TTL\_S dan refresh token yang bersifat stateful di User DB. Dengan demikian, validasi access token bersifat stateless, sedangkan pengelolaan sesi jangka panjang bersifat stateful.
 
 Payload JWT hanya dapat dibaca, bukan dienkripsi. Karena itu, payload tidak memuat data rahasia, dan integritasnya dan authenticity-nya dijaga oleh HMAC signature.
 
