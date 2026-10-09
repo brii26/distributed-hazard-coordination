@@ -278,19 +278,54 @@ Trade-off: permintaan dengan JWT kedaluwarsa bergantung pada ketersediaan Auth/T
 
 \subsection{Kredensial BMKG Ditolak di PVMBG (dan sebaliknya)}
 
-\textless placeholder\textgreater{}
+Skenario \texttt{tests/scenarios/problem3.sh} memakai kunci satu instansi pada instansi lain.
+
+\begin{codebox}
+$ curl $BMKG/seismic-events (tanpa kunci)                      -> 401
+$ curl -H "X-BMKG-Key: $PVMBG_ADMIN_KEY" $BMKG/seismic-events  -> 403
+$ curl -H "Authorization: Bearer $BMKG_API_KEY" $PVMBG/volcanic-reports -> 401
+\end{codebox}
 
 \subsection{Scope Media Ditolak Akses Field Mentah}
 
-\textless placeholder\textgreater{}
+Akun Media hanya menerima field Ringkasan. Permintaan eksplisit terhadap field Mentah ditolak, sedangkan Operator menerima seluruh field.
+
+\begin{codebox}
+$ curl -s -b media.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.data[0] | keys'
+[ "area_name", "hazard_id", "hazard_type", "ingested_at", "occurred_at",
+  "severity", "source" ]
+$ curl -b media.jar "$API/hazards?type=SEISMIC&fields=latitude"  -> 403
+PASS: raw fields are present for the Operator (got: true)
+\end{codebox}
 
 \subsection{Token Expiry + Refresh Flow Tim Lapangan}
 
-\textless placeholder\textgreater{}
+Akun Tim Lapangan login, skrip menunggu 65 detik sampai access token kedaluwarsa, lalu mengirim permintaan berikutnya. Respons 200 membawa cookie \texttt{jwt} dan \texttt{refresh\_token} baru, dan cookie lama ditolak setelah rotasi.
+
+\begin{codebox}
+waiting 65s for the access token to expire...
+HTTP/1.1 200 OK
+Set-Cookie: jwt=eyJhbGciOiJI...; Path=/; HttpOnly; Secure; SameSite=Lax
+Set-Cookie: refresh_token=b212db186931...; Path=/; HttpOnly; Secure; SameSite=Lax
+$ replay the old cookies
+PASS: old cookies are rejected (got: 401)
+\end{codebox}
 
 \subsection{Tidak Ada Hardcoded Credential}
 
-\textless placeholder\textgreater{}
+Berkas \texttt{.env} berisi nilai asli tidak ikut ter-commit, sedangkan \texttt{.env.example} tersedia. Kode membaca rahasia dari \textit{environment variable}.
+
+\begin{codebox}
+$ git ls-files .env .env.example
+.env.example
+$ git check-ignore -v .env
+.gitignore:13:.env	.env
+$ rg -n "JWT_SIGNING_SECRET|SECRET_SALT|BMKG_API_KEY|PVMBG_OAUTH_CLIENT_SECRET" services (tanpa *_test.go)
+services/aggregator/main.go:84:   bmkgKey: os.Getenv("BMKG_API_KEY"),
+services/aggregator/main.go:171:  os.Getenv("PVMBG_OAUTH_CLIENT_SECRET"),
+services/auth-service/main.go:105: ... os.Getenv("JWT_SIGNING_SECRET"), os.Getenv("SECRET_SALT")
+services/bmkg-mock/main.go:158:   apiKey := os.Getenv("BMKG_API_KEY")
+\end{codebox}
 
 \section{Mekanisme yang Dipakai dan Alasan Tidak Membuka Celah Baru}
 

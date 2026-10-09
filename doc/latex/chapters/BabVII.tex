@@ -317,15 +317,50 @@ Load testing dijalankan pada satu mesin yang juga menjalankan seluruh container,
 
 \subsection{Uji p95 BMKG-only saat PVMBG delay 3 detik}
 
-\textless placeholder\textgreater{}
+Skenario \texttt{tests/scenarios/problem2.sh} mengatur PVMBG menjawab setelah 3 detik, lalu mengukur lima permintaan seismik berturut-turut. Seluruhnya jauh di bawah ambang 0,3 detik.
+
+\begin{codebox}
+$ PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 docker compose up -d --wait pvmbg-mock
+seismic request 1: 0.011443s
+seismic request 2: 0.004817s
+seismic request 3: 0.005478s
+seismic request 4: 0.005455s
+seismic request 5: 0.004544s
+PASS: seismic request 1..5 under 0.3 s
+\end{codebox}
 
 \subsection{Load Testing (≥50 koneksi, 60 detik)}
 
-\textless placeholder\textgreater{}
+Uji beban k6 (\texttt{tests/load/run.sh}, hasil lengkap di \texttt{tests/load/results/p2-20261009-100244.txt}) dijalankan pada satu mesin dengan PVMBG menjawab setelah 3 detik. Skenario \texttt{bmkg\_only} mengirim 600 permintaan (20 per detik selama 30 detik) dan skenario \texttt{mixed} mengirim 3.005 permintaan dari 50 koneksi selama 60 detik. Tidak ada galat dan tidak ada respons 429.
+
+\begin{codebox}
+checks_succeeded: 100.00% 600 out of 600
+failed (galat selain 200 dan 429): 0.00%  0 dari 3605
+  scenario:bmkg_only: 0 dari 600    scenario:mixed: 0 dari 3005
+http_req_duration: avg=4.07ms med=3.43ms p(90)=4.41ms p(95)=4.94ms
+                   p(99)=39.91ms max=97.03ms
+  scenario:bmkg_only: p(95)=4.75ms
+http_reqs: 3606 (37.49/s)
+  scenario:mixed status 200: 3005   401/429/500/502/503/504: 0
+\end{codebox}
 
 \subsection{Demo Outage PVMBG}
 
-\textless placeholder\textgreater{}
+Outage PVMBG dinyalakan lewat \texttt{POST /admin/outage}. Data vulkanik tetap dilayani dengan \texttt{stale\_since} terisi, data seismik tetap \texttt{UP}, dan setelah outage dimatikan PVMBG kembali \texttt{UP} tanpa restart Aggregator.
+
+\begin{codebox}
+Outage:  GET /hazards?type=VOLCANIC -> .meta
+{ "last_success_at": "2026-10-09T03:04:41Z", "source": "PVMBG",
+  "source_status": "DOWN", "stale_since": "2026-10-09T03:04:41Z" }
+GET /hazards?type=SEISMIC -> .meta
+{ "last_success_at": "2026-10-09T03:04:46Z", "source": "BMKG",
+  "source_status": "UP", "stale_since": null }
+
+Pulih:   GET /hazards?type=VOLCANIC -> .meta
+{ "last_success_at": "2026-10-09T03:05:01Z", "source": "PVMBG",
+  "source_status": "UP", "stale_since": null }
+PASS: Aggregator was not restarted (got: 2026-10-09T02:37:03.776899689Z)
+\end{codebox}
 
 \section{Model Konkurensi dan Mitigasi Kegagalan}
 

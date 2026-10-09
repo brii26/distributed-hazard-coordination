@@ -99,19 +99,58 @@ Pemeriksaan langsung ke disk menambah latensi I/O, sedangkan penyimpanan hanya d
 
 \subsection{Publish ke Broker}
 
-\textless placeholder\textgreater{}
+Aggregator menerbitkan ke satu \textit{fanout exchange} \texttt{hazard.events} yang bersifat \textit{durable}, dan log mencatat setiap penerbitan beserta \texttt{hazard\_id} dan hasilnya.
+
+\begin{codebox}
+$ rabbitmqctl list_exchanges name type durable
+hazard.events   fanout   true
+aggregator log: {"message":"publish","hazard_id":"f8bb4a54-0f97-482c-93d3-81f5534934cb","result":"success"}
+\end{codebox}
 
 \subsection{Dua Consumer Independen}
 
-\textless placeholder\textgreater{}
+Tiga \textit{consumer} masing-masing memiliki \textit{queue} durable sendiri yang terikat ke \textit{exchange} yang sama, dengan satu \textit{consumer} aktif per \textit{queue}.
+
+\begin{codebox}
+$ rabbitmqctl list_bindings source_name destination_name
+hazard.events   audit-logger
+hazard.events   dashboard-updater
+hazard.events   notifier
+$ rabbitmqctl list_queues name durable messages_ready consumers
+audit-logger        true  0  1
+notifier            true  0  1
+dashboard-updater   true  0  1
+\end{codebox}
 
 \subsection{Case Consumer Mati}
 
-\textless placeholder\textgreater{}
+Skenario \texttt{tests/scenarios/problem5.sh} menghentikan Notifier selagi penerbitan berlanjut. Pesan menumpuk di \textit{queue} Notifier tanpa menghambat Aggregator dan \textit{consumer} lain, lalu terkejar setelah Notifier dinyalakan kembali.
+
+\begin{codebox}
+$ docker compose stop notifier      (tunggu 30 detik)
+$ rabbitmqctl list_queues name messages
+audit-logger 0     notifier 3     dashboard-updater 0
+PASS: the Notifier queue holds a backlog
+$ docker compose start notifier
+$ rabbitmqctl list_queues name messages
+audit-logger 0     notifier 0     dashboard-updater 0
+PASS: the backlog shrank (was 3, now 0)
+$ docker compose logs --since 15s notifier | grep -c '"message processed"'
+2
+\end{codebox}
 
 \subsection{Penambahan Consumer Baru Tanpa Ubah Producer}
 
-\textless placeholder\textgreater{}
+Audit Logger dilepas dari sistem yang berjalan lalu ditambahkan kembali tanpa mengubah maupun me-restart Aggregator. Berkas log audit langsung bertambah.
+
+\begin{codebox}
+$ docker compose rm -sf audit-logger
+$ docker compose up -d --wait audit-logger
+$ wc -l /var/lib/audit-logger/audit.log
+401 -> 402
+PASS: the Audit Logger records new events right away
+PASS: Aggregator was not restarted (got: 2026-10-09T02:37:03.776899689Z)
+\end{codebox}
 
 \section{Broker, Pola, dan Semantik Pengiriman}
 
