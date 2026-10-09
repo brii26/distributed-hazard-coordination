@@ -81,7 +81,7 @@ Setiap \textit{service} Go memakai tiga dasar yang sama.
 
 \begin{itemize}
 \item
-  \textit{Correlation ID} dibangkitkan di dua tempat dan berbeda ruang namanya. Client-Facing API membuatnya untuk setiap permintaan \textit{client} (memakai header \texttt{X-Correlation-ID} dari \textit{client} bila ada) lalu meneruskannya sebagai \textit{metadata} gRPC \texttt{x-correlation-id} dan mengembalikannya di header respons. Aggregator membuat satu ID untuk setiap siklus polling terhadap satu sumber, dan membawanya ke properti AMQP \texttt{correlation\_id} pada setiap pesan yang terbit dari siklus itu.
+  \textit{Correlation ID} dibangkitkan di dua tempat dan berbeda ruang namanya. Client-Facing API membuatnya untuk setiap permintaan \textit{client} dengan memakai header \texttt{X-Correlation-ID} dari \textit{client} bila ada, lalu meneruskannya sebagai \textit{metadata} gRPC \texttt{x-correlation-id} dan mengembalikannya di header respons. Aggregator membuat satu ID untuk setiap siklus polling terhadap satu sumber, dan membawanya ke properti AMQP \texttt{correlation\_id} pada setiap pesan yang terbit dari siklus itu.
 \item
   \textit{Log} terstruktur berformat JSON satu baris per kejadian, dengan field minimal \texttt{timestamp}, \texttt{level}, \texttt{service}, \texttt{correlation\_id}, dan \texttt{message}. Setiap panggilan keluar mencatat \texttt{target}, \texttt{duration\_ms}, dan \texttt{status}. Perubahan keadaan seperti transisi \textit{circuit breaker}, saklar \textit{outage}, saklar skema, rotasi token, dan \textit{ack} atau \textit{nack} \textit{consumer} dicatat tersendiri.
 \item
