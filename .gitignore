@@ -49,3 +49,7 @@ tests/load/results/
 # LaTeX report build output
 /doc/latex/build/
 /doc/latex/figures/*.pdf
+
+# signature images stay local, only the folder is tracked
+doc/latex/figures/ttd/*
+!doc/latex/figures/ttd/.gitkeep
