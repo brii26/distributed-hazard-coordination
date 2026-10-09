@@ -13,7 +13,8 @@ done
 
 login op "$SEED_OPERATOR_EMAIL" "$SEED_OPERATOR_PASSWORD" >/dev/null
 admin=(-H "X-Admin-Key: $PVMBG_ADMIN_KEY")
-outage_off() { curl -s -o /dev/null -X POST "$PVMBG/admin/outage" "${admin[@]}"; }
+# The endpoint toggles, so only switch the outage off when it is on. The exit hook and the recovery step both call this.
+outage_off() { [ "$(curl -s "$PVMBG/health" | jq -r .outage_active)" = true ] && curl -s -o /dev/null -X POST "$PVMBG/admin/outage" "${admin[@]}"; return 0; }
 status() { hazards op "type=$1&limit=1" | jq -r '.meta.source_status'; }
 volcanic_up() { [ "$(status VOLCANIC)" = UP ]; }
 cleanup_hooks+=("docker compose up -d --wait pvmbg-mock >/dev/null 2>&1")
