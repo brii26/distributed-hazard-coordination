@@ -45,7 +45,7 @@ login() { curl -s -c "$JARS/$1.jar" -X POST "$API/auth/login" -d "{\"email\":\"$
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
 # hazards <jar> <query>, prints the JSON body
-hazards() { curl -s -b "$JARS/$1.jar" "$API/hazards?$2"; }
+hazards() { curl -s -b "$JARS/$1.jar" -c "$JARS/$1.jar" "$API/hazards?$2"; }
 
 # started <service>, container start time; unchanged means it was never restarted
 started() { docker inspect -f '{{.State.StartedAt}}' "$(docker compose ps -q "$1")"; }
