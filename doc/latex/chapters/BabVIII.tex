@@ -288,7 +288,7 @@ Pada client-side refresh, client mendeteksi respons 401, memanggil endpoint refr
 
 Transparent refresh dipilih: Client-Facing API mendeteksi JWT yang kedaluwarsa, menukar refresh token ke Auth/Token Service, meneruskan permintaan dengan JWT baru, lalu mengembalikan token baru melalui cookie. Client tidak perlu mengimplementasikan logika refresh, dan kedua token disimpan sebagai cookie HttpOnly sehingga tidak dapat dibaca JavaScript dan terlindung dari pencurian melalui XSS. Alur ini memenuhi ketentuan refresh tanpa login ulang manual.
 
-Trade-off: permintaan dengan JWT kedaluwarsa bergantung pada ketersediaan Auth/Token Service, dan permintaan paralel yang membawa refresh token yang sama dapat saling bertabrakan karena hanya satu yang berhasil melakukan rotasi (lihat 8.3).
+Trade-off: permintaan dengan JWT kedaluwarsa bergantung pada ketersediaan Auth/Token Service, dan permintaan paralel yang membawa refresh token yang sama dapat saling bertabrakan karena hanya satu yang berhasil melakukan rotasi (lihat Batasan yang Disadari).
 
 \section{Batasan Yang Disadari}
 

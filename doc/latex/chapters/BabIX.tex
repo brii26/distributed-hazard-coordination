@@ -6,7 +6,7 @@ Terdapat tiga layanan utama yang relevan dengan Problem 4, yaitu Aggregator, Cli
 
 Pertama, Aggregator merupakan satu-satunya komponen yang berkomunikasi langsung dengan BMKG dan PVMBG. Komponen ini melakukan polling ke kedua sumber, menerapkan pemetaan yang toleran terhadap perubahan skema sebagaimana didefinisikan pada Problem 1 (field yang tidak dikenal atau baru ditambahkan, seperti confidence\_level, diarahkan ke field attributes), dan merupakan pemilik tunggal Canonical Store. Tidak ada service lain yang memiliki kredensial database maupun connection string ke penyimpanan ini. Selain itu, Canonical Store ditempatkan pada jaringan Docker internal yang hanya diikuti oleh Aggregator, sehingga service lain tidak dapat menjangkaunya secara jaringan.
 
-Kedua, Client-Facing API merupakan proxy read-only. Komponen ini tidak pernah meng-query Canonical Store secara langsung, setiap permintaan data dilayani dengan memanggil API milik Aggregator. Permintaan client diautentikasi dengan memverifikasi JWT secara lokal menggunakan signature dan klaim exp milik token tersebut. Untuk permintaan dengan token yang masih valid, tidak ada panggilan ke Auth/Token Service pada jalur permintaan. Client-Facing API hanya menghubungi Auth/Token Service pada dua kondisi: meneruskan permintaan login, dan melakukan refresh secara transparan ketika access token client telah kedaluwarsa (lihat 8.1.2).
+Kedua, Client-Facing API merupakan proxy read-only. Komponen ini tidak pernah meng-query Canonical Store secara langsung, setiap permintaan data dilayani dengan memanggil API milik Aggregator. Permintaan client diautentikasi dengan memverifikasi JWT secara lokal menggunakan signature dan klaim exp milik token tersebut. Untuk permintaan dengan token yang masih valid, tidak ada panggilan ke Auth/Token Service pada jalur permintaan. Client-Facing API hanya menghubungi Auth/Token Service pada dua kondisi: meneruskan permintaan login, dan melakukan refresh secara transparan ketika access token client telah kedaluwarsa (lihat Bab VIII).
 
 Ketiga, Auth/Token Service bertanggung jawab menerbitkan JWT bertanda tangan dengan TTL pendek yang dapat dikonfigurasi (default 60 detik), serta mengelola refresh token. Komponen ini memiliki penyimpanannya sendiri, yaitu User DB, yang berisi data akun dan refresh token dan tidak diakses oleh service lain. Auth/Token Service tidak memiliki ketergantungan terhadap Aggregator, karena Aggregator tidak pernah menerbitkan maupun mengonsumsi token client. Hubungannya dengan Client-Facing API bersifat satu arah dan terbatas pada login dan refresh.
 
@@ -16,7 +16,7 @@ HazardEvent disimpan di PostgreSQL dengan skema \emph{hybrid}. Sepuluh field kan
 
 \section{Alasan Keputusan}
 
-Keputusan pada Problem 4 mencakup dua hal: penentuan batas service dan cara HazardEvent disimpan. Perbandingan alternatif secara lengkap dijabarkan pada 9.5.
+Keputusan pada Problem 4 mencakup dua hal: penentuan batas service dan cara HazardEvent disimpan. Perbandingan alternatif secara lengkap dijabarkan pada Subbab \ref{sec:p4-alternatif}.
 
 \subsection{Batas Service}
 
@@ -33,6 +33,22 @@ Sistem dipecah berdasarkan tanggung jawab fungsional, bukan dipertahankan sebaga
 \end{itemize}
 
 Salah satu konsekuensi penting dari batas ini adalah verifikasi JWT dilakukan secara lokal di Client-Facing API. Alternatifnya, memanggil Auth/Token Service secara sinkron pada setiap permintaan, ditolak karena menciptakan coupling langsung, restart Auth/Token Service akan melumpuhkan seluruh lalu lintas Client-Facing API. Dengan verifikasi lokal, ketergantungan Client-Facing API terhadap Auth/Token Service terbatas pada login dan refresh. Selama Auth/Token Service di-restart, permintaan dengan token yang masih valid tetap dilayani, hanya login dan refresh yang gagal sementara dan dijawab dengan 503 eksplisit.
+
+\subsection{Independensi Container}
+
+Setiap \textit{service} memiliki Dockerfile sendiri dan didefinisikan sebagai \textit{service} tersendiri di \texttt{docker-compose.yml}. Fondasi independensinya adalah sebagai berikut.
+
+\begin{itemize}
+\tightlist
+\item
+  Jaringan \texttt{canonical-net} dan \texttt{userdb-net} bertanda \texttt{internal}. Masing-masing hanya diikuti oleh pemilik penyimpanannya (Aggregator dan Auth/Token Service) dan penyimpanan itu sendiri.\\
+\item
+  Setiap penyimpanan punya \textit{volume} sendiri (\texttt{canonical\_store\_data}, \texttt{user\_db\_data}, \texttt{rabbitmq\_data}), begitu pula token OAuth PVMBG dan catatan deduplikasi, sehingga \textit{container} dapat dibuat ulang tanpa kehilangan data.\\
+\item
+  Setiap \textit{service} punya \textit{healthcheck} dan \texttt{depends\_on} dengan kondisi \texttt{service\_healthy} hanya pada dependensi yang benar-benar dibutuhkan untuk start. Ketiga \textit{consumer} hanya bergantung pada RabbitMQ.\\
+\item
+  Satu \textit{service} dapat dihentikan, di-\textit{build} ulang, dan dijalankan lagi dengan \texttt{docker compose up -d --build --no-deps --wait <service>}. Opsi \texttt{--no-deps} mencegah dependensinya ikut dibuat ulang.
+\end{itemize}
 
 \section{Batasan Yang Disadari}
 
@@ -52,7 +68,7 @@ PostgreSQL berjalan tanpa replikasi, sehingga kegagalan database menghentikan ja
 
 Field baru dari sumber diserap attributes tanpa migrasi, tetapi perubahan format kanonik itu sendiri tetap membutuhkan migrasi. Hal ini dapat diterima karena format kanonik dikendalikan BNPB, bukan instansi sumber.
 
-\subsection{Isi attributes tidak divalidasi dan tidak di-index}
+\subsection{Isi attributes tidak divalidasi dan tidak di-index}\label{sec:p4-attributes}
 
 Kolom attributes menerima tipe nilai apa pun dan belum diberi GIN index. Index dapat ditambahkan kemudian tanpa migrasi data.
 
@@ -70,7 +86,7 @@ Kolom attributes menerima tipe nilai apa pun dan belum diberi GIN index. Index d
 
 \textless placeholder\textgreater{}
 
-\section{Batas Service dan Alternatif Penyimpanan}
+\section{Batas Service dan Alternatif Penyimpanan}\label{sec:p4-alternatif}
 
 \subsection{Alternatif Batasan Service}
 
@@ -122,4 +138,4 @@ Query berdasarkan isi attributes & Dapat ditambahkan melalui GIN index tanpa mig
 
 PostgreSQL dengan JSONB dipilih karena merupakan satu-satunya opsi yang sekaligus menyerap field baru tanpa migrasi dan menegakkan validasi serta deduplikasi field kanonik sebagai bagian bawaan dari definisi tabel. Relasional dengan kolom tetap memberikan validasi yang sama, tetapi setiap field baru dari sumber mewajibkan migrasi, sehingga coupling dari Problem 1 muncul kembali melalui jalur storage. Document store memenuhi kebutuhan tanpa migrasi dan dapat melakukan validasi melalui \emph{jsonSchema}, tetapi validasi tersebut bersifat opsional dan terpisah dari penyimpanan data, sedangkan fleksibilitas skema penuhnya tidak dibutuhkan karena hanya attributes yang berubah-ubah. Key-value store paling sederhana, tetapi tidak mendukung query berdasarkan field selain key, padahal Client-Facing API membutuhkan filter berdasarkan hazard\_type dan waktu.
 
-Konsekuensi dari pilihan ini adalah dua model data dalam satu tabel, field kanonik tervalidasi ketat, sedangkan isi attributes tidak tervalidasi di tingkat database (lihat 9.3).
+Konsekuensi dari pilihan ini adalah dua model data dalam satu tabel, field kanonik tervalidasi ketat, sedangkan isi attributes tidak tervalidasi di tingkat database (lihat Subbab \ref{sec:p4-attributes}).

@@ -10,7 +10,17 @@ Di sisi producer, publish() memasukkan pesan ke buffer in-memory berukuran terba
 
 Queue dideklarasikan sebagai durable dan pesan dipublikasikan sebagai persistent (delivery\_mode = 2), sehingga pesan yang terbit saat consumer mati tetap tersimpan di queue dan diproses setelah consumer menyala kembali.
 
-Seluruh consumer menggunakan manual acknowledgment: pesan baru di-ack setelah selesai diproses, sehingga pesan yang sedang diproses saat consumer crash akan dikirim ulang. Karena redelivery dapat menghasilkan duplikat, setiap consumer dibuat idempoten: - Dashboard Updater melakukan upsert ke state map in-memory berkunci hazard\_id, sehingga memproses pesan yang sama dua kali menghasilkan state yang sama. - Notifier dan Audit Logger mencatat pasangan (hazard\_id, severity) yang sudah diproses, dan melewati pesan dengan pasangan yang sudah tercatat. Penggunaan severity dalam kunci memastikan eskalasi tingkat ancaman pada event yang sama, misalnya dari SIAGA menjadi AWAS, tetap diproses.
+Seluruh consumer menggunakan manual acknowledgment: pesan baru di-ack setelah selesai diproses, sehingga pesan yang sedang diproses saat consumer crash akan dikirim ulang. Karena redelivery dapat menghasilkan duplikat, setiap consumer dibuat idempoten.
+
+\begin{itemize}
+\tightlist
+\item
+  Dashboard Updater melakukan upsert ke state map in-memory berkunci hazard\_id, sehingga memproses pesan yang sama dua kali menghasilkan state yang sama.
+\item
+  Notifier dan Audit Logger mencatat pasangan (hazard\_id, severity) yang sudah diproses, dan melewati pesan dengan pasangan yang sudah tercatat.
+\end{itemize}
+
+Penggunaan severity dalam kunci memastikan eskalasi tingkat ancaman pada event yang sama, misalnya dari SIAGA menjadi AWAS, tetap diproses.
 
 Catatan (hazard\_id, severity) disimpan pada berkas di disk milik masing-masing consumer. Agar pemeriksaan tidak dibebani latensi I/O, isi berkas dimuat ke memori setiap kali service dinyalakan, dan pemeriksaan dilakukan terhadap data di memori. Setelah pesan berhasil diproses, catatan ditambahkan ke memori sekaligus ditulis ke disk, baru kemudian pesan di-ack. Dengan demikian, catatan tetap ada setelah crash dan restart.
 
@@ -18,7 +28,7 @@ Catatan (hazard\_id, severity) disimpan pada berkas di disk milik masing-masing 
 
 \subsection{Pemilihan Broker}
 
-RabbitMQ, Kafka, and NATS were each evaluated against the five Problem 5 criteria and against the team's operational constraints under a fixed deadline.
+RabbitMQ, Kafka, dan NATS dibandingkan terhadap lima kriteria Problem 5 dan keterbatasan operasional kelompok dalam waktu pengerjaan yang tetap.
 
 \begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-8\tabcolsep)/4\relax}|}
 \hline
@@ -30,9 +40,9 @@ Fan-out ke consumer independen & Fanout exchange bawaan & Consumer group terpisa
 \hline
 Catch-up setelah consumer restart & Durable queue dan persistent message & Offset consumer group & Tidak didukung tanpa JetStream \\
 \hline
-History event untuk consumer baru & Tidak ada & Ada, sesuai log retension & Tidak ada tanpa JetStream \\
+History event untuk consumer baru & Tidak ada & Ada, sesuai \textit{log retention} & Tidak ada tanpa JetStream \\
 \hline
-Kebutuhan Spesifikasi (M1) & Satu container, ringan & Lebih berat (KRaft, Partition) & Paling ringan, sampai JetSream diaktifkan \\
+Kebutuhan Spesifikasi (M1) & Satu container, ringan & Lebih berat (KRaft dan partisi) & Paling ringan, sampai JetStream diaktifkan \\
 \hline
 \end{longtable}
 
@@ -68,21 +78,21 @@ Pemeriksaan langsung ke disk menambah latensi I/O, sedangkan penyimpanan hanya d
 \def\labelenumi{\arabic{enumi}.}
 \tightlist
 \item
-  Event dapat tidak terpublikasi saat broker atau Aggregator bermasalah Jika outage broker melebihi kapasitas buffer, pesan tertua dibuang. Buffer juga berada di memori, sehingga pesan yang belum terkirim hilang bila Aggregator crash. Event tersebut tetap tersimpan di Canonical Store, tetapi tidak dipublikasikan ulang karena pola outbox tidak diterapkan.\\
+  Event dapat tidak terpublikasi saat broker atau Aggregator bermasalah. Jika outage broker melebihi kapasitas buffer, pesan tertua dibuang. Buffer juga berada di memori, sehingga pesan yang belum terkirim hilang bila Aggregator crash. Event tersebut tetap tersimpan di Canonical Store, tetapi tidak dipublikasikan ulang karena pola outbox tidak diterapkan.\\
 \item
-  Consumer baru tidak menerima riwayat event Queue dideklarasikan oleh consumer saat pertama kali dijalankan, sehingga event yang terbit sebelum itu tidak diterima. Riwayat HazardEvent tetap dapat diperoleh melalui API Aggregator.\\
+  Consumer baru tidak menerima riwayat event. Queue dideklarasikan oleh consumer saat pertama kali dijalankan, sehingga event yang terbit sebelum itu tidak diterima. Riwayat HazardEvent tetap dapat diperoleh melalui API Aggregator.\\
 \item
-  Queue consumer yang mati dapat tumbuh tanpa batas Selama consumer mati, pesan terus menumpuk di queue-nya karena batas panjang queue maupun TTL pesan tidak dikonfigurasi.\\
+  Queue consumer yang mati dapat tumbuh tanpa batas. Selama consumer mati, pesan terus menumpuk di queue-nya karena batas panjang queue maupun TTL pesan tidak dikonfigurasi.\\
 \item
-  Duplikat masih mungkin terjadi Jika consumer crash setelah memproses pesan tetapi sebelum catatan deduplikasi tersimpan, pesan tersebut akan diproses ulang setelah redelivery, misalnya peringatan terkirim dua kali. Konsekuensi ini diterima karena peringatan ganda lebih aman daripada peringatan yang terlewat.\\
+  Duplikat masih mungkin terjadi. Jika consumer crash setelah memproses pesan tetapi sebelum catatan deduplikasi tersimpan, pesan tersebut akan diproses ulang setelah redelivery, misalnya peringatan terkirim dua kali. Konsekuensi ini diterima karena peringatan ganda lebih aman daripada peringatan yang terlewat.\\
 \item
-  State Dashboard Updater hilang saat restart State map disimpan di memori dan hanya terbentuk kembali dari event yang diterima setelah restart. Sinkronisasi ulang dari API Aggregator saat start tidak diimplementasikan.\\
+  State Dashboard Updater hilang saat restart. State map disimpan di memori dan hanya terbentuk kembali dari event yang diterima setelah restart. Sinkronisasi ulang dari API Aggregator saat start tidak diimplementasikan.\\
 \item
-  Kunci deduplikasi tidak menangani severity yang naik kembali Dengan kunci (hazard\_id, severity), jika severity sebuah event turun lalu naik kembali ke tingkat yang pernah diproses, misalnya SIAGA menjadi WASPADA lalu kembali SIAGA, kenaikan kedua dianggap duplikat. Pola perubahan ini dinilai jarang terjadi pada cakupan M1.\\
+  Kunci deduplikasi tidak menangani severity yang naik kembali. Dengan kunci (hazard\_id, severity), jika severity sebuah event turun lalu naik kembali ke tingkat yang pernah diproses, misalnya SIAGA menjadi WASPADA lalu kembali SIAGA, kenaikan kedua dianggap duplikat. Pola perubahan ini dinilai jarang terjadi pada cakupan M1.\\
 \item
-  Catatan deduplikasi tidak pernah dibersihkan Berkas catatan (hazard\_id, severity) terus bertambah dan dimuat seluruhnya ke memori setiap kali service dinyalakan. Pada skala M1 ukurannya tidak signifikan.\\
+  Catatan deduplikasi tidak pernah dibersihkan. Berkas catatan (hazard\_id, severity) terus bertambah dan dimuat seluruhnya ke memori setiap kali service dinyalakan. Pada skala M1 ukurannya tidak signifikan.\\
 \item
-  RabbitMQ berjalan sebagai satu instance Broker berjalan tanpa clustering, sehingga selama broker mati distribusi event terhenti. Pesan yang sudah berada di queue tetap aman karena bersifat persistent dan tersimpan pada Docker volume.
+  RabbitMQ berjalan sebagai satu instance. Broker berjalan tanpa clustering, sehingga selama broker mati distribusi event terhenti. Pesan yang sudah berada di queue tetap aman karena bersifat persistent dan tersimpan pada Docker volume.
 \end{enumerate}
 
 \section{Bukti Penyelesaian}
