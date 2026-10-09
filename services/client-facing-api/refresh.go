@@ -68,6 +68,7 @@ func (a *authAPI) rotate(ctx context.Context, old string, c *refreshCall) {
 
 	a.refreshMu.Lock()
 	c.resp, c.err = resp, err
+
 	delete(a.refreshes, old)
 	a.refreshMu.Unlock()
 	close(c.done)
