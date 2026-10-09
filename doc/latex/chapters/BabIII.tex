@@ -17,7 +17,7 @@ Data disimpan di PostgreSQL 16. \textit{Canonical Store} memiliki kolom bertipe 
 
 \section{\textit{Message Broker}}
 
-Distribusi \textit{event} memakai RabbitMQ 3.13 dengan \textit{fanout exchange} \texttt{hazard}. Setiap \textit{consumer} memiliki \textit{durable queue} sendiri yang terikat ke \textit{exchange} tersebut. Alasan memilih RabbitMQ dibandingkan Kafka dan NATS dibahas pada Bab X.
+Distribusi \textit{event} memakai RabbitMQ 3.13 dengan \textit{fanout exchange} \texttt{hazard.events}. Setiap \textit{consumer} memiliki \textit{durable queue} sendiri yang terikat ke \textit{exchange} tersebut. Alasan memilih RabbitMQ dibandingkan Kafka dan NATS dibahas pada Bab X.
 
 \section{Autentikasi}
 

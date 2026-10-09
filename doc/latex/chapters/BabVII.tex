@@ -2,7 +2,7 @@
 
 \section{Rancangan Solusi}
 
-\subsection{Pemisahan Jalur Ingest dan Jalur Pelayanan}
+\subsection{Pemisahan Jalur Ingest dan Jalur Pelayanan}\label{sec:p2-jalur}
 
 Sistem memisahkan dua jalur yang sebelumnya menyatu dalam satu alur:
 
@@ -28,7 +28,7 @@ Endpoint penyajian dipisah berdasarkan jenis bahaya:
 
 Permintaan ``BMKG-only'' pada kriteria penyelesaian merujuk ke endpoint seismik, yang sama sekali tidak menyentuh status maupun data PVMBG.
 
-\subsection{Poller Independen per Sumber}
+\subsection{Poller Independen per Sumber}\label{sec:p2-poller}
 
 Setiap sumber memiliki poller sendiri yang berjalan sebagai task asinkron terpisah di dalam Agregator:
 
@@ -46,7 +46,7 @@ Setiap sumber memiliki poller sendiri yang berjalan sebagai task asinkron terpis
 
 Model konkurensi yang digunakan adalah asynchronous non-blocking I/O: menunggu respons jaringan tidak memblokir thread, sehingga poller dan penanganan permintaan client dapat berjalan bersamaan tanpa saling menahan.
 
-\subsection{Pembatasan Konkurensi}
+\subsection{Pembatasan Konkurensi}\label{sec:p2-batas}
 
 Untuk mencegah lonjakan akses menghabiskan resource, sistem menerapkan batas di beberapa lapisan:
 
@@ -62,7 +62,7 @@ Untuk mencegah lonjakan akses menghabiskan resource, sistem menerapkan batas di 
   Connection pool terbatas: koneksi HTTP ke Aggregator dan koneksi ke Canonical Store memakai pool berukuran tetap.
 \end{itemize}
 
-\subsection{Status Kebaruan Data dan Degradasi}
+\subsection{Status Kebaruan Data dan Degradasi}\label{sec:p2-degradasi}
 
 Aggregator menyimpan status untuk setiap sumber
 
@@ -228,7 +228,7 @@ Penolakan langsung dengan HTTP 429 dipilih karena menjaga latensi permintaan yan
 
 Trade-off: sebagian client menerima 429 saat puncak beban dan perlu melakukan retry.
 
-\subsection{Rate Limiting Token Bucket per Client}
+\subsection{Rate Limiting Token Bucket per Client}\label{sec:p2-ratelimit}
 
 Alternatif yang dipertimbangkan:
 
@@ -248,7 +248,7 @@ Token bucket dipilih karena mengizinkan burst singkat yang wajar, tidak menambah
 
 Kunci rate limit berupa client\_id dari klaim JWT, bukan alamat IP, karena beberapa client dapat berbagi IP yang sama (misalnya di balik NAT atau saat load testing) dan identitas client sudah terverifikasi oleh Client-Facing API.
 
-Trade-off: state token bucket disimpan in-memory sehingga hilang saat Client-Facing API di-restart dan tidak dapat dibagi antar-instance. Karena Client-Facing API berjalan sebagai satu instance pada M1, hal ini dapat diterima (lihat 7.3).
+Trade-off: state token bucket disimpan in-memory sehingga hilang saat Client-Facing API di-restart dan tidak dapat dibagi antar-instance. Karena Client-Facing API berjalan sebagai satu instance pada M1, hal ini dapat diterima (lihat Subbab \ref{sec:p2-batas}).
 
 \subsection{Circuit Breaker dan Respons Stale dengan Penanda}
 
@@ -321,14 +321,14 @@ Sistem menggunakan asynchronous concurrency berbasis non-blocking I/O. Beban ker
 
 \subsection{Mitigasi Head-of-Line Blocking}
 
-Client tidak pernah memicu panggilan langsung ke BMKG maupun PVMBG. Permintaan client dijawab Aggregator dari Canonical Store, sehingga latensi PVMBG tidak masuk ke jalur permintaan client. Poller per sumber juga berjalan independen, sehingga ingest data seismik tidak tertahan oleh PVMBG yang lambat (7.1.1, 7.1.2).
+Client tidak pernah memicu panggilan langsung ke BMKG maupun PVMBG. Permintaan client dijawab Aggregator dari Canonical Store, sehingga latensi PVMBG tidak masuk ke jalur permintaan client. Poller per sumber juga berjalan independen, sehingga ingest data seismik tidak tertahan oleh PVMBG yang lambat (Subbab \ref{sec:p2-jalur} dan \ref{sec:p2-poller}).
 
 \subsection{Mitigasi Resource Exhaustion}
 
-Semaphore membatasi jumlah permintaan yang diproses bersamaan, dan permintaan yang melebihi kapasitas langsung ditolak dengan HTTP 429. Rate limiting per client dengan token bucket mencegah satu client memonopoli kapasitas, sementara timeout di setiap hop dan connection pool terbatas mencegah permintaan menggantung dan menahan resource (7.1.3).
+Semaphore membatasi jumlah permintaan yang diproses bersamaan, dan permintaan yang melebihi kapasitas langsung ditolak dengan HTTP 429. Rate limiting per client dengan token bucket mencegah satu client memonopoli kapasitas, sementara timeout di setiap hop dan connection pool terbatas mencegah permintaan menggantung dan menahan resource (Subbab \ref{sec:p2-batas}).
 
 \subsection{Mitigasi Ketiadaan Degradasi Terkendali}
 
-Circuit breaker per sumber mendeteksi sumber yang mati secara otomatis di level polling, lalu mencatat stale\_since. Selama sumber DOWN, data sumber tersebut dijawab dari Canonical Store beserta stale\_since, sedangkan sumber lain tidak terpengaruh. Setelah sumber hidup kembali, circuit breaker memulihkan status secara otomatis tanpa restart (7.1.4).
+Circuit breaker per sumber mendeteksi sumber yang mati secara otomatis di level polling, lalu mencatat stale\_since. Selama sumber DOWN, data sumber tersebut dijawab dari Canonical Store beserta stale\_since, sedangkan sumber lain tidak terpengaruh. Setelah sumber hidup kembali, circuit breaker memulihkan status secara otomatis tanpa restart (Subbab \ref{sec:p2-degradasi}).
 
 \section{Konfigurasi dan Tooling Load Testing}
