@@ -43,3 +43,59 @@ Jalur \textit{client} terpisah dari jalur \textit{ingest}. \textit{Client} dapat
 Setiap penyimpanan dimiliki tepat satu \textit{service}. \textit{Canonical Store} hanya dapat dijangkau \textit{Aggregator} karena berada pada \textit{network} \texttt{canonical-net} yang bersifat \textit{internal} dan hanya diikuti \textit{Aggregator}. \textit{User DB} berada pada \texttt{userdb-net} dengan aturan yang sama dan hanya diikuti \textit{Auth/Token Service}. \textit{Service} lain yang membutuhkan data tersebut harus melewati API milik pemiliknya.
 
 Setiap \textit{service} berjalan sebagai \textit{container} sendiri dan seluruh sistem dinyalakan dengan satu perintah \texttt{docker compose up}. Port yang dipublikasikan ke \textit{host} adalah \textit{Client-Facing API} (8080), \textit{Web Server} (3000), BMKG \textit{mock} (8081), PVMBG \textit{mock} (8082), Jaeger UI, dan port manajemen RabbitMQ. Dalam konfigurasi \textit{compose}, kedua \textit{mock} berada pada \textit{network} yang sama dengan \textit{service} BNPB, tetapi diperlakukan sebagai pihak luar karena hanya dijangkau lewat REST dengan kredensial masing-masing.
+
+\section{Antarmuka dan Model Data}
+
+Format kanonik \texttt{HazardEvent} dan aturan pemetaannya dibahas pada Bab VI. Antarmuka yang dapat dijangkau dari luar \textit{container} hanya milik Client-Facing API, ditambah \textit{endpoint} kedua \textit{mock} yang ditetapkan spesifikasi.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.12\linewidth}|>{\raggedright\arraybackslash}p{0.26\linewidth}|>{\raggedright\arraybackslash}p{0.5\linewidth}|}
+\hline
+Method & Path & Fungsi \\
+\hline
+\endhead
+POST & \texttt{/auth/login} & Login dengan email dan kata sandi, mengisi cookie \texttt{jwt} dan \texttt{refresh\_token} \\
+\hline
+POST & \texttt{/auth/logout} & Mencabut \textit{refresh token} \\
+\hline
+POST & \texttt{/auth/register} & Membuat akun Media tanpa autentikasi, 409 bila email sudah ada \\
+\hline
+POST & \texttt{/accounts} & Membuat akun dengan role tertentu, hanya untuk Operator \\
+\hline
+GET & \texttt{/hazards} & Satu halaman \texttt{HazardEvent} sesuai role. Parameter: \texttt{type} (wajib, SEISMIC atau VOLCANIC), \texttt{limit} (1 sampai 100, default 25), \texttt{offset}, \texttt{severity}, \texttt{q} (substring \texttt{area\_name}), dan \texttt{fields} \\
+\hline
+GET & \texttt{/hazards/stream} & Aliran \textit{event} langsung lewat SSE, difilter per \texttt{type} dan per role \\
+\hline
+GET & \texttt{/me} & Email dan role dari sesi, sebagai petunjuk tampilan \\
+\hline
+GET & \texttt{/health} & Status \textit{service} \\
+\hline
+\end{longtable}
+
+Respons \texttt{/hazards} berbentuk \texttt{\{data, meta, page\}}. \texttt{meta} memuat status kebaruan sumber (Bab VII) dan \texttt{page} memuat \texttt{limit}, \texttt{offset}, dan \texttt{has\_more}. \texttt{has\_more} diperoleh dengan meminta satu baris tambahan, sehingga tidak ada \texttt{COUNT} atas seluruh tabel.
+
+Antar-\textit{service}, Client-Facing API memanggil Aggregator lewat \texttt{GetHazards} dan \texttt{GetHealth}, dan memanggil Auth/Token Service lewat \texttt{Login}, \texttt{Refresh}, \texttt{Logout}, \texttt{Register}, dan \texttt{CreateAccount}. Definisinya ada di berkas \textit{protobuf} tiap \textit{service}.
+
+\section{Observabilitas}
+
+Setiap \textit{service} Go memakai tiga dasar yang sama.
+
+\begin{itemize}
+\item
+  \textit{Correlation ID} dibangkitkan di dua tempat dan berbeda ruang namanya. Client-Facing API membuatnya untuk setiap permintaan \textit{client} (memakai header \texttt{X-Correlation-ID} dari \textit{client} bila ada) lalu meneruskannya sebagai \textit{metadata} gRPC \texttt{x-correlation-id} dan mengembalikannya di header respons. Aggregator membuat satu ID untuk setiap siklus polling terhadap satu sumber, dan membawanya ke properti AMQP \texttt{correlation\_id} pada setiap pesan yang terbit dari siklus itu.
+\item
+  \textit{Log} terstruktur berformat JSON satu baris per kejadian, dengan field minimal \texttt{timestamp}, \texttt{level}, \texttt{service}, \texttt{correlation\_id}, dan \texttt{message}. Setiap panggilan keluar mencatat \texttt{target}, \texttt{duration\_ms}, dan \texttt{status}. Perubahan keadaan seperti transisi \textit{circuit breaker}, saklar \textit{outage}, saklar skema, rotasi token, dan \textit{ack} atau \textit{nack} \textit{consumer} dicatat tersendiri.
+\item
+  \textit{Health check} pada \texttt{GET /health} dengan status \texttt{ok}, \texttt{degraded}, atau \texttt{down}. Layanan yang masih dapat melayani sebagian fungsi saat dependensinya tidak terjangkau melaporkan \texttt{degraded}, dan satu sumber yang mati tidak membuat Aggregator \texttt{down}.
+\end{itemize}
+
+Di atasnya, setiap \textit{service} Go mengekspor \textit{span} OpenTelemetry lewat OTLP gRPC ke Jaeger. Konteks \textit{trace} dibawa lewat header W3C \texttt{traceparent} pada HTTP, otelgrpc pada gRPC, dan header pesan AMQP dari Aggregator ke \textit{consumer}, sehingga satu siklus polling atau satu permintaan \textit{client} menjadi satu \textit{trace} lintas \textit{service}. Bila \textit{tracing} menyala, ID \textit{trace} dipakai sebagai \texttt{correlation\_id} di \textit{log}, jadi satu ID menghubungkan \textit{log} dan Jaeger. Kegagalan ekspor tidak memengaruhi permintaan maupun \textit{health check}, dan \texttt{TRACING\_ENABLED=false} mematikannya sepenuhnya. Pengumpulan \textit{log} terpusat dan \textit{dashboard} Grafana tidak dibangun, karena \texttt{docker compose logs} masih cukup untuk satu \textit{instance} per \textit{service}.
+
+\section{Web Frontend}
+
+Web Frontend berupa aplikasi \textit{client-side rendering}: nginx hanya menyajikan berkas statis, dan seluruh pengambilan data serta tampilan berjalan di \textit{browser}. Frontend hanya berbicara dengan Client-Facing API lewat path \texttt{/api}, tidak pernah dengan Aggregator, Auth/Token Service, broker, maupun basis data. Token tidak disimpan di JavaScript karena berada di cookie \textit{HttpOnly} yang dikirim otomatis oleh \textit{browser}.
+
+Pembaruan data masuk lewat SSE. Frontend membuka \texttt{EventSource} ke \texttt{GET /hazards/stream}. Client-Facing API meneruskan aliran dari Dashboard Updater, menyaring per \texttt{type}, dan memproyeksikan field menurut role seperti pada \texttt{GET /hazards}. Aliran ditutup server saat token kedaluwarsa, dan \textit{browser} menyambung ulang sehingga sesi disegarkan secara transparan atau dijawab 401. \textit{Event} yang terlewat saat putus tidak diputar ulang. Saat aliran terbuka atau tersambung ulang, frontend memuat ulang \texttt{GET /hazards} yang bersumber dari Canonical Store, dan polling berkala pada \texttt{FRONTEND\_POLL\_INTERVAL\_MS} tetap berjalan sebagai cadangan bila aliran putus. SSE dipilih dibandingkan WebSocket karena komunikasinya satu arah, berjalan di atas HTTP biasa melalui nginx dan cookie \textit{HttpOnly}, dan penyambungan ulang sudah ada di \textit{browser}. Jumlah aliran dibatasi 500 secara total dan 5 per akun, di luar batas konkurensi global.
+
+\section{Konfigurasi}
+
+Seluruh rahasia dan nilai yang dapat diubah dibaca dari \textit{environment variable}. Berkas \texttt{.env.example} di akar repositori mendaftarkan setiap variabel beserta nilai contohnya, dengan awalan per \textit{service} bila perlu (misalnya \texttt{PVMBG\_ADMIN\_KEY}). Sambungan internal antar-\textit{container} seperti URL, port, dan path diisi di \texttt{docker-compose.yml}. Berkas \texttt{.env} yang berisi nilai sebenarnya tidak ikut di-\textit{commit}.
