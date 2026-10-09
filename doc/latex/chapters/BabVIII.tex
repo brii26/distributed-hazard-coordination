@@ -331,7 +331,7 @@ services/bmkg-mock/main.go:158:   apiKey := os.Getenv("BMKG_API_KEY")
 
 Mekanisme terbagi dua. Antara BNPB dan instansi sumber, BNPB mengikuti mekanisme masing-masing: \textit{API key} statis pada header \texttt{X-BMKG-Key} untuk BMKG, dan OAuth 2.0 dengan rotasi \textit{refresh token} untuk PVMBG. Antara \textit{client} dan BNPB, BNPB memakai IdP sendiri yang menerbitkan JWT HS256 dan \textit{refresh token} stateful, keduanya sebagai cookie \textit{HttpOnly}.
 
-Alasan mekanisme ini tidak membuka celah baru adalah sebagai berikut.
+Alasan mekanisme ini tidak membuka celah baru adalah sebagai berikut. Batas pendekatan ini dicatat pada Batasan yang Disadari.
 
 \begin{itemize}
 \item
@@ -346,8 +346,5 @@ Alasan mekanisme ini tidak membuka celah baru adalah sebagai berikut.
   Kegagalan login dijawab 401 tanpa menyebut email atau kata sandi mana yang salah. Login dan registrasi dibatasi per IP.
 \item
   Rahasia tidak ada di kode. Kunci penandatangan JWT, \textit{salt}, kredensial OAuth, dan kunci API dibaca dari \textit{environment variable}, dan repositori hanya memuat \texttt{.env.example} berisi nilai contoh \texttt{change-me*}.
-\item
-  Aggregator tidak pernah menerbitkan atau menerima token \textit{client}, dan Canonical Store tidak dapat dijangkau dari jaringan mana pun selain milik Aggregator.
 \end{itemize}
 
-Batas dari pendekatan ini dicatat pada Batasan yang Disadari, terutama kepercayaan di tepi sistem dan kata sandi yang tidak diperkeras terhadap tebakan luring.
