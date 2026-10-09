@@ -83,42 +83,7 @@ Akan dikembalikan:
 }
 \end{codebox}
 
-\begin{enumerate}
-\def\labelenumi{\arabic{enumi}.}
-\setcounter{enumi}{4}
-\tightlist
-\item
-  Untuk memverifikasi apakah token itu benar-benar berasal dari server third party atau tidak, client dapat menggunakan api berikut ini:
-\end{enumerate}
-
-\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|}
-\hline
-\texttt{URL} & \texttt{/oauth/introspect} \\
-\hline
-\endhead
-\endlastfoot
-\texttt{Method} & \texttt{HTTP\ POST} \\
-\hline
-\textbf{\texttt{Header}} & \\
-\hline
-\texttt{Authorization} & \texttt{Basic\ Y2xpZW50X2lkOmNsaWVudF9zZWNyZXQ=} \\
-\hline
-\textbf{\texttt{Request\ Body}} & \\
-\hline
-\texttt{access\_token} & \texttt{\textless{}access\_token\textgreater{}} \\
-\hline
-\end{longtable}
-
-Akan dikembalikan:
-
-\begin{codebox}
-{
-    "active" : <boolean>,
-    "expires_in" : 60
-}
-\end{codebox}
-
-Catatan: Expired in berarti token akan kadarluasa dalam 60 detik (untuk keperluan demonstrasi).
+Catatan: \texttt{expires\_in} bernilai 60 detik untuk keperluan demonstrasi. Mock PVMBG hanya mengizinkan satu pasangan token yang valid untuk satu client, sehingga setelah refresh, token lama langsung ditolak.
 
 Agar token dan refresh token persists through multiple deployment, volume perlu dikonfigurasi dalam file docker compose.
 
@@ -177,7 +142,7 @@ Yang dikembalikan:
 Base64HeaderAndPayload + “.” + Signature
 \end{codebox}
 
-Nilai exp (expired at, unix timestamp) akan bergantung dengan rolenya. Untuk tim lapangan akan bernilai iat + 60 detik.
+Nilai exp (expired at, unix timestamp) adalah iat ditambah ACCESS\_TOKEN\_TTL\_S, default 60 detik, dan berlaku sama untuk semua role.
 
 \begin{enumerate}
 \def\labelenumi{\arabic{enumi}.}
@@ -196,7 +161,7 @@ CREATE TABLE refresh_tokens (
        refresh_token        VARCHAR(64) PRIMARY KEY,
        user_id              VARCHAR(255) NOT NULL,
        
-       FOREIGN KEY (user_id) REFERENCES user(user_id)
+       FOREIGN KEY (user_id) REFERENCES users(user_id)
 )
 \end{codebox}
 
@@ -219,7 +184,7 @@ Request refresh JWT itu harus otomatis terjadi setiap kali pengguna mengirim seb
 \item
   Pengguna mengirim request dengan JWT yang expired bersama refresh token yang valid.\\
 \item
-  Client Facing API mendeteksi bahwa JWT tidak valid. Request disimpan dalam memory, kemudian memanggil endpoint /refresh IdP dengan hanya meneruskan refresh token data nya.\\
+  Client Facing API mendeteksi bahwa JWT tidak valid. Request disimpan dalam memory, kemudian memanggil RPC Refresh pada IdP dengan hanya meneruskan refresh token.\\
 \item
   IdP fetch where refresh\_token = refresh\_token dalam DB sambil join tabel user. Apabila ada, artinya refresh token masih valid. Kemudian refresh token bersama JWT-nya dirotasi. Refresh token lama diupdate menjadi refresh token baru, kemudian JWT dan refresh token baru dikembalikan ke Client Facing API.\\
 \item
@@ -254,17 +219,17 @@ Trade-off: Aggregator harus mengelola siklus hidup token, yaitu memperbarui acce
 
 \subsection{Format Access Token PVMBG: Opaque Token vs JWT}
 
-Opaque token membutuhkan pemeriksaan ke penyimpanan token pada setiap permintaan, tetapi dapat dicabut seketika. JWT memuat klaim yang ditandatangani, sehingga PVMBG dapat memvalidasi token hanya dengan memeriksa signature dan klaim exp tanpa mengakses penyimpanan token.
+Opaque token membutuhkan pemeriksaan ke penyimpanan token pada setiap permintaan, tetapi dapat dicabut seketika. JWT memuat klaim yang ditandatangani, sehingga penerbit dapat memvalidasi token hanya dengan memeriksa signature dan klaim exp tanpa mengakses penyimpanan token.
 
-JWT dipilih karena validasi tidak membutuhkan lookup ke penyimpanan pada setiap permintaan polling, dan struktur token (header, payload, signature) memenuhi ketentuan Bearer token dengan struktur tersendiri yang berbeda dari API key BMKG.
+Mock PVMBG menerbitkan opaque token acak sepanjang 256 bit dan menyimpan pasangan token aktif per client di memorinya. Pilihan ini sesuai kebutuhan alur OAuth yang diminta: setelah refresh, token lama harus langsung tidak berlaku karena satu client hanya memiliki satu access token yang valid. Hal itu hanya dapat ditegakkan bila penerbit menyimpan keadaan, sedangkan JWT tidak dapat dicabut sebelum kedaluwarsa. Bagi BNPB, bentuk token tidak relevan karena Aggregator memperlakukannya sebagai string yang dikirim pada header Bearer.
 
-Trade-off: JWT tidak dapat dicabut sebelum kedaluwarsa. Dampaknya dibatasi oleh masa berlaku access token yang pendek (60 detik untuk akun lapangan). Isi payload juga dapat dibaca oleh pemegang token, sehingga payload dibatasi agar tidak memuat data rahasia.
+Trade-off: PVMBG menanggung penyimpanan token dan kehilangan semua token bila restart. Aggregator menutup celah ini dengan memulihkan diri: bila PVMBG menjawab \texttt{invalid\_grant} pada refresh, Aggregator melakukan bootstrap ulang dengan one time code dan mencatatnya sebagai \texttt{token bootstrap fallback}.
 
 \subsection{Autentikasi Client ke BNPB: JWT vs Session-Based}
 
 Session-based memudahkan revokasi, tetapi mewajibkan Client-Facing API memeriksa sesi ke Auth/Token Service pada setiap permintaan. Hal ini menambah satu hop jaringan dan menjadikan Auth/Token Service titik kegagalan bagi seluruh permintaan.
 
-JWT dipilih untuk access token karena dapat diverifikasi secara lokal di masing-masing servis sehingga tidak menambah latensi dan permintaan dengan token yang masih valid tetap dilayani walaupun Auth/Token Service sedang di-restart. Keterbatasan JWT dalam hal revokasi diimbangi dengan masa berlaku yang dapat dikonfigurasi per role dan refresh token yang bersifat stateful di User DB. Dengan demikian, validasi access token bersifat stateless, sedangkan pengelolaan sesi jangka panjang bersifat stateful.
+JWT dipilih untuk access token karena dapat diverifikasi secara lokal di masing-masing servis sehingga tidak menambah latensi dan permintaan dengan token yang masih valid tetap dilayani walaupun Auth/Token Service sedang di-restart. Keterbatasan JWT dalam hal revokasi diimbangi dengan masa berlaku pendek yang dapat dikonfigurasi lewat ACCESS\_TOKEN\_TTL\_S dan refresh token yang bersifat stateful di User DB. Dengan demikian, validasi access token bersifat stateless, sedangkan pengelolaan sesi jangka panjang bersifat stateful.
 
 Payload JWT hanya dapat dibaca, bukan dienkripsi. Karena itu, payload tidak memuat data rahasia, dan integritasnya dan authenticity-nya dijaga oleh HMAC signature.
 
@@ -278,7 +243,7 @@ Payload JWT hanya dapat dibaca, bukan dienkripsi. Karena itu, payload tidak memu
   Digital signature (RSA seperti RS256, atau ECDSA seperti ES256): asimetris. Token ditandatangani dengan private key yang hanya dipegang penerbit, dan diverifikasi dengan public key. Verifier tidak dapat menerbitkan token. Di antara keduanya, ECDSA menghasilkan key dan signature yang lebih kecil, sedangkan RSA lebih luas dukungannya.
 \end{itemize}
 
-HMAC dipilih karena seluruh service termasuk client facing API, agregator, canonical store, dan user service merupakan sistem internal BNPB. Tidak ada keperluan untuk separate private dan public key karena sistem tidak akan share key manapun ke luar sistem.
+HMAC dipilih karena penerbit (Auth/Token Service) dan satu-satunya verifier (Client-Facing API) sama-sama sistem internal BNPB. Tidak ada keperluan untuk private dan public key terpisah karena sistem tidak membagikan kunci ke luar. Aggregator tidak memverifikasi JWT: peran client diteruskan kepadanya sebagai gRPC metadata.
 
 Trade-off: kebocoran secret dari Client-Facing API memungkinkan penerbitan token dengan role apa pun. Risiko ini dinilai dapat diterima karena Client-Facing API adalah satu-satunya verifier, dan kompromi pada komponen tersebut sudah membuka akses ke data yang melewatinya. Digital signature menjadi pilihan apabila jumlah verifier bertambah atau verifier berada di luar domain of trust Auth/Token Service.
 
@@ -292,7 +257,22 @@ Trade-off: permintaan dengan JWT kedaluwarsa bergantung pada ketersediaan Auth/T
 
 \section{Batasan Yang Disadari}
 
-Masalah concurrency JWT refresh.
+\begin{itemize}
+\item
+  Refresh paralel. Permintaan dengan refresh token yang sama yang tiba selagi rotasi berjalan berbagi satu panggilan ke Auth/Token Service dan semuanya mendapat pasangan token baru. Pembagian ini hanya bekerja di dalam satu \textit{instance} Client-Facing API dan hanya untuk permintaan yang tiba selama rotasi. Permintaan yang tiba sesudahnya dengan cookie lama menerima 401 dan kedua cookie dihapus, sehingga browser yang mengirim banyak permintaan dengan cookie lama dari sebelum rotasi harus login ulang.
+\item
+  Refresh token tidak punya masa berlaku. Token sah sampai dipakai sekali (rotasi) atau logout. Tidak ada batas jumlah token per user dan baris dari sesi yang ditinggalkan tidak pernah dibersihkan, sehingga cookie refresh yang bocor tetap berlaku selama belum dipakai.
+\item
+  Registrasi mengungkap keberadaan akun. \texttt{POST /auth/register} menjawab 409 untuk email yang sudah ada dan 201 bila belum. Login tidak membocorkan hal ini. Menyembunyikannya membutuhkan verifikasi email, di luar M1, dan \textit{throttle} per IP hanya memperlambat.
+\item
+  Kata sandi disimpan sebagai \texttt{hex(sha256(password + SECRET\_SALT))}, satu \textit{salt} global dengan fungsi hash cepat. Bila User DB bocor bersama \textit{salt}, tebakan luring berjalan cepat dan dua user dengan kata sandi sama memiliki hash sama.
+\item
+  Nilai contoh \texttt{change-me*} di \texttt{.env.example} diterima saat start. Deployer wajib menggantinya sebelum sistem diekspos.
+\item
+  Batas kepercayaan ada di tepi sistem. JWT hanya diverifikasi Client-Facing API. Panggilan gRPC internal membawa peran dan \textit{correlation ID} sebagai \textit{metadata} tanpa TLS dan dipercaya, begitu pula jaringan Docker internal. Rahasia penandatangan JWT dipegang dua \textit{service}, sehingga kompromi salah satunya memungkinkan pemalsuan token. Demo berjalan tanpa HTTPS sehingga cookie \texttt{Secure} membutuhkan \texttt{COOKIE\_SECURE=false} pada HTTP biasa.
+\item
+  Hak akses kasar. Tiga role tetap, \textit{read-only}, tanpa izin per \textit{resource} atau wilayah. Kedaluwarsa token dibandingkan dengan jam yang sama tanpa toleransi selisih jam.
+\end{itemize}
 
 \section{Bukti Penyelesaian}
 
@@ -312,6 +292,27 @@ Masalah concurrency JWT refresh.
 
 \textless placeholder\textgreater{}
 
-\section{Mekanisme yang dipakai beserta alasan mengapa mekanisme tersebut tidak membuka celah baru.}
+\section{Mekanisme yang Dipakai dan Alasan Tidak Membuka Celah Baru}
 
-Dijelaskan di alasan keputusan dan rancangan solusi.
+Mekanisme terbagi dua. Antara BNPB dan instansi sumber, BNPB mengikuti mekanisme masing-masing: \textit{API key} statis pada header \texttt{X-BMKG-Key} untuk BMKG, dan OAuth 2.0 dengan rotasi \textit{refresh token} untuk PVMBG. Antara \textit{client} dan BNPB, BNPB memakai IdP sendiri yang menerbitkan JWT HS256 dan \textit{refresh token} stateful, keduanya sebagai cookie \textit{HttpOnly}.
+
+Alasan mekanisme ini tidak membuka celah baru adalah sebagai berikut.
+
+\begin{itemize}
+\item
+  Kredensial tidak dapat dipakai lintas domain. Kunci BMKG ditolak oleh PVMBG dan token PVMBG ditolak oleh BMKG, dengan 401 atau 403. Tidak ada satu kunci pun yang dipakai untuk dua instansi maupun untuk \textit{client} di luar BNPB, sehingga kebocoran satu kredensial tidak membuka sumber lain.
+\item
+  Tiga \textit{client} adalah tiga identitas dan tiga akun berbeda dengan role tersimpan di User DB, bukan satu akun dengan \textit{flag}. Hak akses ditegakkan di Client-Facing API dari klaim JWT yang sudah diverifikasi: Media hanya menerima field Ringkasan, dan permintaan eksplisit terhadap field Mentah lewat parameter \texttt{fields} dijawab 403 tanpa memanggil Aggregator.
+\item
+  Token berumur pendek (60 detik secara default) dan \textit{refresh token} dirotasi pada setiap pemakaian, sehingga \textit{refresh token} lama ditolak setelah rotasi. Token curian hanya berguna sampai dipakai atau kedaluwarsa.
+\item
+  Cookie bertanda \textit{HttpOnly}, \textit{Secure}, dan \textit{SameSite}, sehingga tidak dapat dibaca JavaScript. Setiap 401 pada permintaan bercookie menghapus kedua cookie, karena browser tidak dapat menghapus cookie \textit{HttpOnly} sendiri.
+\item
+  Kegagalan login dijawab 401 tanpa menyebut email atau kata sandi mana yang salah. Login dan registrasi dibatasi per IP.
+\item
+  Rahasia tidak ada di kode. Kunci penandatangan JWT, \textit{salt}, kredensial OAuth, dan kunci API dibaca dari \textit{environment variable}, dan repositori hanya memuat \texttt{.env.example} berisi nilai contoh \texttt{change-me*}.
+\item
+  Aggregator tidak pernah menerbitkan atau menerima token \textit{client}, dan Canonical Store tidak dapat dijangkau dari jaringan mana pun selain milik Aggregator.
+\end{itemize}
+
+Batas dari pendekatan ini dicatat pada Batasan yang Disadari, terutama kepercayaan di tepi sistem dan kata sandi yang tidak diperkeras terhadap tebakan luring.
