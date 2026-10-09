@@ -30,7 +30,7 @@ Permintaan ``BMKG-only'' pada kriteria penyelesaian merujuk ke endpoint seismik,
 
 \subsection{Poller Independen per Sumber}\label{sec:p2-poller}
 
-Setiap sumber memiliki poller sendiri yang berjalan sebagai task asinkron terpisah di dalam Agregator:
+Setiap sumber memiliki poller sendiri yang berjalan sebagai \textit{goroutine} terpisah di dalam Aggregator:
 
 \begin{itemize}
 \tightlist
@@ -44,7 +44,7 @@ Setiap sumber memiliki poller sendiri yang berjalan sebagai task asinkron terpis
   Setiap poller dibungkus circuit breaker tersendiri.
 \end{itemize}
 
-Model konkurensi yang digunakan adalah asynchronous non-blocking I/O: menunggu respons jaringan tidak memblokir thread, sehingga poller dan penanganan permintaan client dapat berjalan bersamaan tanpa saling menahan.
+Model konkurensi yang digunakan adalah \textit{goroutine} Go di atas I/O jaringan yang tidak memblokir \textit{thread} sistem operasi: \textit{goroutine} yang menunggu respons hanya diparkir oleh \textit{runtime}, sehingga poller dan penanganan permintaan client dapat berjalan bersamaan tanpa saling menahan.
 
 \subsection{Pembatasan Konkurensi}\label{sec:p2-batas}
 
@@ -64,7 +64,7 @@ Untuk mencegah lonjakan akses menghabiskan resource, sistem menerapkan batas di 
 
 \subsection{Status Kebaruan Data dan Degradasi}\label{sec:p2-degradasi}
 
-Aggregator menyimpan status untuk setiap sumber
+Aggregator menyimpan status untuk setiap sumber.
 
 \begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-4\tabcolsep)/2\relax}|}
 \hline
@@ -74,7 +74,7 @@ Attributes & Value \\
 \endlastfoot
 source & BMKG \\
 \hline
-status & UP \\
+status & UP, DEGRADED, atau DOWN \\
 \hline
 last\_success\_at & Waktu polling terakhir yang berhasil \\
 \hline
@@ -89,7 +89,7 @@ Status ini dikendalikan oleh circuit breaker per sumber:
 \begin{itemize}
 \tightlist
 \item
-  CLOSED: polling berjalan normal, status UP.\\
+  CLOSED: polling berjalan normal. Status UP, atau DEGRADED bila ada kegagalan berturut-turut yang masih di bawah ambang.\\
 \item
   OPEN: setelah N kegagalan berturut-turut, breaker terbuka dan status menjadi DOWN. Polling ke sumber dihentikan sementara (fail fast) agar resource tidak terbuang untuk sumber yang mati, dan stale\_since diisi dengan last\_success\_at.\\
 \item
@@ -108,7 +108,7 @@ Sumber UP & 200, data terbaru \\
 \hline
 Sumber DOWN, store berisi data & 200, data terakhir + meta.stale\_since \\
 \hline
-Sumber DOWN, store kosong tersedia & 503, body exkplisit: sumber tidak tersedia \\
+Sumber DOWN, store kosong & 503, body eksplisit: sumber tidak tersedia \\
 \hline
 Permintaan untuk sumber lain & tidak terpengaruh \\
 \hline
@@ -147,11 +147,15 @@ CB\_FAILURE\_THRESHOLD & 3 & Kegagalan berturut-turut sebelum OPEN \\
 \hline
 CB\_OPEN\_DURATION\_MS & 10000 & Durasi OPEN sebelum HALF-OPEN \\
 \hline
-MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (Semaphore) \\
+AGGREGATOR\_MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (semaphore) pada read API Aggregator \\
 \hline
-RATE\_LIMIT\_RPS & 50 & Token bucket per client \\
+CLIENT\_FACING\_API\_MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (semaphore) pada Client-Facing API \\
 \hline
-UPSTREAM\_TIMEOUT\_MS & 1000 & Timeout Client APi -\textgreater{} Aggregator \\
+RATE\_LIMIT\_RPS & 50 & Token bucket per akun \\
+\hline
+AUTH\_RATE\_LIMIT\_RPS & 10 & Token bucket per alamat IP untuk login dan registrasi \\
+\hline
+UPSTREAM\_TIMEOUT\_MS & 1000 & Timeout Client-Facing API -\textgreater{} Aggregator \\
 \hline
 DB\_POOL\_SIZE & 20 & Ukuran connection pool Canonical Store \\
 \hline
@@ -178,21 +182,23 @@ Pendekatan yang dipilih (polling di \emph{background}, client membaca dari \emph
 Trade-off:\\
 data yang diterima client bersifat eventually consistent, dengan keterlambatan maksimal sebesar interval polling ditambah latensi sumber. Untuk kebutuhan koordinasi kebencanaan dengan interval 2-5 detik, keterlambatan ini dapat diterima.
 
-\subsection{Model Konkurensi Asynchronous Non-Blocking I/O}
+\subsection{Model Konkurensi Goroutine dengan I/O Non-Blocking}
 
 Alternatif yang dipertimbangkan:
 
 \begin{itemize}
 \tightlist
 \item
-  Thread-per-request: sederhana, tetapi setiap permintaan yang menunggu I/O menahan satu thread beserta memorinya. Pada lonjakan akses, jumlah thread tumbuh tanpa batas dan menjadi penyebab \emph{resource exhaustion} itu sendiri.\\
+  Thread-per-request: sederhana, tetapi setiap permintaan yang menunggu I/O menahan satu thread sistem operasi beserta memorinya. Pada lonjakan akses, jumlah thread tumbuh tanpa batas dan menjadi penyebab \emph{resource exhaustion} itu sendiri.\\
 \item
-  \emph{Worker pool} dengan thread tetap: jumlah thread terkendali, tetapi thread tetap menganggur selama menunggu I/O, sehingga kapasitas efektif terbatas pada jumlah thread.
+  \emph{Worker pool} dengan thread tetap: jumlah thread terkendali, tetapi thread tetap menganggur selama menunggu I/O, sehingga kapasitas efektif terbatas pada jumlah thread.\\
+\item
+  \emph{Event loop} tunggal: biaya per koneksi kecil, tetapi satu operasi \emph{blocking} atau komputasi berat menahan seluruh \emph{loop}.
 \end{itemize}
 
-Beban kerja sistem didominasi I/O (panggilan jaringan ke sumber, Aggregator, dan Canonical Store), bukan komputasi. Asynchronous non-blocking I/O memungkinkan ribuan operasi menunggu secara bersamaan dengan biaya yang kecil per operasi, sehingga poller dan permintaan client dapat berjalan berdampingan tanpa saling menahan.
+Beban kerja sistem didominasi I/O (panggilan jaringan ke sumber, Aggregator, dan Canonical Store), bukan komputasi. Go menjalankan setiap poller dan setiap permintaan sebagai \emph{goroutine} yang dijadwalkan \emph{runtime} di atas sedikit thread. Ketika sebuah \emph{goroutine} menunggu jaringan, \emph{runtime} memarkirnya dan memakai thread itu untuk \emph{goroutine} lain. Hasilnya sama dengan I/O non-blocking, dengan kode yang ditulis berurutan dan tanpa \emph{callback}.
 
-Trade-off: seluruh operasi di dalam event loop wajib non-blocking. Satu operasi blocking atau komputasi berat dapat menahan seluruh event loop. Karena pemetaan skema bersifat ringan, risiko ini dinilai kecil.
+Trade-off: jumlah \emph{goroutine} tidak dibatasi oleh bahasa, sehingga pembatasan harus datang dari sistem. Itulah alasan semaphore, \emph{rate limit}, dan \emph{timeout} per hop dipasang di depan setiap jalur permintaan. \emph{Goroutine} juga bukan jaminan paralelisme untuk komputasi berat, tetapi pemetaan skema bersifat ringan sehingga risikonya dinilai kecil.
 
 \subsection{Poller Independen dengan Single In-Flight}
 
@@ -295,6 +301,14 @@ Client-Facing API dan Aggregator masing-masing berjalan sebagai satu instance, d
 
 Jika Aggregator atau Canonical Store mati, seluruh permintaan data tidak dapat dilayani. Client-Facing API mengembalikan 503 eksplisit tanpa menggantung, tetapi tidak menyediakan data cadangan.
 
+\subsection{Cap konkurensi bersifat global, bukan per client}
+
+Satu client yang mengirim \textit{body} sangat lambat ke \texttt{POST /auth/login} memegang satu slot sampai batas baca 10 detik. \textit{Throttle} per IP (10 permintaan per detik) cukup longgar untuk menjaga sekitar 100 slot tetap terisi, dan selama itu permintaan lain selain \texttt{/health} menerima 429. Efeknya berakhir beberapa detik setelah client berhenti. Skenario ini belum diuji.
+
+\subsection{Kebaruan data dilaporkan per sumber}
+
+Kesegaran data dibatasi interval polling. Status basi dilaporkan per sumber lewat \texttt{stale\_since}, bukan per rekaman.
+
 \subsection{Hasil load testing bergantung pada lingkungan pengujian}
 
 Load testing dijalankan pada satu mesin yang juga menjalankan seluruh container, sehingga load generator dan sistem berbagi CPU dan memori. Angka yang dilaporkan bertujuan membuktikan perilaku sistem di bawah beban, bukan mengukur kapasitas produksi.
@@ -317,7 +331,7 @@ Load testing dijalankan pada satu mesin yang juga menjalankan seluruh container,
 
 \subsection{Model Konkurensi}
 
-Sistem menggunakan asynchronous concurrency berbasis non-blocking I/O. Beban kerja sistem didominasi operasi I/O (panggilan jaringan ke sumber, Aggregator, dan Canonical Store), bukan komputasi, sehingga parallelism tidak menjadi fokus rancangan. Poller BMKG, poller PVMBG, dan penanganan permintaan client berjalan sebagai task asinkron independen di atas event loop, dengan jumlah permintaan bersamaan dibatasi oleh semaphore.
+Sistem menggunakan \emph{goroutine} Go di atas I/O jaringan yang tidak memblokir thread. Beban kerja sistem didominasi operasi I/O (panggilan jaringan ke sumber, Aggregator, dan Canonical Store), bukan komputasi, sehingga paralelisme tidak menjadi fokus rancangan. Poller BMKG, poller PVMBG, dan penanganan permintaan client berjalan sebagai \emph{goroutine} independen, dengan jumlah permintaan bersamaan dibatasi oleh semaphore.
 
 \subsection{Mitigasi Head-of-Line Blocking}
 
@@ -332,3 +346,18 @@ Semaphore membatasi jumlah permintaan yang diproses bersamaan, dan permintaan ya
 Circuit breaker per sumber mendeteksi sumber yang mati secara otomatis di level polling, lalu mencatat stale\_since. Selama sumber DOWN, data sumber tersebut dijawab dari Canonical Store beserta stale\_since, sedangkan sumber lain tidak terpengaruh. Setelah sumber hidup kembali, circuit breaker memulihkan status secara otomatis tanpa restart (Subbab \ref{sec:p2-degradasi}).
 
 \section{Konfigurasi dan Tooling Load Testing}
+
+Uji beban memakai k6 yang dijalankan dari \textit{image} Docker (\texttt{grafana/k6}), sehingga tidak perlu dipasang. Skrip \texttt{tests/load/run.sh} menyalakan seluruh sistem dalam proyek Compose terpisah (\texttt{hazard-load}) dengan \texttt{.env.example}, mengatur PVMBG menjawab setelah tepat 3 detik, menaikkan TTL \textit{access token} agar sesi tidak kedaluwarsa selama uji, menjalankan skenario di \texttt{tests/load/p2.js}, lalu menghapus sistem. Ringkasan disimpan di \texttt{tests/load/results/}.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.42\linewidth}|>{\raggedright\arraybackslash}p{0.28\linewidth}|}
+\hline
+Skenario & Pola beban & Ambang \\
+\hline
+\endhead
+\texttt{bmkg\_only} & 20 permintaan per detik selama 30 detik ke \texttt{GET /hazards?type=SEISMIC} saat PVMBG menjawab setelah 3 detik & p95 di bawah 300 ms, galat di bawah 1\% \\
+\hline
+\texttt{mixed} & 50 koneksi paralel selama 60 detik, dimulai pada detik ke-35, campuran seismik, vulkanik, dengan dan tanpa \texttt{fields}, dan \texttt{/health}, dengan jeda sekitar 1 detik per koneksi & Galat di luar 429 di bawah 1\% \\
+\hline
+\end{longtable}
+
+Galat dihitung sebagai respons selain 200 dan 429. Jumlah tiap kode status (200, 401, 429, 500, 502, 503, 504) dilaporkan pada ringkasan agar penolakan terkontrol tetap terlihat. Kedua skenario memakai satu akun Operator, sehingga 50 koneksi dengan jeda sekitar 1 detik meminta sekitar 50 permintaan per detik, mendekati batas \texttt{RATE\_LIMIT\_RPS}. Angka throughput, p50, p95, dan p99 dilaporkan pada Bukti Penyelesaian.
