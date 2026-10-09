@@ -81,6 +81,9 @@ func newAuthAPI() (*authAPI, error) {
 		return nil, err
 	}
 
+	// A lazy channel connects on its first RPC, which can outlast the 1 s upstream timeout and turn the first login after a cold start into a 504.
+	conn.Connect()
+
 	api := &authAPI{auth: authpb.NewAuthClient(conn), timeout: time.Duration(timeoutMS) * time.Millisecond, secure: secure}
 
 	rps, err := envPositiveInt("RATE_LIMIT_RPS", defaultRateRPS)
@@ -129,6 +132,8 @@ func newHealthAPI() (healthAPI, error) {
 	if err != nil {
 		return healthAPI{}, err
 	}
+
+	conn.Connect()
 
 	return healthAPI{
 		aggregator: aggregatorpb.NewAggregatorClient(conn),
