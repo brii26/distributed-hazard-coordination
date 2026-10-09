@@ -78,39 +78,31 @@ Kolom attributes menerima tipe nilai apa pun dan belum diberi GIN index. Index d
 
 Skenario \texttt{tests/scenarios/problem4.sh} menghentikan Notifier, memastikan service lain tetap berjalan dan API tetap melayani, lalu membangun ulang hanya Notifier. Waktu mulai kontainer Aggregator dan Client-Facing API tidak berubah.
 
-\begin{codebox}
-$ docker compose stop notifier
-$ docker compose ps --format '{{.Service}} {{.Status}}'
-aggregator Up 7 minutes (healthy)      client-facing-api Up 4 minutes (healthy)
-audit-logger Up 7 minutes              dashboard-updater Up 7 minutes
-(notifier tidak muncul)                rabbitmq Up 7 minutes (healthy)
-$ curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.meta.source_status'
-"UP"
-$ docker compose up -d --build --no-deps --wait notifier
-PASS: notifier is running again
-PASS: Aggregator was not restarted (got: 2026-10-09T02:37:03.776899689Z)
-PASS: Client-Facing API was not restarted (got: 2026-10-09T02:39:35.822467246Z)
-\end{codebox}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/ix1.png}
+\caption{Menghentikan dan membangun ulang satu \textit{container}}
+\end{figure}
 
 \subsection{Record Sebelum/Sesudah Schema Change}
 
 Rekaman PVMBG sebelum dan sesudah perubahan skema tersimpan berdampingan di tabel \texttt{hazard\_events} yang sama tanpa migrasi, seperti pada hasil kueri di Bab VI (\texttt{has\_confidence} bernilai \texttt{f} untuk rekaman lama dan \texttt{t} untuk rekaman baru).
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/ix2.png}
+\caption{Rekaman sebelum dan sesudah perubahan skema}
+\end{figure}
+
 \subsection{Canonical Store Hanya Diakses Aggregator}
 
 Pemeriksaan keterjangkauan dari tiap kontainer ke kedua basis data menunjukkan hanya Aggregator yang menjangkau Canonical Store dan hanya Auth/Token Service yang menjangkau User DB.
 
-\begin{codebox}
-aggregator         canonical-store: reachable    user-db: unreachable
-auth-service       canonical-store: unreachable  user-db: reachable
-bmkg-mock          canonical-store: unreachable  user-db: unreachable
-pvmbg-mock         canonical-store: unreachable  user-db: unreachable
-rabbitmq           canonical-store: unreachable  user-db: unreachable
-client-facing-api  canonical-store: unreachable  user-db: unreachable
-web-frontend, dashboard-updater, notifier, audit-logger: kedua basis data unreachable
-PASS: only the Aggregator reaches the Canonical Store (got: 1)
-PASS: only the Auth Service reaches the User DB (got: 1)
-\end{codebox}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/ix3.png}
+\caption{Keterjangkauan basis data dari tiap \textit{container}}
+\end{figure}
 
 \section{Batas Service dan Alternatif Penyimpanan}\label{sec:p4-alternatif}
 

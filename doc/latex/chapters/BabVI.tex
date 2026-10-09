@@ -218,40 +218,29 @@ Mekanisme yang dipilih adalah \textit{dynamic field mapping}. Perubahan skema ya
 
 Skenario \texttt{tests/scenarios/problem1.sh} menampilkan hasil pemetaan dari PVMBG pada skema awal. Tiga laporan vulkanik terbaru belum membawa \texttt{confidence\_level}, sedangkan \texttt{severity} dan \texttt{area\_name} sudah terisi dari aturan pemetaan.
 
-\begin{codebox}
-$ curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=3" | jq '[.data[] | {area_name, severity, confidence: .attributes.confidence_level}]'
-[
-  { "area_name": "Gunung Merapi", "severity": "AWAS", "confidence": null },
-  { "area_name": "Gunung Anak Krakatau", "severity": "AWAS", "confidence": null },
-  { "area_name": "Gunung Anak Krakatau", "severity": "WASPADA", "confidence": null }
-]
-\end{codebox}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/vi1.png}
+\caption{Tiga laporan vulkanik terbaru sebelum perubahan skema}
+\end{figure}
 
 \subsection{Picu Perubahan Skema PVMBG}
 
 Perubahan skema dipicu lewat endpoint admin PVMBG tanpa me-restart mock maupun Aggregator.
 
-\begin{codebox}
-$ curl -s -X POST $PVMBG/admin/schema-version -H "X-Admin-Key: $PVMBG_ADMIN_KEY"
-PASS: PVMBG is on the extended schema (got: extended)
-\end{codebox}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/vi2.png}
+\caption{Memicu perubahan skema PVMBG}
+\end{figure}
 
 \subsection{Aggregator Tetap Menghasilkan HazardEvent}
 
 Setelah perubahan, laporan baru membawa \texttt{confidence\_level} di \texttt{attributes}, laporan lama tetap terbaca, dan waktu mulai kontainer Aggregator tidak berubah. Tabel \texttt{hazard\_events} menyimpan rekaman sebelum dan sesudah perubahan berdampingan tanpa migrasi (kolom \texttt{has\_confidence} adalah hasil pemeriksaan \texttt{attributes ? 'confidence\_level'}).
 
-\begin{codebox}
-[ { "area_name": "Gunung Rinjani", "severity": "SIAGA", "confidence": 0.66 },
-  { "area_name": "Gunung Merapi", "severity": "AWAS", "confidence": null },
-  { "area_name": "Gunung Anak Krakatau", "severity": "AWAS", "confidence": null } ]
-PASS: a volcanic report has confidence_level in attributes
-PASS: Aggregator was not restarted (got: 2026-10-09T02:37:03.776899689Z)
-
-        source_ref_id         | severity | has_confidence |          ingested_at
- PVMBG-20261009T024932-000054 | SIAGA    | t              | 2026-10-09 02:55:14+00
- PVMBG-20261009T024932-000053 | AWAS     | f              | 2026-10-09 02:55:03+00
- PVMBG-20261009T024932-000052 | AWAS     | f              | 2026-10-09 02:54:52+00
- PVMBG-20261009T024932-000051 | WASPADA  | f              | 2026-10-09 02:54:45+00
-PASS: older records without the field are still stored
-\end{codebox}
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/vi3.png}
+\caption{Laporan sesudah perubahan dan isi tabel \texttt{hazard\_events}}
+\end{figure}
 
