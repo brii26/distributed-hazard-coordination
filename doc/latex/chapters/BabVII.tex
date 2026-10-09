@@ -133,7 +133,7 @@ Dengan demikian, selama outage PVMBG permintaan seismik tetap dilayani normal, p
 
 Seluruh parameter dibaca dari environment variable:
 
-\begin{longtable}[]{|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|>{\raggedright\arraybackslash}p{\dimexpr(\linewidth-6\tabcolsep)/3\relax}|}
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.43\linewidth}|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.37\linewidth}|}
 \hline
 Variabel & Default & Keterangan \\
 \hline
@@ -147,9 +147,9 @@ CB\_FAILURE\_THRESHOLD & 3 & Kegagalan berturut-turut sebelum OPEN \\
 \hline
 CB\_OPEN\_DURATION\_MS & 10000 & Durasi OPEN sebelum HALF-OPEN \\
 \hline
-AGGREGATOR\_MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (semaphore) pada read API Aggregator \\
+AGGREGATOR\_MAX\_\allowbreak INFLIGHT\_REQUESTS & 100 & Global concurrency cap (semaphore) pada read API Aggregator \\
 \hline
-CLIENT\_FACING\_API\_MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (semaphore) pada Client-Facing API \\
+CLIENT\_FACING\_API\_\allowbreak MAX\_INFLIGHT\_REQUESTS & 100 & Global concurrency cap (semaphore) pada Client-Facing API \\
 \hline
 RATE\_LIMIT\_RPS & 50 & Token bucket per akun \\
 \hline
@@ -273,7 +273,7 @@ Alternatif yang dipertimbangkan:
 Kombinasi circuit breaker dan respons stale dengan penanda (stale\_since, source\_status) dipilih karena data terakhir tetap tersedia bagi client, client mengetahui secara eksplisit sejak kapan data tersebut tidak diperbarui, dan sistem berhenti membuang resource untuk sumber yang mati. Status HALF-OPEN memungkinkan pemulihan otomatis tanpa restart ketika sumber kembali hidup.\\
 Respons 503 dengan body eksplisit dipilih untuk kondisi store kosong, karena mengembalikan 200 dengan data kosong dapat disalahartikan sebagai ``tidak ada aktivitas vulkanik''.
 
-Trade-off: deteksi outage tidak instan, melainkan membutuhkan N kegagalan berturut-turut (CB\_FAILURE\_THRESHOLD). Pemulihan juga tertunda hingga durasi OPEN berakhir (CB\_OPEN\_DURATION\_MS). Nilai keduanya dapat dikonfigurasi untuk menyeimbangkan kecepatan deteksi dan ketahanan terhadap gangguan sesaat.
+Trade-off: deteksi outage tidak instan, melainkan membutuhkan N kegagalan berturut-turut (CB\_FAILURE\_\allowbreak THRESHOLD). Pemulihan juga tertunda hingga durasi OPEN berakhir (CB\_OPEN\_\allowbreak DURATION\_MS). Nilai keduanya dapat dikonfigurasi untuk menyeimbangkan kecepatan deteksi dan ketahanan terhadap gangguan sesaat.
 
 \section{Batasan Yang Disadari}
 
