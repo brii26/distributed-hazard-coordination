@@ -1,0 +1,21 @@
+digraph karakteristik {
+  rankdir=TB;
+  nodesep=0.3;
+  ranksep=0.55;
+  fontname="TeX Gyre Termes";
+  node [fontname="TeX Gyre Termes", fontsize=14, shape=box, style="filled", fillcolor="#dbe8f5", margin="0.14,0.08"];
+  edge [fontname="TeX Gyre Termes", fontsize=12];
+
+  kar [label="Karakteristik Arsitektur\n\nUtama: availability, fault tolerance, performance, security\nPendukung: agility, recoverability, reliability, testability, deployability\nTidak dikejar: scalability, elasticity, learnability", fillcolor="#f5e6c8"];
+
+  kep [label="Keputusan Arsitektur\n\nPoller independen per sumber\nCircuit breaker dan respons stale\nLoad shedding dan token bucket\nToken ber-scope dan proyeksi field per role\nKolom JSONB untuk atribut sumber\nQueue durable per consumer, manual ack,\ndeduplikasi di consumer\nSatu container dan satu storage per service", fillcolor="#dbe8f5"];
+  gaya [label="Gaya Arsitektur\n\nMicroservice (database per service)\nEvent-driven (publish-subscribe)\nGateway berlapis di tepi\nKepercayaan di perimeter", fillcolor="#dcefd9"];
+
+  kom [label="Komponen Logis\n\nIngest: Aggregator (poller, mapper, Canonical Store, publisher)\nAkses: Client-Facing API\nIdentitas: Auth/Token Service dan User DB\nFan-out: Dashboard Updater, Notifier, Audit Logger\nPenyajian: Web Frontend (nginx)\nPemantauan: Jaeger dan Prometheus", fillcolor="#e8e8e8"];
+
+  kar -> kep;
+  kar -> gaya;
+  kep -> kom;
+  gaya -> kom;
+  {rank=same; kep; gaya}
+}

@@ -32,3 +32,49 @@ nginx juga meneruskan \textit{path} \texttt{/api} ke Client-Facing API. Dengan c
 \section{Deployment dan \textit{Observability}}
 
 Seluruh \textit{container} dijalankan dengan Docker Compose, sesuai ketentuan spesifikasi. Setiap \textit{service} mengirim \textit{trace} lewat OpenTelemetry ke Jaeger 2.22, sehingga satu permintaan dapat dilacak melewati beberapa \textit{service}. Prometheus 3.6 menyediakan metrik laju permintaan, galat, dan latensi per \textit{service} yang ditampilkan pada tab Monitor Jaeger.
+
+\section{Karakteristik Arsitektur yang Diprioritaskan}
+
+Pilihan teknologi di atas dan rancangan pada Bab VI sampai X mengikuti karakteristik arsitektur yang diprioritaskan kelompok. Karakteristik diurutkan dari spesifikasi tiap problem, dari batasan yang tercatat di tiap bab, dan dari isi repositori. Gambar \ref{fig:karakteristik} menghubungkan karakteristik itu dengan keputusan arsitektur, gaya arsitektur, dan komponen logis.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.5\textheight,keepaspectratio]{figures/karakteristik.pdf}
+\caption{Karakteristik arsitektur, keputusan, gaya, dan komponen logis}
+\label{fig:karakteristik}
+\end{figure}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.16\linewidth}|>{\raggedright\arraybackslash}p{0.12\linewidth}|>{\raggedright\arraybackslash}p{0.5\linewidth}|>{\raggedright\arraybackslash}p{0.1\linewidth}|}
+\hline
+Karakteristik & Prioritas & Wujud pada sistem & Bab \\
+\hline
+\endhead
+\textit{Availability} & Utama & Jalur \textit{ingest} dipisah dari jalur akses. Sumber yang mati dijawab dengan data terakhir dan \texttt{meta.stale\_since}, dan 503 hanya bila \textit{store} kosong. & VII \\
+\hline
+\textit{Fault tolerance} & Utama & Poller per sumber dengan satu permintaan berjalan, \textit{circuit breaker}, dan \textit{health check} yang melaporkan \texttt{degraded}. Jaeger bukan dependensi, sehingga \textit{service} tetap melayani saat Jaeger mati. & VII \\
+\hline
+\textit{Performance} & Utama & gRPC antar-\textit{service}, goroutine dengan I/O non-blocking, \textit{load shedding} pada batas \textit{inflight}, dan \textit{rate limit} per \textit{client}. Uji p95 dan \textit{load testing} ada di \texttt{tests/load}. & VII \\
+\hline
+\textit{Security} & Utama & Kredensial terpisah per instansi, JWT dalam \textit{cookie} \textit{HttpOnly}, \textit{scope} yang menyembunyikan field Mentah dari Media, dan \textit{network} internal untuk tiap penyimpanan. & VIII, IX \\
+\hline
+\textit{Agility} & Pendukung & Kolom JSONB menyerap atribut baru tanpa migrasi, dan \textit{consumer} baru cukup mengikat \textit{queue} ke \textit{exchange} tanpa mengubah \textit{producer}. & VI, IX, X \\
+\hline
+\textit{Recoverability} & Pendukung & \textit{Queue} durable, \textit{manual acknowledgement}, dan \texttt{restart: unless-stopped} pada \textit{container}. Tidak ada \textit{backup} dan retensi. & IV, IX, X \\
+\hline
+\textit{Reliability} & Pendukung & Pengiriman \textit{at-least-once} dengan kunci deduplikasi di \textit{consumer}. Data bersifat \textit{eventual consistent}. & VII, X \\
+\hline
+\textit{Testability} & Pendukung & Tiap \textit{service} Go punya \textit{test} sendiri, kedua \textit{mock} menjadi pengganti sumber, dan skrip skenario per problem ada di \texttt{tests/scenarios}. & V \\
+\hline
+\textit{Deployability} & Pendukung & Satu Dockerfile per \textit{service} dan satu perintah \texttt{docker compose up}. Belum ada jalur \textit{upgrade}. & II, IV \\
+\hline
+\textit{Scalability} & Tidak dikejar & Fan-out memudahkan penambahan \textit{consumer}, tetapi tiap \textit{service} berjalan satu \textit{instance} dengan \textit{state} di memori dan satu Canonical Store. Menjalankan banyak \textit{instance} menjadi bahan Milestone 2. & I, VII, IX \\
+\hline
+\textit{Elasticity} & Tidak dikejar & Tidak ada replika atau penskalaan otomatis. Batas memori ditetapkan statis, yaitu 256 MB pada delapan \textit{container}. & IV \\
+\hline
+\textit{Learnability} & Tidak dikejar & Go dan Svelte dipilih karena mudah dibaca, tetapi tidak ada rancangan khusus untuk anggota baru dan tidak ada pengukuran. & III \\
+\hline
+\end{longtable}
+
+\textit{Availability} dan \textit{fault tolerance} diutamakan karena spesifikasi meminta satu sumber yang lambat atau mati tidak mengganggu sumber lain. Karena itu \textit{scalability} dan \textit{elasticity} sengaja dikorbankan: sistem berjalan satu \textit{instance} per \textit{service} sehingga \textit{state} di memori, seperti hitungan \textit{rate limit} dan keadaan \textit{circuit breaker}, tidak perlu disinkronkan antar-\textit{instance}. Batas ini dicatat pada bagian Batasan yang Disadari di Bab VII dan IX.
+
+Gaya arsitektur yang dihasilkan adalah \textit{microservice} dengan penyimpanan di tiap \textit{service}, ditambah distribusi \textit{event} berpola \textit{publish-subscribe}. Kepercayaan antar-\textit{service} berada di perimeter, sesuai Bab IV.
