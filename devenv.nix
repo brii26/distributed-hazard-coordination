@@ -34,7 +34,7 @@
   # services.postgres.enable = true;
 
   # https://devenv.sh/scripts/
-  scripts.tex-build.exec = "for f in doc/latex/figures/*.dot; do [ -e \"$f\" ] && dot -Tpdf \"$f\" -o \"\${f%.dot}.pdf\"; done; latexmk -xelatex -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex";
+  scripts.tex-build.exec = "for f in doc/latex/figures/*.dot; do [ -e \"$f\" ] && dot -Tpdf \"$f\" -o \"\${f%.dot}.pdf\"; done; latexmk -xelatex -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex && cp doc/latex/build/main.pdf doc/latex/build/IF4031_M1_Ingress.pdf";
   scripts.tex-watch.exec = "for f in doc/latex/figures/*.dot; do [ -e \"$f\" ] && dot -Tpdf \"$f\" -o \"\${f%.dot}.pdf\"; done; latexmk -xelatex -pvc -view=none -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex";
   # scripts.hello.exec = ''
   #   echo hello from $GREET

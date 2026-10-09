@@ -365,6 +365,10 @@ tests/integration/storage.sh
 
 It starts throwaway Postgres (with each service's `migrations/`) and RabbitMQ containers on ports 25432, 25433 and 25673, runs the suites and removes the containers. It uses `.env.example`, so no `.env` is needed. Needs Docker and Go. Each suite skips when its env var (`USER_DB_TEST_URL`, `CANONICAL_DB_TEST_URL`, `RABBITMQ_TEST_URL`) is unset, so a plain `go test ./...` stays offline.
 
+## Report PDF
+
+The report sources are in `doc/latex`. Inside `devenv shell`, `tex-build` builds `doc/latex/build/main.pdf` and copies it to `doc/latex/build/IF4031_M1_Ingress.pdf`, the file name the submission asks for. Signature images for the AI usage form go in `doc/latex/figures/ttd/` and are git-ignored, so only the locally built PDF carries them.
+
 ## Where things are tracked
 
 Feature/task backlog lives in [GitHub Issues](https://github.com/brii26/distributed-hazard-coordination/issues), labeled by `service:*` and `problem:P1`–`P5` (traceable back to `doc/TRD_M1.md` §11). Dependencies between issues are set as native GitHub relationships (`blocked-by`/`blocking`) — see `doc/BACKLOG_DEPENDENCIES.md` for the whole-graph view and what's unblocked right now.
