@@ -38,7 +38,9 @@ docker compose rm -sf audit-logger 2>&1 | tail -1
 show "docker compose up -d --wait audit-logger"
 docker compose up -d --wait audit-logger 2>&1 | tail -1
 lines() { docker compose exec -T audit-logger sh -c 'wc -l < /var/lib/audit-logger/audit.log' | tr -d '[:space:]'; }
-first=$(lines); sleep 10; second=$(lines)
+first=$(lines)
+grew() { [ "$(lines)" -gt "$first" ]; }
+wait_until 40 grew; second=$(lines)
 show "wc -l /var/lib/audit-logger/audit.log"
 echo "$first -> $second"
 expect_true "the Audit Logger records new events right away" test "$second" -gt "$first"
