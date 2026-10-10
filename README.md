@@ -1,26 +1,314 @@
-# Platform Koordinasi Kebencanaan
+<div align="center">
+   <img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=260&color=00ADD8&text=Distributed%20Hazard%20Platform&fontColor=ffffff&fontSize=52&desc=IF4031%20Distributed%20Application%20Architecture%20%7C%20Milestone%201&descAlignY=76&descSize=17&descColor=ffffff" />
+</div>
 
-Distributed system for IF4031 Milestone 1: BMKG/PVMBG mock sources, an Aggregator that maps their data into a canonical `HazardEvent` format, a Client-Facing API + Auth Service for downstream clients (Media/Tim Lapangan/BNPB Ops), and a RabbitMQ fan-out to independent consumers.
+<div align="center">
 
-Full technical spec: [`doc/TRD_M1.md`](doc/TRD_M1.md). Assignment spec: [`doc/IF4031 - Tugas Besar - M1.md`](<doc/IF4031 - Tugas Besar - M1.md>). Contributor workflow (branches, PRs, reviews): [`CONTRIBUTING.md`](CONTRIBUTING.md). What to work on next: [`doc/BACKLOG_DEPENDENCIES.md`](doc/BACKLOG_DEPENDENCIES.md).
+<img src="https://img.shields.io/badge/Go-1.26-00ADD8?style=for-the-badge&logo=go&logoColor=white" />
+<img src="https://img.shields.io/badge/gRPC-1.84-244C5A?style=for-the-badge&logo=grpc&logoColor=white" />
+<img src="https://img.shields.io/badge/RabbitMQ-3.13-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white" />
+<img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" />
+<img src="https://img.shields.io/badge/SvelteKit-3-FF3E00?style=for-the-badge&logo=svelte&logoColor=white" />
+<img src="https://img.shields.io/badge/nginx-1.27-009639?style=for-the-badge&logo=nginx&logoColor=white" />
+<img src="https://img.shields.io/badge/Docker%20Compose-5.6-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+<img src="https://img.shields.io/badge/OpenTelemetry-1.47-425CC7?style=for-the-badge&logo=opentelemetry&logoColor=white" />
+<img src="https://img.shields.io/badge/Jaeger-2.22-66CFE3?style=for-the-badge&logo=jaegertracing&logoColor=black" />
+<img src="https://img.shields.io/badge/Prometheus-3.6-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" />
+<img src="https://img.shields.io/badge/k6-load%20test-7D64FF?style=for-the-badge&logo=k6&logoColor=white" />
+
+</div>
+
+---
+
+> **Note:** This project was built with AI assistance to develop faster. The emphasis is on higher-level architecture and design thinking: the architecture and design decisions were made by the team, and AI was used to speed up the implementation.
+
+## About
+
+Distributed Hazard Platform is the BNPB side of a disaster-information exchange. Two independent sources publish hazard data in different formats and with different authentication: **BMKG** (earthquakes and tsunami warnings, static API key) and **PVMBG** (volcanic reports, OAuth with a one-time code and rotating tokens). Both are mocks in this repository. BNPB polls them, maps everything into one canonical `HazardEvent`, serves it to Media, Tim Lapangan and Operator clients with per-role field access, and fans every new event out to independent consumers through RabbitMQ.
+
+## Architecture
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+flowchart LR
+  BMKG["BMKG mock<br/>API key"]
+  PVMBG["PVMBG mock<br/>OAuth"]
+  AGG["Aggregator<br/>pollers, circuit breaker,<br/>mapper, gRPC read API"]
+  CS[("Canonical Store<br/>PostgreSQL")]
+  MQ{{"RabbitMQ<br/>fanout hazard.events"}}
+  AL["Audit Logger"]
+  NO["Notifier"]
+  DU["Dashboard Updater"]
+  CFA["Client-Facing API<br/>JWT cookies, rate limit,<br/>field projection"]
+  AUTH["Auth Service"]
+  UDB[("User DB<br/>PostgreSQL")]
+  CL["Client<br/>Media, Tim Lapangan, BNPB Ops"]
+  FE["Web Server<br/>nginx, static frontend"]
+
+  BMKG -->|HTTP poll| AGG
+  PVMBG -->|HTTP poll| AGG
+  AGG -->|upsert| CS
+  AGG -->|publish| MQ
+  MQ -->|queue| AL
+  MQ -->|queue| NO
+  MQ -->|queue| DU
+  DU -->|SSE| CFA
+  CFA -->|gRPC read| AGG
+  CFA -->|gRPC| AUTH
+  AUTH --> UDB
+  CL -->|"HTTP, static files"| FE
+  FE -->|"proxy /api"| CFA
+  CL -.->|"REST/JSON, direct"| CFA
+
+  classDef box fill:#ffffff,stroke:#000000,color:#000000;
+  class BMKG,PVMBG,AGG,CS,MQ,AL,NO,DU,CFA,AUTH,UDB,CL,FE box;
+```
+
+Every box except the client is its own container. The nginx container serves the static frontend and proxies `/api/*` to the Client-Facing API, which keeps the page and the API on one origin; the API can also be called directly on its own port. Each database is reachable only by its owner (`canonical-store` by the Aggregator, `user-db` by the Auth Service). The Client-Facing API is the only public API and the only place a JWT is verified. Jaeger and Prometheus sit beside the stack for traces and metrics.
+
+| Service | Role |
+|:---|:---|
+| `bmkg-mock`, `pvmbg-mock` | The two external sources, with injected latency, an outage switch and a schema switch |
+| `aggregator` | One poller per source, circuit breaker, mapping to `HazardEvent`, upsert to the Canonical Store, event publishing, gRPC read API |
+| `canonical-store` | PostgreSQL with a JSONB `attributes` column, so unknown source fields need no migration |
+| `auth-service`, `user-db` | Login, refresh, logout, registration, accounts; salted password hashes |
+| `client-facing-api` | Public REST API, JWT in HttpOnly cookies, transparent refresh, token-bucket rate limit, global concurrency cap, per-role field projection |
+| `rabbitmq` | Fanout exchange `hazard.events`, one durable queue per consumer |
+| `dashboard-updater`, `notifier`, `audit-logger` | Independent consumers, each with its own dedup store |
+| `web-frontend` | SvelteKit static app served by nginx, which also proxies `/api/*` |
+| `jaeger`, `prometheus` | Traces (the trace ID is the `correlation_id` in logs) and request metrics |
+
+## Tech stack
+
+| Layer | Technology |
+|:---|:---|
+| Services | Go, one module per service, tied by `go.work` |
+| Service-to-service | gRPC from the Client-Facing API to the Aggregator and the Auth Service, AMQP through RabbitMQ |
+| Public API | REST over HTTP, JWT HS256 in HttpOnly cookies |
+| Storage | PostgreSQL (Canonical Store, User DB) |
+| Broker | RabbitMQ, fanout exchange, durable queues, publisher confirms |
+| Live updates | Server-Sent Events from the Dashboard Updater through the Client-Facing API |
+| Frontend | SvelteKit (`adapter-static`) served by nginx |
+| Observability | OpenTelemetry, Jaeger, Prometheus, structured JSON logs with a correlation ID |
+| Orchestration | Docker Compose |
+| Tests | Go tests, shell scenario scripts, k6 load test |
+
+## What it solves
+
+Each problem is solved in the code and reproduced by a script in `tests/scenarios/`. The steps are under [Test scenarios](#test-scenarios-problems-1-to-5).
+
+### Problem 1: the source changes its schema and nothing restarts
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+flowchart LR
+  SRC["PVMBG record<br/>schema changes"] --> MAP{"Mapper"}
+  MAP -->|known field| CORE["canonical columns"]
+  MAP -->|new or retyped field| ATTR["attributes (JSONB)"]
+  MAP -->|missing field| NULL["null"]
+  CORE --> DB[("Canonical Store")]
+  ATTR --> DB
+  NULL --> DB
+```
+
+- Unknown fields go to a JSONB `attributes` column, so the table never needs a migration and the Aggregator never restarts.
+- Old rows stay as they were. A field that changes meaning, or a moved endpoint, is a documented limit.
+
+---
+
+### Problem 2: a slow or failing source must not drag the others down
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+stateDiagram-v2
+  [*] --> CLOSED
+  CLOSED --> OPEN: 3 failed polls
+  OPEN --> HALF_OPEN: after 10 s
+  HALF_OPEN --> CLOSED: trial call ok
+  HALF_OPEN --> OPEN: trial call fails
+```
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+flowchart LR
+  P1["BMKG poller"] --> CS[("Canonical Store")]
+  P2["PVMBG poller<br/>own timeout + breaker"] --> CS
+  CS --> AGG["Aggregator read API"]
+  AGG -->|gRPC| CFA["Client-Facing API"]
+  CFA -->|"stale data + DOWN<br/>or 503 when empty"| C["Client"]
+  CFA -->|"over the cap: 429 + Retry-After"| C
+```
+
+- One poller, timeout and circuit breaker per source. Reads come from the store, so an outage costs freshness and not availability.
+- Overload is shed on purpose: a global concurrency cap, a token bucket per account, and a cap on the gRPC read API.
+
+---
+
+### Problem 3: authentication and per-field access
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+sequenceDiagram
+  participant B as Browser
+  participant N as nginx
+  participant C as Client-Facing API
+  participant A as Auth Service
+  B->>N: POST /api/auth/login
+  N->>C: proxy
+  C->>A: gRPC login
+  A-->>C: JWT + refresh token
+  C-->>B: HttpOnly cookies
+  Note over B,C: access token expires after 60 s
+  B->>C: GET /hazards (expired jwt)
+  C->>A: gRPC refresh (rotating token)
+  A-->>C: new JWT + new refresh token
+  C-->>B: 200 + new cookies
+```
+
+| Role | Fields | Accounts |
+|:---|:---|:---|
+| Media | summary only, 403 on raw fields | none |
+| Tim Lapangan | all | none |
+| Operator | all | can create |
+
+- BMKG takes a static key. PVMBG uses OAuth with a one-time code and rotating opaque tokens that the Aggregator renews by itself.
+- Only the Client-Facing API verifies the JWT.
+
+---
+
+### Problem 4: independent services and storage ownership
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+flowchart LR
+  subgraph cn["canonical-net (internal)"]
+    AGG["Aggregator"] --- CS[("Canonical Store")]
+  end
+  subgraph un["userdb-net (internal)"]
+    AUTH["Auth Service"] --- UDB[("User DB")]
+  end
+  OTH["every other service"] -.-x CS
+  OTH -.-x UDB
+```
+
+- Every component is its own container and image, with a `/health` that reports depth. One can be stopped, rebuilt and restarted while the rest keep running.
+- Each database is reachable only by its owner and publishes no host port.
+
+---
+
+### Problem 5: event fan-out to independent consumers
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
+flowchart LR
+  AGG["Aggregator<br/>bounded buffer + confirms"] -->|publish once| EX{{"hazard.events<br/>fanout"}}
+  EX --> Q1["notifier queue"] --> N["Notifier"]
+  EX --> Q2["audit-logger queue"] --> L["Audit Logger"]
+  EX --> Q3["dashboard-updater queue"] --> D["Dashboard Updater"]
+```
+
+- One publish reaches every consumer through its own durable queue. A stopped consumer's queue keeps the backlog and it catches up on return, while the others carry on.
+- Consumers acknowledge after processing (at-least-once), so each one deduplicates. A new consumer only declares a queue on the exchange, with no change to the producer.
+
+## Screenshots
+
+Taken from a local `docker compose up` with the example `.env`.
+
+<div align="center">
+
+**Login**
+
+<img src="docs/screenshots/login.png" width="720" />
+
+Log in with the seeded Operator, or with an account created through Register.
+
+<br/>
+
+**Hazards, Seismic tab (BMKG)**
+
+<img src="docs/screenshots/hazards-seismic.png" width="720" />
+
+Live list from the Client-Facing API with a severity filter and search.
+
+<br/>
+
+**Hazards, Volcanic tab (PVMBG)**
+
+<img src="docs/screenshots/hazards-volcanic.png" width="720" />
+
+The same list for PVMBG reports.
+
+<br/>
+
+**Create an account (Operator only)**
+
+<img src="docs/screenshots/accounts.png" width="720" />
+
+The chosen role decides which fields the API returns.
+
+<br/>
+
+**RabbitMQ queues**
+
+<img src="docs/screenshots/rabbitmq-queues.png" width="720" />
+
+One durable queue per consumer.
+
+<br/>
+
+**Jaeger, recent traces**
+
+<img src="docs/screenshots/jaeger-search.png" width="720" />
+
+Latest Client-Facing API traces.
+
+<br/>
+
+**One GET /hazards end to end**
+
+<img src="docs/screenshots/jaeger-trace.png" width="720" />
+
+Client-Facing API, then the Aggregator over gRPC, then the Canonical Store query.
+
+<br/>
+
+**Jaeger Monitor**
+
+<img src="docs/screenshots/jaeger-monitor.png" width="720" />
+
+Latency, errors and request rate, read from Prometheus.
+
+</div>
 
 ## Prerequisites
 
 - Go 1.26+
-- Docker + Docker Compose (only needed for `docker compose up` — not required to build/test an individual service)
+- Docker + Docker Compose (only needed for `docker compose up`, not required to build/test an individual service)
 - `git`
 - `curl` and `jq`, for the copy-paste scenario commands below
 
-How you get these on your machine is up to you — a system package manager, `asdf`, whatever. If you'd rather not manage them yourself, this repo happens to include a [devenv](https://devenv.sh/) config (`devenv.nix`) that pins Go, `golangci-lint`, and `gh` for you: `devenv shell` drops you into a shell with all of it on `PATH`. That's just how the maintainers set their own machines up, not something the project requires — every command below is a plain command that works the same whether it's typed directly or inside a devenv shell.
+How you get these on your machine is up to you, a system package manager or `asdf` both work. If you'd rather not manage them yourself, this repo happens to include a [devenv](https://devenv.sh/) config (`devenv.nix`) that pins Go, `golangci-lint`, and `gh` for you: `devenv shell` drops you into a shell with all of it on `PATH`. That's just how the maintainers set their own machines up, not something the project requires. Every command below is a plain command that works the same whether it's typed directly or inside a devenv shell.
 
 ## Run it from a clean clone
+
+Copy the example environment. Its values work as is for a local run, and `.env` is gitignored.
 
 ```bash
 git clone https://github.com/brii26/distributed-hazard-coordination.git
 cd distributed-hazard-coordination
-cp .env.example .env                 # the example values work as is for a local run; .env is gitignored
-docker compose up -d --build --wait  # builds every image, returns once every health check passes
-docker compose ps                    # every service "running", the ones with a health check "(healthy)"
+cp .env.example .env
+```
+
+Build every image. The command returns once every health check passes.
+
+```bash
+docker compose up -d --build --wait
+```
+
+Check the stack. Every service is "running", and the ones with a health check show "(healthy)".
+
+```bash
+docker compose ps
 ```
 
 If one of the host ports below is already taken on your machine, change it in `.env` (`CLIENT_FACING_API_PORT`, `WEB_FRONTEND_PORT`, `BMKG_PORT`, `PVMBG_PORT`, `RABBITMQ_MANAGEMENT_PORT`); the scenario commands further down read the ports from there. The first build takes a few minutes. `--wait` returns once every container with a health check reports healthy, so when it exits the stack is ready. Stop it with `docker compose down`; add `-v` to also wipe the databases, the PVMBG token and the consumers' dedup files and start from zero.
@@ -33,25 +321,24 @@ If one of the host ports below is already taken on your machine, change it in `.
 | <http://localhost:8082> | PVMBG mock, including the demo switches `/admin/outage` and `/admin/schema-version` (need `X-Admin-Key`) |
 | <http://localhost:15672> | RabbitMQ management UI (`RABBITMQ_USER` / `RABBITMQ_PASSWORD` from `.env`) |
 
-The Aggregator, Auth Service, both databases and the consumers publish no host port (doc/TRD_M1.md 0). Their health is reachable from inside the stack, for example `docker compose exec aggregator wget -qO- localhost:8091/health`; every service's `/health` answers `{"status":"ok"|"degraded"|"down",...}`.
+The Aggregator, Auth Service, both databases and the consumers publish no host port. Their health is reachable from inside the stack, for example `docker compose exec aggregator wget -qO- localhost:8091/health`; every service's `/health` answers `{"status":"ok"|"degraded"|"down",...}`.
 
 ## Repository layout
 
 ```
-services/<name>/     one Go module per service (see doc/TRD_M1.md for what each does)
+services/<name>/     one Go module per service (the web frontend is SvelteKit)
   go.mod
   main.go
   main_test.go
   Dockerfile
 infra/<name>/        config for third-party components (no Go code), e.g. infra/rabbitmq
-frontend/             CSR web frontend (not Go — scaffolded separately, see issue #33)
-doc/                  spec, assignment docs, backlog dependency graph
-.claude/skills/       vendored Go skills (also symlinked at .agents/skills for Codex)
+doc/                  design docs and the backlog dependency graph
+tests/               scenarios (P1-P5), integration, smoke and load tests
 docker-compose.yml    full local stack
 go.work               ties all service modules together for cross-module tooling
 ```
 
-Each service directory is its **own Go module** (`go.work` lists them all). This means `go build ./...`/`go test ./...` from the repo root won't work as a single command — the repo root isn't itself a module. Run per-service commands from inside `services/<name>/`, or use the loop shown below.
+Each service directory is its **own Go module** (`go.work` lists them all). This means `go build ./...`/`go test ./...` from the repo root won't work as a single command, the repo root isn't itself a module. Run per-service commands from inside `services/<name>/`, or use the loop shown below.
 
 Every directory under `services/` is a Go module that the local checks below loop over. Config-only components such as the broker go in `infra/` so they aren't treated as one.
 
@@ -76,7 +363,7 @@ Only `aggregator` reaches `canonical-store` and only `auth-service` reaches `use
 
 ## Configuration reference
 
-Every variable in `.env.example`. Compose reads `.env` and passes each one to the services listed; the default applies when the variable is unset. A variable with no default must be set (the example values are fine locally). The spec's per-service list is doc/TRD_M1.md 10.
+Every variable in `.env.example`. Compose reads `.env` and passes each one to the services listed; the default applies when the variable is unset. A variable with no default must be set (the example values are fine locally).
 
 | Variable | Used by | Default | Meaning |
 |---|---|---|---|
@@ -128,20 +415,27 @@ Each problem also has a script that runs these steps and prints PASS or FAIL per
 
 Run from the repository root with the stack up (`docker compose up -d --build --wait`). Needs `curl` and `jq`. Each block is copy-paste; the expected outcome follows it. Load the values the stack runs with and log in as the seeded Operator once:
 
+Load the environment and the helper variables, then log in as the seeded Operator. The answer is `{"expires_in":...}` and the cookies are saved in `op.jar`.
+
 ```bash
 set -a; . ./.env; set +a
 API=http://localhost:${CLIENT_FACING_API_PORT:-8080}
 BMKG=http://localhost:${BMKG_PORT:-8081}
 PVMBG=http://localhost:${PVMBG_PORT:-8082}
 login() { curl -s -c "$1.jar" -X POST $API/auth/login -d "{\"email\":\"$2\",\"password\":\"$3\"}"; echo; }
-login op "$SEED_OPERATOR_EMAIL" "$SEED_OPERATOR_PASSWORD"   # {"expires_in":...}, cookies saved in op.jar
+login op "$SEED_OPERATOR_EMAIL" "$SEED_OPERATOR_PASSWORD"
 ```
 
 ### Problem 1: schema change at the source
 
+Read the newest volcanic reports, then switch PVMBG to the extended schema. The switch answers `{"schema_version":"extended"}`.
+
 ```bash
 curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=3" | jq '[.data[] | {area_name, severity, confidence: .attributes.confidence_level}]'
-curl -s -X POST $PVMBG/admin/schema-version -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # {"schema_version":"extended"}
+curl -s -X POST $PVMBG/admin/schema-version -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+```
+
+```bash
 sleep 15
 curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=3" | jq '[.data[] | {area_name, severity, confidence: .attributes.confidence_level}]'
 docker compose ps aggregator --format '{{.Status}}'
@@ -158,65 +452,129 @@ docker compose exec -T canonical-store psql -U "$CANONICAL_DB_USER" -d "$CANONIC
 
 `has_confidence` is `t` for the reports ingested after the switch and `f` for the ones before, all in one table with no migration.
 
+---
+
 ### Problem 2: slow and failing source
 
 PVMBG latency at 3 s while BMKG stays fast, then the load test:
 
+Set the PVMBG delay, time five seismic requests, then run the k6 load test. The load test checks `bmkg_only` p95 under 300 ms, and `mixed` with 50 connections for 60 s with under 1% errors (429s not counted).
+
 ```bash
 PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 docker compose up -d --wait pvmbg-mock
 for i in 1 2 3 4 5; do curl -s -o /dev/null -w '%{time_total}s\n' -b op.jar "$API/hazards?type=SEISMIC"; done
-tests/load/run.sh   # k6: bmkg_only p95 < 300 ms, mixed 50 connections for 60 s with < 1% errors (429s not counted)
+tests/load/run.sh
 ```
 
-The seismic requests stay well under 300 ms (they never wait on PVMBG). Setting the delay recreates the PVMBG container, which forgets the tokens it issued; the Aggregator notices on its next token rotation and re-authenticates by itself (`token bootstrap fallback` in its log, doc/TRD_M1.md 3.0), so PVMBG data can take up to about a minute to come back after this step. `tests/load/run.sh` brings up its own copy of the stack, prints throughput, p50/p95/p99 and counts per status code, and fails if a threshold fails.
+The seismic requests stay well under 300 ms (they never wait on PVMBG). Setting the delay recreates the PVMBG container, which forgets the tokens it issued; the Aggregator notices on its next token rotation and re-authenticates by itself (`token bootstrap fallback` in its log), so PVMBG data can take up to about a minute to come back after this step. `tests/load/run.sh` brings up its own copy of the stack, prints throughput, p50/p95/p99 and counts per status code, and fails if a threshold fails.
 
 Outage on, stale data, recovery:
 
+Turn the PVMBG outage on. The answer is `{"outage_active":true}`.
+
 ```bash
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # {"outage_active":true}
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+```
+
+Wait, then ask for volcanic data. `source_status` is DOWN, `stale_since` is set and the data is still served.
+
+```bash
 sleep 20
-curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq .meta   # source_status DOWN, stale_since set, data still served
-curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq .meta    # BMKG still UP
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # {"outage_active":false}
+curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq .meta
+```
+
+Ask for seismic data. BMKG is still UP.
+
+```bash
+curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq .meta
+```
+
+Turn the outage off. The answer is `{"outage_active":false}`.
+
+```bash
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+```
+
+Wait for PVMBG to come back, then read its status. It is UP, `stale_since` is null and nothing was restarted.
+
+```bash
 for i in $(seq 90); do curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq -e '.meta.source_status == "UP"' >/dev/null && { echo "PVMBG UP again after ${i}s"; break; }; sleep 1; done
-curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq .meta   # UP, stale_since null, nothing restarted
+curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=1" | jq .meta
 ```
 
 With nothing stored for the source the answer is an explicit 503 instead of stale data. To see it, empty the volcanic rows while the outage is on. This deletes the stored volcanic reports (only new ones come back), so run it after the Problem 1 comparison:
+
+Turn the outage on, wait, delete the volcanic rows and ask again. The answer is HTTP 503 with an error body.
 
 ```bash
 curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
 sleep 20
 docker compose exec -T canonical-store psql -U "$CANONICAL_DB_USER" -d "$CANONICAL_DB_NAME" -c "DELETE FROM hazard_events WHERE hazard_type = 'VOLCANIC'"
-curl -s -w '\nHTTP %{http_code}\n' -b op.jar "$API/hazards?type=VOLCANIC"   # HTTP 503 with an error body
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo   # off again; the data comes back
+curl -s -w '\nHTTP %{http_code}\n' -b op.jar "$API/hazards?type=VOLCANIC"
+```
+
+Turn the outage off again. The data comes back.
+
+```bash
+curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
 ```
 
 Restore the normal PVMBG latency with `docker compose up -d --wait pvmbg-mock`.
+
+---
 
 ### Problem 3: authentication and per-field access
 
 Each source only accepts its own credentials:
 
+No key: the answer is 401.
+
 ```bash
-curl -s -o /dev/null -w 'BMKG, no key: %{http_code}\n' $BMKG/seismic-events                                    # 401
-curl -s -o /dev/null -w 'BMKG, PVMBG admin key: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_ADMIN_KEY" $BMKG/seismic-events   # 403
-curl -s -o /dev/null -w 'PVMBG, BMKG key as token: %{http_code}\n' -H "Authorization: Bearer $BMKG_API_KEY" $PVMBG/volcanic-reports   # 401
+curl -s -o /dev/null -w 'BMKG, no key: %{http_code}\n' $BMKG/seismic-events
+```
+
+PVMBG's admin key sent to BMKG: the answer is 403.
+
+```bash
+curl -s -o /dev/null -w 'BMKG, PVMBG admin key: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_ADMIN_KEY" $BMKG/seismic-events
+```
+
+BMKG key sent as a PVMBG token: the answer is 401.
+
+```bash
+curl -s -o /dev/null -w 'PVMBG, BMKG key as token: %{http_code}\n' -H "Authorization: Bearer $BMKG_API_KEY" $PVMBG/volcanic-reports
 ```
 
 A Media account sees the summary only and is refused raw fields:
 
+Register an account. The answer is 201, or 409 on a rerun.
+
 ```bash
-curl -s -X POST $API/auth/register -d '{"email":"media@demo.example","password":"media-pass-1"}' -w 'register: %{http_code}\n'   # 201 (409 on a rerun)
+curl -s -X POST $API/auth/register -d '{"email":"media@demo.example","password":"media-pass-1"}' -w 'register: %{http_code}\n'
+```
+
+Log in as Media and read one record. The record has no latitude, longitude or attributes.
+
+```bash
 login media media@demo.example media-pass-1
-curl -s -b media.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.data[0] | keys'                   # no latitude, longitude, attributes
-curl -s -o /dev/null -w 'Media asks for latitude: %{http_code}\n' -b media.jar "$API/hazards?type=SEISMIC&fields=latitude"   # 403
+curl -s -b media.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.data[0] | keys'
+```
+
+Media asks for the latitude field: the answer is 403.
+
+```bash
+curl -s -o /dev/null -w 'Media asks for latitude: %{http_code}\n' -b media.jar "$API/hazards?type=SEISMIC&fields=latitude"
 ```
 
 An access token, for any role, expires after `ACCESS_TOKEN_TTL_S` (60 s) and is refreshed behind the next request. Shown here with a Tim Lapangan account:
 
+Create a Tim Lapangan account as the Operator. The answer is 201, or 409 on a rerun.
+
 ```bash
-curl -s -b op.jar -X POST $API/accounts -d '{"email":"field@demo.example","password":"field-pass-1","role":"Lapangan"}' -w 'create: %{http_code}\n'   # 201 (409 on a rerun)
+curl -s -b op.jar -X POST $API/accounts -d '{"email":"field@demo.example","password":"field-pass-1","role":"Lapangan"}' -w 'create: %{http_code}\n'
+```
+
+```bash
 login field field@demo.example field-pass-1
 sleep 65
 curl -s -i -b field.jar -c field.jar "$API/hazards?type=SEISMIC&limit=1" | grep -iE '^HTTP|^set-cookie: (jwt|refresh_token)'
@@ -224,43 +582,81 @@ curl -s -i -b field.jar -c field.jar "$API/hazards?type=SEISMIC&limit=1" | grep 
 
 The last call answers `200` and sets a new `jwt` and a rotated `refresh_token`: the expired session was refreshed transparently. Sending the old cookies again after this fails with `401`.
 
+---
+
 ### Problem 4: independent services and storage ownership
 
 Stop, rebuild and restart one container while the rest keep running:
 
+Stop the Notifier and list the services. Only the Notifier is stopped.
+
 ```bash
-docker compose stop notifier && docker compose ps --format '{{.Service}} {{.Status}}'   # only the Notifier is stopped
-docker compose up -d --build --no-deps --wait notifier                                  # rebuilt and back, nothing else restarted
-curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.meta.source_status'      # the API kept serving throughout
+docker compose stop notifier && docker compose ps --format '{{.Service}} {{.Status}}'
+```
+
+Rebuild and start the Notifier alone. It is back and nothing else restarted.
+
+```bash
+docker compose up -d --build --no-deps --wait notifier
+```
+
+Ask for seismic data. The API kept serving throughout.
+
+```bash
+curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq '.meta.source_status'
 ```
 
 Records before and after the schema change, side by side in the Canonical Store: see the query at the end of Problem 1.
 
 Storage isolation (only the owner reaches each database): see "Checking that the databases are isolated" above.
 
+---
+
 ### Problem 5: event fan-out to independent consumers
 
 Stop one consumer while publishing continues; its queue keeps the backlog and it catches up when it returns:
 
+Stop the Notifier, wait, and list the queues. The Notifier's count grows and the others stay near 0.
+
 ```bash
 docker compose stop notifier
 sleep 30
-docker compose exec -T rabbitmq rabbitmqctl list_queues name messages   # notifier's count grows, the others stay near 0
+docker compose exec -T rabbitmq rabbitmqctl list_queues name messages
+```
+
+Start the Notifier, wait, and list the queues again. The Notifier is back near 0.
+
+```bash
 docker compose start notifier
 sleep 10
-docker compose exec -T rabbitmq rabbitmqctl list_queues name messages   # notifier back near 0
+docker compose exec -T rabbitmq rabbitmqctl list_queues name messages
+```
+
+```bash
 docker compose logs --since 15s notifier | grep -c '"message processed"'
 ```
 
 Add a consumer without touching the producer. The Audit Logger is that consumer: remove it from the running stack, then add it back. The Aggregator is neither changed nor restarted; it only knows the exchange (`services/aggregator` has no reference to any consumer):
 
+Remove the Audit Logger and list the queues. Its queue still exists from earlier runs, or not at all on a fresh stack.
+
 ```bash
 docker compose rm -sf audit-logger
-docker compose exec -T rabbitmq rabbitmqctl list_queues name   # its queue still exists from earlier runs, or not at all on a fresh stack
+docker compose exec -T rabbitmq rabbitmqctl list_queues name
+```
+
+Start the Audit Logger again, wait, and count its log lines. New events are logged straight away.
+
+```bash
 docker compose up -d --wait audit-logger
 sleep 10
-docker compose exec -T audit-logger sh -c 'wc -l /var/lib/audit-logger/audit.log'   # new events logged straight away
-docker compose ps aggregator --format '{{.Status}}'                                 # its uptime shows the producer was not restarted
+docker compose exec -T audit-logger sh -c 'wc -l /var/lib/audit-logger/audit.log'
+```
+
+Check the Aggregator. Its uptime shows the producer was not restarted.
+
+```bash
+docker compose ps aggregator --format '{{.Status}}'
 ```
 
 ## Running a single service locally (without Docker)
@@ -270,29 +666,7 @@ cd services/bmkg-mock
 go run .
 ```
 
-Reads config from env vars (see that service's section in `doc/TRD_M1.md` for the full list, or `.env.example` at the repo root for every variable across all services).
-
-## Before you push — the checks to run locally
-
-There is no CI (the GitHub Actions workflow was removed), so these checks are the gate. Run them for every service you changed before pushing:
-
-```bash
-for d in services/*/; do
-  echo "== $d =="
-  (cd "$d" &&
-    gofmt -l . &&                    # must print nothing — unformatted files fail the check
-    go vet ./... &&
-    go build ./... &&
-    go test -race -v ./... &&
-    golangci-lint run ./...)
-done
-```
-
-`golangci-lint` isn't part of a plain Go install — grab it from [golangci-lint.run/welcome/install](https://golangci-lint.run/welcome/install/) if you're not using the devenv shell, which already has it on `PATH`.
-
-Any non-empty `gofmt -l` output means run `gofmt -w .` in that service directory before committing. `golangci-lint` uses the repo-root `.golangci.yml` (vendored from the `golang-lint` skill) — it's strict on purpose (unchecked errors, missing timeouts on HTTP servers, etc.); fix the underlying issue rather than reaching for a `//nolint` comment unless you can justify it in the comment itself.
-
-If you've changed a `Dockerfile` or added new dependencies, also run `docker build services/<name>` before pushing.
+Reads config from env vars (`.env.example` at the repo root lists every variable across all services).
 
 ## Web frontend
 
@@ -310,16 +684,43 @@ The page follows the light or dark setting of the browser. Paging, the severity 
 
 Each suite starts only the two services of one pair (plus the storage or broker they need) in a separate compose project, `hazard-it`, drives the real network path, and tears everything down afterwards. It uses `.env.example`, so no `.env` is needed, and its host ports (18080-18082, 15432, 19091) stay clear of a normal `docker compose up`.
 
+Client-Facing API with the Auth Service: login, logout, JWT check, transparent refresh, register and `/accounts`.
+
 ```bash
-tests/integration/run.sh cfa-auth    # Client-Facing API + Auth Service (login, logout, local JWT check, transparent refresh, register, /accounts)
-tests/integration/run.sh agg-bmkg    # Aggregator + BMKG mock (API key, since cursor, events and tsunami warnings mapped and stored)
-tests/integration/run.sh agg-pvmbg   # Aggregator + PVMBG mock (OAuth bootstrap and rotation, outage, schema change: Problems 1-3)
-tests/integration/run.sh all         # all three, one after the other
-tests/integration/run.sh abuse       # the whole stack through restarts, outages, crashes, load and malformed input (about 10 minutes; not part of "all")
-tests/integration/run.sh abuse input # only the tests that need no stack reset: bad input, credentials, limits (about a minute)
+tests/integration/run.sh cfa-auth
 ```
 
-`abuse` is the failure-mode suite (`abuse_integration_test.go` in `services/client-facing-api`). Every test starts from a fresh `down -v` stack, so one failure never explains the next, and each carries a comment saying what it does and what it expects. A red test is a real defect: the comment names the issue when there is one. The sets are `input`, `resilience` (restarts, outages, crashes, poison messages), `load` and `all` (the default). `IT_LOAD_SECONDS=60` makes the load test run for the spec's full minute, and `ABUSE_RUN=TestAbuseDownUp tests/integration/run.sh abuse` runs a single test.
+Aggregator with the BMKG mock: API key, `since` cursor, events and tsunami warnings mapped and stored.
+
+```bash
+tests/integration/run.sh agg-bmkg
+```
+
+Aggregator and the PVMBG mock: OAuth bootstrap and rotation, outage and schema change (Problems 1 to 3).
+
+```bash
+tests/integration/run.sh agg-pvmbg
+```
+
+Run all three suites, one after the other.
+
+```bash
+tests/integration/run.sh all
+```
+
+The whole stack through restarts, outages, crashes, load and malformed input. It takes about 10 minutes and is not part of `all`.
+
+```bash
+tests/integration/run.sh abuse
+```
+
+Only the tests that need no stack reset (bad input, credentials, limits). About a minute.
+
+```bash
+tests/integration/run.sh abuse input
+```
+
+`abuse` is the failure-mode suite (`abuse_integration_test.go` in `services/client-facing-api`). Every test starts from a fresh `down -v` stack, so one failure never explains the next, and each carries a comment saying what it does and what it expects. A red test is a real defect: the comment names the issue when there is one. The sets are `input`, `resilience` (restarts, outages, crashes, poison messages), `load` and `all` (the default). `IT_LOAD_SECONDS=60` makes the load test run for a full minute, and `ABUSE_RUN=TestAbuseDownUp tests/integration/run.sh abuse` runs a single test.
 
 Needs Docker Compose and Go. The tests live next to the code they exercise (`integration_test.go` in `services/client-facing-api` and `services/aggregator`) and skip unless `run.sh` sets their environment, so a plain `go test ./...` stays offline.
 
@@ -340,12 +741,14 @@ Runs [k6](https://k6.io) (from its Docker image, nothing to install) against the
 - `bmkg_only`: 20 requests/s for 30 s on `/hazards?type=SEISMIC`; threshold p95 < 300 ms while PVMBG is slow.
 - `mixed`: 50 concurrent connections for 60 s over seismic, volcanic, field-filtered and `/health` requests; threshold error rate < 1%, where a 429 (the controlled load shedding) does not count as an error.
 
+Run the load test, then a bigger one.
+
 ```bash
 tests/load/run.sh
-MIXED_VUS=100 MIXED_DURATION=120s tests/load/run.sh   # a bigger run
+MIXED_VUS=100 MIXED_DURATION=120s tests/load/run.sh
 ```
 
-k6 prints throughput, avg/p50/p90/p95/p99 latency, and request counts per status code (200, 401, 429, 500, 502, 503, 504, so 429s are visible apart from real failures). The summary is saved as `tests/load/results/p2-<timestamp>.txt` and `.json` (git-ignored) to paste into the report. The script exits non-zero if a threshold fails. Needs Docker Compose; it uses `.env.example`, so no `.env` is needed, and publishes its host ports on 38080-38082, 35672 and 33000. Results depend on the machine it runs on (doc/TRD_M1.md 12).
+k6 prints throughput, avg/p50/p90/p95/p99 latency, and request counts per status code (200, 401, 429, 500, 502, 503, 504, so 429s are visible apart from real failures). The summary is saved as `tests/load/results/p2-<timestamp>.txt` and `.json` (git-ignored). The script exits non-zero if a threshold fails. Needs Docker Compose; it uses `.env.example`, so no `.env` is needed, and publishes its host ports on 38080-38082, 35672 and 33000. Results depend on the machine it runs on.
 
 ## Go workspace notes
 
@@ -365,12 +768,22 @@ tests/integration/storage.sh
 
 It starts throwaway Postgres (with each service's `migrations/`) and RabbitMQ containers on ports 25432, 25433 and 25673, runs the suites and removes the containers. It uses `.env.example`, so no `.env` is needed. Needs Docker and Go. Each suite skips when its env var (`USER_DB_TEST_URL`, `CANONICAL_DB_TEST_URL`, `RABBITMQ_TEST_URL`) is unset, so a plain `go test ./...` stays offline.
 
-## Report PDF
+---
 
-The report sources are in `doc/latex`. Inside `devenv shell`, `tex-build` builds `doc/latex/build/main.pdf` and copies it to `doc/latex/build/IF4031_M1_Ingress.pdf`, the file name the submission asks for. Signature images for the AI usage form go in `doc/latex/figures/ttd/` and are git-ignored, so only the locally built PDF carries them.
+## Authors
 
-## Where things are tracked
+<div align="center">
 
-Feature/task backlog lives in [GitHub Issues](https://github.com/brii26/distributed-hazard-coordination/issues), labeled by `service:*` and `problem:P1`–`P5` (traceable back to `doc/TRD_M1.md` §11). Dependencies between issues are set as native GitHub relationships (`blocked-by`/`blocking`) — see `doc/BACKLOG_DEPENDENCIES.md` for the whole-graph view and what's unblocked right now.
+| NIM | Name | Contribution |
+|:---:|:---|:---|
+| 13523097 | Shanice Feodora Tjahjono | - Message broker, pub/sub fanout<br>- Producer buffer and confirms<br>- Three consumers with dedup<br>- SSE live updates<br>- Problems 4 and 5 |
+| 13523126 | Brian Ricardo Tamin | - Aggregator: pollers, circuit breaker, gRPC read API<br>- PVMBG token rotation<br>- Rate limit and concurrency cap<br>- Per-field authorization<br>- Logs, health checks, tests, README<br>- Problem 2 |
+| 13523142 | Nathanael Rachmat | - Auth Service, JWT, transparent refresh<br>- Source credentials on the mocks<br>- Schema-change switch, `attributes` mapping<br>- Canonical Store schema<br>- Tracing, web frontend<br>- Load and smoke tests<br>- Problems 1 and 3 |
 
-`gh` (GitHub CLI) is entirely optional for a human contributor — the web UI does everything `gh` does. It's called out here because it's genuinely convenient for an AI coding agent working in this repo: creating issues/PRs and reading issue bodies from the terminal without a browser round-trip. See `AGENTS.md` for that recommendation; nothing in this repo requires it.
+</div>
+
+---
+
+<div align="center">
+   <img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=120&color=00ADD8&section=footer" />
+</div>
