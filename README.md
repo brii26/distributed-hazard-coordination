@@ -363,6 +363,17 @@ Only `aggregator` reaches `canonical-store` and only `auth-service` reaches `use
 
 ## Configuration reference
 
+### The `.env` file
+
+`.env.example` is the committed template. `.env` is your own copy with the real values, it is gitignored, and Compose reads it from the repository root.
+
+- **Create it:** `cp .env.example .env`. The example values work as is for a local run.
+- **Anywhere else:** replace every `change-me*` value with a long random string: `BMKG_API_KEY`, `PVMBG_OAUTH_CLIENT_ID`, `PVMBG_OAUTH_CLIENT_SECRET`, `PVMBG_ONE_TIME_CODE`, `PVMBG_ADMIN_KEY`, the three database and broker passwords, `JWT_SIGNING_SECRET`, `SECRET_SALT` and `SEED_OPERATOR_PASSWORD`. Never commit `.env`.
+- **Apply a change:** `docker compose up -d` recreates the containers whose variables changed. Database and RabbitMQ credentials are only read on the first start of an empty volume, so changing them needs `docker compose down -v` first. The two frontend variables are baked in at build time and need `docker compose build web-frontend`.
+- **Who reads which file:** the scenario scripts and the commands below read `.env`. The integration, smoke and load tests use `.env.example` in their own compose projects, so they work without a `.env`.
+
+### Variables
+
 Every variable in `.env.example`. Compose reads `.env` and passes each one to the services listed; the default applies when the variable is unset. A variable with no default must be set (the example values are fine locally).
 
 | Variable | Used by | Default | Meaning |
