@@ -93,3 +93,222 @@ graph TD
 - **#28** (rate limiting), **#35** (health checks), **#71** (BMKG delay), **#72** (structured logging) and **#73** (network isolation) are deliberately unblocked: they touch one or every service but need no other issue to land first. Fold them into whichever issue you are already touching rather than leaving them for a separate pass at the end. **#34** (correlation IDs) waits only on #72, so it reuses that logger instead of adding its own.
 - **#83** (ingest pipeline) is what connects the pollers, the mapper and the store. It waits only on #21, and publishing plugs into it later through #23, which is not a blocker.
 - **#36/#37** are integration-level checks, by design the last things that can go green, since they need real pieces on both sides of the stack. **#74** (README run guide and scenario triggers) follows #36 because it documents the finished stack.
+
+## M2 backlog (issues #268 to #336)
+
+The Milestone 2 backlog, same idea as above. Each issue has real `blocked-by` links on GitHub, and this graph is the same data. Regenerate after adding or closing issues with `gh issue list --repo brii26/distributed-hazard-coordination --json number,title,state`.
+
+### Ready now (no open blockers)
+
+- #268 Set up a 2-node k3s cluster (VMs) and write the topology doc
+- #277 PVMBG schema admin endpoint without X-Admin-Key
+- #308 Spike: read the live satellite feed and record its behavior (needs the group token from the assistants)
+- #310 Fire clusterer as a pure function with unit tests
+
+### Waiting on the assistants
+
+- #293 earthquake dataset (P1)
+- #308 group token for the satellite feed (P4)
+- #316 reference result for the comparison (P4)
+- #319 base contract document of Sensor Pantai (P5)
+
+### Full graph
+
+Green means closed. Edges stay after closing so progress is visible, only the "Ready now" list drops closed issues.
+
+```mermaid
+graph TD
+  %% Platform
+  268["#268 A1 Set up a 2-node k3s cluster (VMs) and.."]
+  269["#269 A2 install Tester Agent and run every pra.."]
+  270["#270 A3 Base namespace, Secrets and ConfigMaps"]
+  271["#271 A4 Manifests for the BMKG and PVMBG mocks"]
+  272["#272 A5 Manifests for the Aggregator and the c.."]
+  273["#273 A6 Manifests for Auth, user-db, Client-Fa.."]
+  274["#274 A7 Manifests for RabbitMQ and the three c.."]
+  275["#275 A8 One-command deploy plus a label and re.."]
+  276["#276 A9 NetworkPolicy for storage isolation"]
+
+  %% M1 fixes
+  277["#277 B1 PVMBG schema admin endpoint without X-.."]
+  278["#278 B2 PVMBG incompatible schema mode"]
+
+  %% Observability
+  279["#279 C1 Latency, error and throughput metrics.."]
+  280["#280 C2 One metrics dashboard in Grafana"]
+  281["#281 C3 Verify traces and correlation ID acros.."]
+
+  %% P2 single polling
+  282["#282 D1 decide the time source and lease mecha.."]
+  283["#283 D2 Only the lease holder polls"]
+  284["#284 D3 Fencing token on the store write path.."]
+  285["#285 D4 Aggregator at 3 replicas across nodes.."]
+  286["#286 D5 Rolling update with zero failed requests"]
+  287["#287 D6 Test script for kill-leader, clock-ske.."]
+  288["#288 D7 Load test at 10k VU with scaling 3 to.."]
+
+  %% P1 sharding
+  289["#289 E1 decide the storage engine and the shar.."]
+  290["#290 E2 Shard router in the Aggregator"]
+  291["#291 E3 RF=2 replication with read fallback"]
+  292["#292 E4 Cross-shard read with correct order, p.."]
+  293["#293 E5 Load the earthquake dataset and report.."]
+  294["#294 E6 Rebalance and re-replicate when a node.."]
+  295["#295 E7 Audit API events and checksum"]
+  296["#296 E8 Audit API location"]
+  297["#297 E9 Analytics dashboard with an incomplete.."]
+  298["#298 E10 Test script for wipe-node, node join a.."]
+
+  %% P3 failed messages
+  299["#299 F1 Schema policy and a validator in the m.."]
+  300["#300 F2 Store for failed messages"]
+  301["#301 F3 Retryable and non-retryable handling w.."]
+  302["#302 F4 Harden against malformed messages"]
+  303["#303 F5 Replay parked messages without duplica.."]
+  304["#304 F6 Failed message inspection for Internal.."]
+  305["#305 F7 POST /field-reports answers 202 with a.."]
+  306["#306 F8 Field reports consumer that is idempot.."]
+  307["#307 F9 P3 end-to-end test script"]
+
+  %% P4 satellite feed
+  308["#308 G1 read the live satellite feed and recor.."]
+  309["#309 G2 SSE client with offset tracking and re.."]
+  310["#310 G3 Fire clusterer as a pure function with.."]
+  311["#311 G4 Severity, WILDFIRE mapping, stable id.."]
+  312["#312 G5 Event time windows and allowed lateness"]
+  313["#313 G6 Durable state and crash recovery with.."]
+  314["#314 G7 Handle update and retract events"]
+  315["#315 G8 Test at 60x speed with latency and lag.."]
+  316["#316 G9 Compare against the assistants' refere.."]
+
+  %% P5 sensor
+  317["#317 H1 Sensor Pantai manifest and token Secret"]
+  318["#318 H2 Sensor client with a restart safe curs.."]
+  319["#319 H3 Contract validator and quarantine with.."]
+  320["#320 H4 Circuit breaker, backoff and bulkhead.."]
+  321["#321 H5 Critical alert delivery to Tim Lapanga.."]
+  322["#322 H6 Priority load shedding for Tim Lapanga.."]
+  323["#323 H7 SLO for the alert path and an error bu.."]
+  324["#324 H8 Game day script and post-mortem template"]
+
+  %% Bonus
+  325["#325 I1 nodes on separate physical hosts with.."]
+  326["#326 I2 AI component that stays off the alert.."]
+  327["#327 I3 autoscaling of the Aggregator"]
+
+  %% Wrap-up
+  328["#328 Z1 End-to-end script for all practice sce.."]
+  329["#329 Z2 Fresh clone verification and README sync"]
+  330["#330 Z3 Report: general part"]
+  331["#331 Z4 Report: Problem 1 and Problem 2"]
+  332["#332 Z5 Report: Problem 3 and Problem 4"]
+  333["#333 Z6 Report: Problem 5 and the game day pos.."]
+  334["#334 Z7 Report: bonus sections and the AI usag.."]
+  335["#335 Z8 Tag milestone-2, release and submissio.."]
+  336["#336 Z9 Record the demo video and submit the l.."]
+
+  268 --> 269
+  268 --> 270
+  270 --> 271
+  270 --> 272
+  271 --> 272
+  272 --> 273
+  272 --> 274
+  273 --> 275
+  274 --> 275
+  275 --> 276
+  277 --> 278
+  275 --> 279
+  279 --> 280
+  275 --> 281
+  272 --> 282
+  282 --> 283
+  283 --> 284
+  275 --> 285
+  283 --> 285
+  285 --> 286
+  284 --> 287
+  285 --> 287
+  269 --> 287
+  286 --> 288
+  272 --> 289
+  289 --> 290
+  290 --> 291
+  290 --> 292
+  291 --> 293
+  291 --> 294
+  292 --> 295
+  291 --> 296
+  292 --> 297
+  294 --> 298
+  269 --> 298
+  278 --> 299
+  299 --> 300
+  300 --> 301
+  299 --> 302
+  301 --> 303
+  300 --> 304
+  274 --> 305
+  305 --> 306
+  303 --> 307
+  304 --> 307
+  306 --> 307
+  269 --> 307
+  308 --> 309
+  310 --> 311
+  311 --> 312
+  309 --> 313
+  312 --> 313
+  313 --> 314
+  314 --> 315
+  280 --> 315
+  315 --> 316
+  270 --> 317
+  317 --> 318
+  318 --> 319
+  300 --> 319
+  318 --> 320
+  318 --> 321
+  274 --> 321
+  273 --> 322
+  280 --> 323
+  321 --> 323
+  319 --> 324
+  320 --> 324
+  322 --> 324
+  323 --> 324
+  275 --> 325
+  274 --> 326
+  285 --> 327
+  279 --> 327
+  288 --> 328
+  298 --> 328
+  307 --> 328
+  315 --> 328
+  324 --> 328
+  328 --> 329
+  325 --> 329
+  326 --> 329
+  327 --> 329
+  329 --> 330
+  329 --> 331
+  329 --> 332
+  329 --> 333
+  330 --> 334
+  330 --> 335
+  331 --> 335
+  332 --> 335
+  333 --> 335
+  334 --> 335
+  335 --> 336
+
+  classDef done fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+```
+
+### Notes on reading this
+
+- **Critical path:** #268 (cluster) leads to the manifests (#270 to #275), which unlock observability (#279 to #281), the Aggregator replicas (#285) and everything that needs a running cluster.
+- **Two design spikes come first inside their problem:** #282 (lease and time source, P2) and #289 (storage engine and sharding, P1). Write the doc and get a review before building on it.
+- **P4 can start without the cluster:** #310 (fire clusterer) is a pure function and #308 (feed spike) only needs the token.
+- **Final chain:** #328 (end to end script) leads to #329 (fresh clone check), then the report issues (#330 to #334), then #335 (tag and release) and #336 (video).
+- **Bonus issues** (#325 to #327) are required. They block #329 so they cannot be skipped.
