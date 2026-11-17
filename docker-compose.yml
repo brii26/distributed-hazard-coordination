@@ -345,6 +345,13 @@ configs:
                 normalize_duration: true
       connectors:
         spanmetrics:
+          # Both old and new HTTP semconv names, so the split works whichever otelhttp emits.
+          dimensions:
+            - name: http.response.status_code
+            - name: http.status_code
+            - name: http.request.method
+            - name: http.method
+            - name: rpc.grpc.status_code
       receivers:
         otlp:
           protocols:
