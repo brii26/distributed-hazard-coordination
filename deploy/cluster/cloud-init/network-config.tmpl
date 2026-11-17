@@ -1,0 +1,15 @@
+version: 2
+ethernets:
+  nat0:
+    match:
+      name: "e*"
+    dhcp4: false
+    addresses:
+      - @IP@/24
+    routes:
+      - to: default
+        via: @GATEWAY@
+    nameservers:
+      addresses:
+        - @GATEWAY@
+        - 1.1.1.1
