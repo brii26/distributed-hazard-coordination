@@ -104,7 +104,12 @@ func (i *ingest) keepRejected(ctx context.Context, res pollResult, events []Haza
 	raws := make([][]byte, 0, len(events))
 
 	for idx, rec := range res.records {
-		raw, _ := json.Marshal(rec)
+		var raw []byte
+		if len(res.rawRecords) == len(res.records) {
+			raw = res.rawRecords[idx]
+		} else {
+			raw, _ = json.Marshal(rec)
+		}
 
 		if cause, rejected := bad[idx]; !rejected {
 			raws = append(raws, raw)

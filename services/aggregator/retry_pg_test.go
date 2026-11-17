@@ -220,7 +220,7 @@ func TestGuardedUpsertWritesWhenNothingNewerExists(t *testing.T) { //nolint:para
 	s := testStore(t, 25)
 	ctx := context.Background()
 	id := ref(t, s)
-	failedAt := time.Now().UTC().Truncate(time.Microsecond)
+	failedAt := time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond) // the row below is written before the failure
 	h := hazard(sourcePVMBG, id)
 	h.IngestedAt = failedAt.Add(-time.Second)
 
@@ -236,6 +236,44 @@ func TestGuardedUpsertWritesWhenNothingNewerExists(t *testing.T) { //nolint:para
 	h.AreaName = new("fixed")
 	if changed, err := s.upsert(g, h); err != nil || !changed || storedArea(t, s, id) != "fixed" {
 		t.Fatalf("an older row is updated by its retry: %v %v", changed, err)
+	}
+}
+
+// An UPDATE keeps ingested_at, so only updated_at shows that the row changed after the failure.
+func TestGuardedUpsertSeesAnUpdateOfAnExistingRow(t *testing.T) { //nolint:paralleltest // shares the hazard table
+	s := testStore(t, 25)
+	ctx := context.Background()
+	id := ref(t, s)
+
+	first := hazard(sourcePVMBG, id)
+	first.AreaName = new("v1")
+
+	if _, err := s.upsert(ctx, first); err != nil { // row exists before the failure
+		t.Fatal(err)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	failedAt := time.Now().UTC().Truncate(time.Microsecond) // T: the record below failed to write
+
+	time.Sleep(20 * time.Millisecond)
+
+	update := first // T+1: a live update of the same row, same ingested_at
+	update.AreaName = new("v2")
+
+	if changed, err := s.upsert(ctx, update); err != nil || !changed {
+		t.Fatalf("live update: %v %v", changed, err)
+	}
+
+	stale := first
+	stale.AreaName = new("stale")
+
+	if _, err := s.upsert(withNotNewerThan(ctx, failedAt), stale); !errors.Is(err, errSuperseded) {
+		t.Fatalf("the retry must be superseded, got %v", err)
+	}
+
+	if got := storedArea(t, s, id); got != "v2" {
+		t.Fatalf("stored area %q, the update must survive", got)
 	}
 }
 

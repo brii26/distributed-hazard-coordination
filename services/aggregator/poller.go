@@ -26,9 +26,11 @@ const (
 // Result of one poll cycle from a source: records, warnings (BMKG), the cursor for the next ?since=, correlationID and the cycle's trace span.
 type pollResult struct {
 	records, warnings []map[string]any
-	cursor            time.Time
-	correlationID     string
-	trace             trace.SpanContext
+	// Each entry of records as received, byte for byte. Nil when unknown.
+	rawRecords    [][]byte
+	cursor        time.Time
+	correlationID string
+	trace         trace.SpanContext
 }
 
 // One source's polling loop. One goroutine, one call at a time, so there are never two calls in flight for a source.
@@ -153,7 +155,14 @@ type sourceClient struct {
 }
 
 // GETs path (with ?since if set) and decodes a JSON array of objects.
-func (c *sourceClient) records(ctx context.Context, path string, since time.Time) (_ []map[string]any, err error) {
+func (c *sourceClient) records(ctx context.Context, path string, since time.Time) ([]map[string]any, error) {
+	recs, _, err := c.recordsRaw(ctx, path, since)
+
+	return recs, err
+}
+
+// Like records, plus each element's bytes as received.
+func (c *sourceClient) recordsRaw(ctx context.Context, path string, since time.Time) (_ []map[string]any, _ [][]byte, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "GET "+c.baseURL+path)
 
@@ -169,7 +178,7 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
@@ -179,12 +188,12 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 	}
 
 	if err := c.auth(req); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defer func() { _ = resp.Body.Close() }()
@@ -194,15 +203,32 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 			c.onUnauthorized()
 		}
 
-		return nil, fmt.Errorf("%s returned status %d", path, resp.StatusCode)
+		return nil, nil, fmt.Errorf("%s returned status %d", path, resp.StatusCode)
 	}
 
-	var out []map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPollBody)).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	var elems []json.RawMessage
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPollBody)).Decode(&elems); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
 	}
 
-	return out, nil
+	var (
+		out  []map[string]any
+		raws [][]byte
+	)
+
+	if elems != nil {
+		out, raws = make([]map[string]any, len(elems)), make([][]byte, len(elems))
+	}
+
+	for n, e := range elems {
+		if err := json.Unmarshal(e, &out[n]); err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", path, err)
+		}
+
+		raws[n] = e
+	}
+
+	return out, raws, nil
 }
 
 // Latest RFC 3339 timestamp under key, or zero.
@@ -222,7 +248,7 @@ func newest(recs []map[string]any, key string) time.Time {
 // Polls BMKG: seismic events and tsunami warnings are two endpoints read together. The cursor follows the seismic events.
 func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
-		events, err := c.records(ctx, "/seismic-events", since)
+		events, raws, err := c.recordsRaw(ctx, "/seismic-events", since)
 		if err != nil {
 			return pollResult{}, err
 		}
@@ -232,7 +258,7 @@ func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, er
 			return pollResult{}, err
 		}
 
-		return pollResult{records: events, warnings: warnings, cursor: newest(events, "occurred_at")}, nil
+		return pollResult{records: events, rawRecords: raws, warnings: warnings, cursor: newest(events, "occurred_at")}, nil
 	}
 }
 
@@ -243,12 +269,12 @@ func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, ti
 			return pollResult{}, fmt.Errorf("PVMBG token: %w", err)
 		}
 
-		reports, err := c.records(ctx, "/volcanic-reports", since)
+		reports, raws, err := c.recordsRaw(ctx, "/volcanic-reports", since)
 		if err != nil {
 			return pollResult{}, err
 		}
 
-		return pollResult{records: reports, cursor: newest(reports, "reported_at")}, nil
+		return pollResult{records: reports, rawRecords: raws, cursor: newest(reports, "reported_at")}, nil
 	}
 }
 

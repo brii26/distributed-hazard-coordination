@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -231,6 +234,52 @@ func TestOutageKeepsRecordsWholeAndTheWorkerRecoversThemOnce(t *testing.T) { //n
 
 	if w.tick(context.Background()) != 0 {
 		t.Fatal("recovered rows must not be taken again")
+	}
+}
+
+func TestFailedRowKeepsTheRecordByteForByte(t *testing.T) {
+	t.Parallel()
+
+	// odd whitespace and key order, a number written 1.20
+	odd := `{ "reported_at" :"2026-10-04T09:00:00Z",` + "\n\t" + `"report_id":"R1",  "volcano_id": "MERAPI", "eruption_count_24h":4.0,
+	"alert_level":"Siaga" ,"ash_column_height_m": 1200.0 }`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, "  [ \n"+odd+" \n]\n")
+	}))
+
+	t.Cleanup(srv.Close)
+
+	c := &sourceClient{baseURL: srv.URL, timeout: time.Second, client: &http.Client{}, auth: pvmbgAuth(func() string { return "t" })}
+
+	res, err := pvmbgFetch(c, func() error { return nil })(context.Background(), time.Time{})
+	if err != nil || len(res.records) != 1 {
+		t.Fatalf("fetch: %v %+v", err, res)
+	}
+
+	var (
+		rec recorder
+		st  = &memStore{down: errPgDown}
+		q   = newFakeQueue()
+	)
+
+	in, ch := quickIngest(st, q, &rec, time.Millisecond)
+	ch <- res
+
+	close(ch)
+	in.run(context.Background())
+
+	if len(q.rows) != 1 || string(q.rows[0].Payload) != odd {
+		t.Fatalf("payload must be the bytes as received:\n got %q\nwant %q", q.rows[0].Payload, odd)
+	}
+
+	if q.rows[0].PayloadSHA == nil || q.rows[0].MessageID != sourcePVMBG+":"+hex.EncodeToString(q.rows[0].PayloadSHA) {
+		t.Fatalf("id must hash the same bytes: %s", q.rows[0].MessageID)
+	}
+
+	var ev HazardEvent
+	if err := json.Unmarshal(q.rows[0].MappedEvent, &ev); err != nil || ev.SourceRefID != "R1" {
+		t.Fatalf("mapped event must stay in its own column: %s %v", q.rows[0].MappedEvent, err)
 	}
 }
 
