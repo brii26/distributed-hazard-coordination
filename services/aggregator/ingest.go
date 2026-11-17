@@ -28,6 +28,8 @@ type ingest struct {
 	retryBase, retryMax time.Duration
 	// Called after every batch with whether all of it was stored. Nil for sources that keep no durable cursor.
 	afterBatch func(ctx context.Context, res pollResult, clean bool)
+	// Called when a store rejected a write as stale, with the batch's token. Nil without a lease.
+	onFenced func(epoch int64)
 }
 
 // Runs until the poller closes the channel, so queued records are still written on shutdown.
@@ -45,6 +47,11 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	defer span.End()
 
 	ctx = withCorrelation(ctx, res.correlationID)
+
+	if res.epoch > 0 {
+		ctx = withLeaseEpoch(ctx, res.epoch)
+	}
+
 	l := withID(res.correlationID)
 
 	for _, d := range describeFields(i.name, res.records) {
@@ -65,6 +72,18 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 
 	for _, h := range events {
 		c, err := i.write(ctx, h)
+		if errors.Is(err, errFenced) {
+			l.Warn("fenced", "source", i.name, "source_ref_id", h.SourceRefID, "epoch", res.epoch, "error", err.Error())
+
+			if i.onFenced != nil {
+				i.onFenced(res.epoch)
+			}
+
+			clean = false
+
+			break
+		}
+
 		if err != nil {
 			l.Warn("ingest upsert failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
 
@@ -96,7 +115,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	for attempt := 0; ; attempt++ {
 		changed, err := i.upsert(context.WithoutCancel(ctx), h)
-		if err == nil || isPermanent(err) {
+		if err == nil || isPermanent(err) || errors.Is(err, errFenced) {
 			return changed, err
 		}
 
@@ -137,6 +156,10 @@ func (p pipeline) run(ctx context.Context) {
 
 			p.lease.run(ctx, p.poller.loop)
 		})
+	}
+
+	if p.lease != nil {
+		p.ingest.onFenced = p.lease.fence
 	}
 
 	wg.Go(func() { p.ingest.run(ctx) })

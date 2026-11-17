@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 )
@@ -84,12 +85,19 @@ func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 		committed, changed = true, changed || r.changed
 	}
 
+	fenced := slices.ContainsFunc(errs, func(e error) bool { return errors.Is(e, errFenced) })
+
 	if !committed {
 		return false, errors.Join(errs...)
 	}
 
 	if len(errs) > 0 || len(own) < 2 {
 		c.markDirty(shard)
+	}
+
+	// One copy committed, but a stale writer must still stop.
+	if fenced {
+		return changed, errors.Join(errs...)
 	}
 
 	return changed, nil
