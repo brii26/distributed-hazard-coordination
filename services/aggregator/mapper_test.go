@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -461,4 +463,125 @@ func TestDescribeFieldsNamesEveryDriftOnce(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("decisions = %v, want %v", got, want)
 	}
+}
+
+func without(r map[string]any, keys ...string) map[string]any {
+	out := maps.Clone(r)
+	for _, k := range keys {
+		delete(out, k)
+	}
+
+	return out
+}
+
+func with(r map[string]any, k string, v any) map[string]any {
+	out := maps.Clone(r)
+	out[k] = v
+
+	return out
+}
+
+func TestVolcanicSchemaPolicy(t *testing.T) {
+	t.Parallel()
+
+	good := report("R1", "MERAPI", "Waspada")
+	renamed := without(good, "eruption_count_24h")
+	renamed["eruption_count"] = 3.0
+
+	accepted := map[string]map[string]any{
+		"legacy":                good,
+		"extended":              with(good, "confidence_level", 0.75),
+		"extra field":           with(good, "sensor_count", 7.0),
+		"unknown volcano value": report("R2", "NOWHERE", "Dormant"),
+	}
+	for name, r := range accepted {
+		if _, err := testMapper().volcanic(r); err != nil {
+			t.Errorf("%s: want accepted, got %v", name, err)
+		}
+	}
+
+	const pre = "schema_incompatible: "
+
+	rejected := []struct {
+		name string
+		rec  map[string]any
+		want string
+	}{
+		{"volcano_id missing", without(good, "volcano_id"), pre + "field 'volcano_id' missing"},
+		{"report_id missing", without(good, "report_id"), pre + "field 'report_id' missing"},
+		{"alert_level missing", without(good, "alert_level"), pre + "field 'alert_level' missing"},
+		{"reported_at missing", without(good, "reported_at"), pre + "field 'reported_at' missing"},
+		{"ash missing", without(good, "ash_column_height_m"), pre + "field 'ash_column_height_m' missing"},
+		{"count missing", without(good, "eruption_count_24h"), pre + "field 'eruption_count_24h' missing"},
+		{"null is missing", with(good, "alert_level", nil), pre + "field 'alert_level' missing"},
+		{"retyped number", with(good, "ash_column_height_m", "1200.5"), pre + "field 'ash_column_height_m' changed from number to string"},
+		{"retyped string", with(good, "volcano_id", 5.0), pre + "field 'volcano_id' changed from string to number"},
+		{"retyped object", with(good, "alert_level", map[string]any{}), pre + "field 'alert_level' changed from string to object"},
+		{"renamed", renamed, pre + "field 'eruption_count_24h' missing"},
+		{
+			"all three",
+			without(with(without(good, "volcano_id"), "ash_column_height_m", "1"), "eruption_count_24h"),
+			pre + "field 'ash_column_height_m' changed from number to string; field 'eruption_count_24h' missing; field 'volcano_id' missing",
+		},
+	}
+	for _, c := range rejected {
+		_, err := testMapper().volcanic(c.rec)
+
+		var is *IncompatibleSchema
+		if !errors.As(err, &is) || is.Reason != c.want {
+			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+func TestVolcanicFieldOrderDoesNotMatter(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		`{"report_id":"R1","volcano_id":"MERAPI","alert_level":"Waspada","eruption_count_24h":4,"ash_column_height_m":9,"reported_at":"2026-10-04T09:00:00Z"}`,
+		`{"reported_at":"2026-10-04T09:00:00Z","ash_column_height_m":9,"eruption_count_24h":4,"alert_level":"Waspada","volcano_id":"MERAPI","report_id":"R1"}`,
+	} {
+		var r map[string]any
+		if err := json.Unmarshal([]byte(raw), &r); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := testMapper().volcanic(r); err != nil {
+			t.Errorf("%s: %v", raw, err)
+		}
+	}
+}
+
+func TestMapAllKeepsRecordIndex(t *testing.T) {
+	t.Parallel()
+
+	good := report("R1", "MERAPI", "Waspada")
+	_, err := testMapper().mapVolcanic([]map[string]any{good, without(good, "volcano_id"), good})
+
+	var re *recordError
+	if !errors.As(err, &re) || re.index != 1 {
+		t.Fatalf("want recordError index 1, got %v", err)
+	}
+
+	if _, ok := errors.AsType[*IncompatibleSchema](err); !ok {
+		t.Fatalf("want IncompatibleSchema inside, got %v", err)
+	}
+}
+
+func FuzzVolcanic(f *testing.F) {
+	for _, s := range []string{
+		`{}`, `{"report_id":null}`, `{"report_id":"R1","volcano_id":"MERAPI","alert_level":"Waspada","eruption_count_24h":4,"ash_column_height_m":9,"reported_at":"2026-10-04T09:00:00Z","confidence_level":0.75}`,
+		`{"report_id":1,"volcano_id":[],"alert_level":{},"eruption_count_24h":"x","ash_column_height_m":true,"reported_at":5}`,
+	} {
+		f.Add([]byte(s))
+	}
+
+	f.Fuzz(func(_ *testing.T, b []byte) {
+		var r map[string]any
+		if json.Unmarshal(b, &r) != nil {
+			return
+		}
+
+		_, _ = testMapper().volcanic(r)
+	})
 }
