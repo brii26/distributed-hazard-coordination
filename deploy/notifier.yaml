@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: notifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notifier
+  template:
+    metadata:
+      labels:
+        role: consumer
+        app: notifier
+    spec:
+      containers:
+        - name: notifier
+          image: notifier
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: bnpb-config
+          env:
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: user
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_URL
+              value: amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq:5672/
+            - name: QUEUE_NAME
+              value: notifier
+            - name: HEALTH_PORT
+              value: "8094"
+            - name: DEDUP_STORE_PATH
+              value: /var/lib/notifier/dedup.log
+          ports:
+            - name: health
+              containerPort: 8094
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/notifier
+      volumes:
+        - name: state
+          emptyDir: {}

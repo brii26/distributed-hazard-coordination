@@ -5,6 +5,16 @@ resources:
   - configmap.yaml
   - store.yaml
   - aggregator.yaml
+  - bmkg-mock.yaml
+  - pvmbg-mock.yaml
+  - user-db.yaml
+  - auth-service.yaml
+  - client-facing-api.yaml
+  - web-frontend.yaml
+  - rabbitmq.yaml
+  - dashboard-updater.yaml
+  - notifier.yaml
+  - audit-logger.yaml
   - sensor-pantai
   - observability/observability.yaml
   - observability/grafana.yaml
@@ -24,4 +34,28 @@ generatorOptions:
 images:
   - name: aggregator
     newName: 10.77.0.11:5000/aggregator
+    newTag: "0.1.0"
+  - name: bmkg-mock
+    newName: 10.77.0.11:5000/bmkg-mock
+    newTag: "0.1.0"
+  - name: pvmbg-mock
+    newName: 10.77.0.11:5000/pvmbg-mock
+    newTag: "0.1.0"
+  - name: auth-service
+    newName: 10.77.0.11:5000/auth-service
+    newTag: "0.1.0"
+  - name: client-facing-api
+    newName: 10.77.0.11:5000/client-facing-api
+    newTag: "0.1.0"
+  - name: web-frontend
+    newName: 10.77.0.11:5000/web-frontend
+    newTag: "0.1.0"
+  - name: dashboard-updater
+    newName: 10.77.0.11:5000/dashboard-updater
+    newTag: "0.1.0"
+  - name: notifier
+    newName: 10.77.0.11:5000/notifier
+    newTag: "0.1.0"
+  - name: audit-logger
+    newName: 10.77.0.11:5000/audit-logger
     newTag: "0.1.0"

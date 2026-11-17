@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: grpc
+      port: 9092
+      targetPort: grpc
+    - name: health
+      port: 8092
+      targetPort: health
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: auth-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        role: api
+    spec:
+      initContainers:
+        - name: wait-for-user-db
+          image: postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h user-db -p 5432; do sleep 2; done"]
+          resources:
+            requests:
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      containers:
+        - name: auth-service
+          image: auth-service
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: bnpb-config
+          env:
+            - name: USER_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: user-db-credentials
+                  key: user
+            - name: USER_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-db-credentials
+                  key: password
+            - name: USER_DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: USER_DB_NAME
+            - name: USER_DB_URL
+              value: postgres://$(USER_DB_USER):$(USER_DB_PASSWORD)@user-db:5432/$(USER_DB_NAME)?sslmode=disable
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: jwt_signing_secret
+            - name: SECRET_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: secret_salt
+            - name: SEED_OPERATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: seed_operator_password
+            - name: GRPC_PORT
+              value: "9092"
+            - name: HEALTH_PORT
+              value: "8092"
+          ports:
+            - name: grpc
+              containerPort: 9092
+            - name: health
+              containerPort: 8092
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
