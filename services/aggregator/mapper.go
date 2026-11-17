@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -251,6 +252,45 @@ func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
 	return h, nil
 }
 
+// One Sensor Pantai station as /v1/stations lists it.
+type station struct {
+	Name, Province string
+	Lat, Lon       float64
+}
+
+// Maps one observation that passed the validator. Severity follows the sensor's own critical flag, never a threshold of ours.
+func (m *mapper) coastal(r map[string]any, st station) (HazardEvent, error) {
+	used := map[string]bool{}
+
+	h, err := m.base(sourceSensorPantai, typeCoastal, r, "observation_id", "observed_at", used)
+	if err != nil {
+		return HazardEvent{}, err
+	}
+
+	critical, _ := r["critical"].(bool)
+	sev := severityNormal
+
+	if critical {
+		sev = severityAwas
+	}
+
+	wave, _ := asFloat(r["wave_height_m"])
+	sea, _ := asFloat(r["sea_level_anomaly_m"])
+	area, lat, lon := st.Province, st.Lat, st.Lon
+
+	h.Severity, h.AreaName, h.Latitude, h.Longitude = &sev, &area, &lat, &lon
+	h.Attributes["wave_height_m"], h.Attributes["sea_level_anomaly_m"] = wave, sea
+	h.Attributes["quality"], h.Attributes["critical"], h.Attributes["station_id"] = r["quality"], critical, r["station_id"]
+
+	for _, k := range []string{"wave_height_m", "sea_level_anomaly_m", "quality", "critical", "station_id"} {
+		used[k] = true
+	}
+
+	h.addLeftovers(r, used)
+
+	return h, nil
+}
+
 // Puts every unconsumed field into attributes.
 func (h *HazardEvent) addLeftovers(r map[string]any, used map[string]bool) {
 	for k, v := range r {
@@ -294,6 +334,10 @@ var knownFields = map[string]map[string]string{
 	sourceBMKG + " warnings": {
 		"warning_id": "string", "related_event_id": "string", "threat_level": "string", "affected_zones": "list", "estimated_arrival": "string",
 	},
+	sourceSensorPantai: {
+		"observation_id": "string", "station_id": "string", "observed_at": "string", "sea_level_anomaly_m": "number",
+		"wave_height_m": "number", "quality": "string", "critical": "bool",
+	},
 	sourcePVMBG: {
 		"report_id": "string", "volcano_id": "string", "alert_level": "string", "eruption_count_24h": "number",
 		"ash_column_height_m": "number", "reported_at": "string",
@@ -307,7 +351,7 @@ func jsonKind(v any) string {
 	switch v.(type) {
 	case string:
 		return "string"
-	case float64:
+	case float64, json.Number:
 		return "number"
 	case bool:
 		return "bool"

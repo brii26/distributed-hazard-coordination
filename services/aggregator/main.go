@@ -1,4 +1,4 @@
-// Command aggregator polls BMKG and PVMBG, stores to the Canonical Store and publishes to the broker.
+// Command aggregator polls BMKG, PVMBG and Sensor Pantai, stores to the Canonical Store and publishes to the broker.
 package main
 
 import (
@@ -88,6 +88,8 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 		token:       tokens.Token,
 		tokenErr:    tokens.LastError,
 		rejectToken: tokens.Reject,
+		pantaiURL:   os.Getenv("PANTAI_BASE_URL"),
+		pantaiToken: os.Getenv("PANTAI_AUTH_TOKEN"),
 	}
 
 	var err error
@@ -101,6 +103,11 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 
 	if c.bmkgURL == "" || c.bmkgKey == "" {
 		return pollConfig{}, errors.New("BMKG_BASE_URL and BMKG_API_KEY must be set")
+	}
+
+	// Sensor Pantai is optional until the sensor runs everywhere, but half a setting is a mistake.
+	if (c.pantaiURL == "") != (c.pantaiToken == "") {
+		return pollConfig{}, errors.New("PANTAI_BASE_URL and PANTAI_AUTH_TOKEN must be set together")
 	}
 
 	return c, nil
@@ -246,6 +253,10 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	defer func() { _ = db.close() }()
 
+	if pc.pantaiURL != "" {
+		pc.pantai = newSensorClient(pc, db)
+	}
+
 	upsert, cl, err := chooseUpsert(ctx, db)
 	if err != nil {
 		return err
@@ -301,7 +312,14 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}()
 
 	mux := newMux(api)
-	mux.HandleFunc("GET /metrics", leaseMetricsHandler(electors))
+	leaseMetrics := leaseMetricsHandler(electors)
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		leaseMetrics(w, r)
+
+		if pc.pantai != nil {
+			pc.pantai.rejects.writeMetrics(w)
+		}
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + port,

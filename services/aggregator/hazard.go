@@ -15,6 +15,7 @@ const (
 
 	typeSeismic  = "SEISMIC"
 	typeVolcanic = "VOLCANIC"
+	typeCoastal  = "COASTAL"
 
 	severityNormal  = "NORMAL"
 	severityWaspada = "WASPADA"

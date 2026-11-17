@@ -60,7 +60,8 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `FRONTEND_POLL_INTERVAL_MS` | web-frontend (build) | 5000 | How often the hazards page refreshes |
 | `AUDIT_TOKEN` | Kubernetes Secret `audit-token` | change-me | Token for the Internal Audit API |
 | `SATELLITE_GROUP_TOKEN` | Kubernetes Secret `satellite-token` | change-me | Group token for the assistants' satellite feed |
-| `PANTAI_AUTH_TOKEN` | Kubernetes Secret `pantai-token` | change-me | Bearer token the Sensor Pantai checks |
+| `PANTAI_AUTH_TOKEN` | Kubernetes Secret `pantai-token`, aggregator | change-me | Bearer token the Sensor Pantai checks. The Aggregator sends it as `Authorization: Bearer` and needs it together with `PANTAI_BASE_URL` |
+| `PANTAI_BASE_URL` | aggregator | unset | Base URL of the Sensor Pantai, for example `http://sensor-pantai:8080`. Unset turns the Pantai poller off; set only one of the two and the Aggregator refuses to start |
 | `PANTAI_KEY_FILE` | `deploy/make-secrets.sh` | empty | Path of the exam key file given by the assistants. Empty uses a placeholder for Secret `pantai-key` |
 
 Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8095), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default).
