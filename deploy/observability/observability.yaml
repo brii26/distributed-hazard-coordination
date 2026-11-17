@@ -1,0 +1,208 @@
+# Jaeger v2 (traces + span metrics) and Prometheus, same setup as docker-compose.yml.
+# Every service must set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 (the jaeger Service below).
+# These manifests may move into Brian's #270 kustomization.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: sistem-informasi-kebencanaan-bnpb
+data:
+  config.yml: |
+    service:
+      extensions: [jaeger_storage, jaeger_query]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [jaeger_storage_exporter, spanmetrics]
+        metrics/spanmetrics:
+          receivers: [spanmetrics]
+          exporters: [prometheus]
+      telemetry:
+        logs:
+          level: INFO
+    extensions:
+      jaeger_query:
+        storage:
+          traces: memory_store
+          metrics: prometheus_store
+        ui:
+          config_file: /etc/jaeger/jaeger-ui.json
+      jaeger_storage:
+        backends:
+          memory_store:
+            memory:
+              max_traces: 15000
+        metric_backends:
+          prometheus_store:
+            prometheus:
+              endpoint: http://prometheus:9090
+              normalize_calls: true
+              normalize_duration: true
+    connectors:
+      spanmetrics:
+        dimensions:
+          - name: http.response.status_code
+          - name: http.status_code
+          - name: http.request.method
+          - name: http.method
+          - name: rpc.grpc.status_code
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch:
+    exporters:
+      jaeger_storage_exporter:
+        trace_storage: memory_store
+      prometheus:
+        endpoint: 0.0.0.0:8889
+  jaeger-ui.json: |
+    {"themes": {"enabled": true}, "monitor": {"menuEnabled": true}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: sistem-informasi-kebencanaan-bnpb
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: jaeger}
+  template:
+    metadata:
+      labels: {app: jaeger, role: other}
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/jaeger:2.22.0
+          args: ["--config", "/etc/jaeger/config.yml"]
+          ports:
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+            - {name: ui, containerPort: 16686}
+            - {name: metrics, containerPort: 8889}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/jaeger}
+      volumes:
+        - name: config
+          configMap: {name: jaeger-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: sistem-informasi-kebencanaan-bnpb
+spec:
+  selector: {app: jaeger}
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: 4317}
+    - {name: otlp-http, port: 4318, targetPort: 4318}
+    - {name: ui, port: 16686, targetPort: 16686}
+    - {name: metrics, port: 8889, targetPort: 8889}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: sistem-informasi-kebencanaan-bnpb
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    rule_files: [/etc/prometheus/rules.yml]
+    scrape_configs:
+      - job_name: aggregated-trace-metrics
+        static_configs:
+          - targets: ['jaeger:8889']
+  rules.yml: |
+    groups:
+      - name: service-traffic
+        rules:
+          - alert: NoSpansFrom_bmkg_mock
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="bmkg-mock"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from bmkg-mock in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_pvmbg_mock
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="pvmbg-mock"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from pvmbg-mock in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_aggregator
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="aggregator"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from aggregator in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_auth_service
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="auth-service"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from auth-service in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_client_facing_api
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="client-facing-api"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from client-facing-api in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_dashboard_updater
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="dashboard-updater"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from dashboard-updater in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_notifier
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="notifier"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from notifier in 10m (down, not exporting, or idle)"}
+          - alert: NoSpansFrom_audit_logger
+            expr: absent_over_time(traces_span_metrics_calls_total{service_name="audit-logger"}[10m])
+            for: 5m
+            labels: {severity: warning}
+            annotations: {summary: "No spans from audit-logger in 10m (down, not exporting, or idle)"}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: sistem-informasi-kebencanaan-bnpb
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: prometheus}
+  template:
+    metadata:
+      labels: {app: prometheus, role: other}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.6.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=2h
+          ports:
+            - {name: http, containerPort: 9090}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: sistem-informasi-kebencanaan-bnpb
+spec:
+  selector: {app: prometheus}
+  ports:
+    - {name: http, port: 9090, targetPort: 9090}
