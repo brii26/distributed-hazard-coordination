@@ -32,7 +32,12 @@ out=tests/load/results
 mkdir -p "$out"
 stamp=$(date +%Y%m%d-%H%M%S)
 
-docker run --rm --network host -u "$(id -u):$(id -g)" \
+# Rootless podman maps -u to a sub-uid that cannot read files only the owner may read (a private home dir);
+# keep-id makes the container uid the same as the host uid. Docker has no such flag.
+userns=()
+[ "$(docker info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ] && userns=(--userns=keep-id)
+
+docker run --rm --network host "${userns[@]}" -u "$(id -u):$(id -g)" \
   -v "$root/tests/load:/load" \
   -e BASE_URL="http://127.0.0.1:$CLIENT_FACING_API_PORT" \
   -e EMAIL="$SEED_OPERATOR_EMAIL" -e PASSWORD="$SEED_OPERATOR_PASSWORD" \
