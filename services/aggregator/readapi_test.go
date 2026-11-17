@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -403,4 +405,51 @@ func TestAFilteredEmptyPageIsNotNothingStoredWhileTheSourceIsDown(t *testing.T) 
 	if err != nil || len(resp.GetData()) != 0 {
 		t.Fatalf("a search with no match must be an empty OK page, got %v %v", resp, err)
 	}
+}
+
+func TestWatchStoreFollowsPing(t *testing.T) {
+	var down atomic.Bool
+
+	api := &readAPI{ping: func(context.Context) error {
+		if down.Load() {
+			return errors.New("store down")
+		}
+
+		return nil
+	}}
+	_ = newGRPCServer(api)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go api.watchStore(ctx, 10*time.Millisecond)
+
+	status := func() healthpb.HealthCheckResponse_ServingStatus {
+		r, err := api.hs.Check(ctx, &healthpb.HealthCheckRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return r.GetStatus()
+	}
+
+	waitFor := func(want healthpb.HealthCheckResponse_ServingStatus) {
+		t.Helper()
+
+		for range 200 {
+			if status() == want {
+				return
+			}
+
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		t.Fatalf("status = %v, want %v", status(), want)
+	}
+
+	waitFor(healthpb.HealthCheckResponse_SERVING)
+	down.Store(true)
+	waitFor(healthpb.HealthCheckResponse_NOT_SERVING)
+	down.Store(false)
+	waitFor(healthpb.HealthCheckResponse_SERVING)
 }

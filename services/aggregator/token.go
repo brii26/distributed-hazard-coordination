@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,22 +34,95 @@ type tokenFile struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
+// Shared home of the token pair, so the next lease holder continues with the pair the last one rotated.
+type tokenStore interface {
+	// ok is false when no pair is stored yet.
+	load(ctx context.Context) (f tokenFile, epoch int64, ok bool, err error)
+	// Refuses with errStaleToken if the stored pair belongs to a higher epoch. Compare and write are one statement.
+	save(ctx context.Context, f tokenFile, epoch int64) error
+}
+
+var (
+	errStaleToken = errors.New("token pair belongs to a newer lease epoch")
+	errNotLeader  = errors.New("pvmbg token manager is not running here, this replica does not hold the lease")
+)
+
+type pgTokenStore struct {
+	db     *sql.DB
+	source string
+}
+
+const (
+	loadTokenSQL = `SELECT access_token, refresh_token, expires_at, epoch FROM source_token WHERE source = $1`
+	saveTokenSQL = `
+INSERT INTO source_token (source, access_token, refresh_token, expires_at, epoch)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (source) DO UPDATE
+SET access_token = EXCLUDED.access_token, refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at, epoch = EXCLUDED.epoch, updated_at = now()
+WHERE source_token.epoch <= EXCLUDED.epoch`
+)
+
+func (s pgTokenStore) load(ctx context.Context) (tokenFile, int64, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+	defer cancel()
+
+	var (
+		f     tokenFile
+		epoch int64
+	)
+
+	err := s.db.QueryRowContext(ctx, loadTokenSQL, s.source).Scan(&f.AccessToken, &f.RefreshToken, &f.ExpiresAt, &epoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tokenFile{}, 0, false, nil
+	}
+
+	if err != nil {
+		return tokenFile{}, 0, false, err
+	}
+
+	return f, epoch, true, nil
+}
+
+func (s pgTokenStore) save(ctx context.Context, f tokenFile, epoch int64) error {
+	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+	defer cancel()
+
+	res, err := s.db.ExecContext(ctx, saveTokenSQL, s.source, f.AccessToken, f.RefreshToken, f.ExpiresAt, epoch)
+	if err != nil {
+		return err
+	}
+
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		if err != nil {
+			return err
+		}
+
+		return errStaleToken
+	}
+
+	return nil
+}
+
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// Owns the PVMBG OAuth token: bootstrap with the one-time code, rotate with the refresh token, persist to the volume so a restart never needs the code again.
+// Owns the PVMBG OAuth token: bootstrap with the one-time code, rotate with the refresh token, persist so neither a restart nor a takeover needs the code again.
+// It only talks to PVMBG between lead() starting and ending, which is while this replica holds the lease. The pair goes to the shared store (when set) and to the volume file.
 type tokenManager struct {
-	baseURL      string
-	clientID     string
-	clientSecret string
-	oneTimeCode  string
-	path         string
-	client       *http.Client
-	retryDelay   time.Duration
-	kick         chan struct{} // Reject wakes run() to renew now
+	baseURL       string
+	clientID      string
+	clientSecret  string
+	oneTimeCode   string
+	path          string
+	shared        tokenStore // nil: the volume file is the only copy
+	pendingShared bool       // cur is not in the shared store yet
+	epoch         int64      // lease epoch of the current term, 0 without a lease
+	client        *http.Client
+	retryDelay    time.Duration
+	kick          chan struct{} // Reject wakes run() to renew now
 
 	mu      sync.RWMutex
 	cur     tokenFile
@@ -67,6 +141,7 @@ func newTokenManager(baseURL, clientID, clientSecret, oneTimeCode, path string) 
 		retryDelay:   defaultRetryDelay,
 		kick:         make(chan struct{}, 1),
 		margin:       defaultRotateMargin,
+		lastErr:      errNotLeader,
 	}
 }
 
@@ -94,16 +169,44 @@ func (m *tokenManager) LastError() error {
 	return m.lastErr
 }
 
-// Reads the stored token, or bootstraps if there is none. An unreadable file counts as missing.
+// Takes the stored pair, or bootstraps if there is none. Order: shared store, volume file, one-time code. A volume file that cannot be read counts as missing. A shared store that cannot be read is an error: the file may be older than the shared pair, so neither it nor the one time code is tried until the store answers.
 func (m *tokenManager) load() error {
+	if m.shared != nil {
+		f, _, ok, err := m.shared.load(context.Background())
+
+		switch {
+		case err != nil:
+			// The file may hold a pair another pod already rotated, and the one time code is spent. Wait for the store instead.
+			err = fmt.Errorf("shared token store: %w", err)
+
+			m.mu.Lock()
+			m.lastErr = err
+			m.mu.Unlock()
+
+			log.Printf("pvmbg shared token unreadable, not using the volume or the one time code: %v", err)
+
+			return err
+		case ok && f.AccessToken != "" && f.RefreshToken != "":
+			m.adopt(f)
+			log.Printf("pvmbg token loaded from shared store, expires_at=%s", f.ExpiresAt.Format(time.RFC3339))
+			m.writeFile(f)
+
+			return nil
+		}
+	}
+
 	b, err := os.ReadFile(m.path) //nolint:gosec // path is operator config (PVMBG_TOKEN_VOLUME_PATH), not request input
 	if err == nil {
 		var f tokenFile
 		if err = json.Unmarshal(b, &f); err == nil && f.AccessToken != "" && f.RefreshToken != "" {
-			m.mu.Lock()
-			m.cur = f
-			m.mu.Unlock()
+			m.adopt(f)
 			log.Printf("pvmbg token loaded from volume, expires_at=%s", f.ExpiresAt.Format(time.RFC3339))
+
+			if m.shared != nil {
+				if err := m.shared.save(context.Background(), f, m.epoch); err != nil {
+					log.Printf("pvmbg token not copied to the shared store: %v", err)
+				}
+			}
 
 			return nil
 		}
@@ -116,10 +219,54 @@ func (m *tokenManager) load() error {
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
 }
 
+// Makes a loaded pair current and clears the not-leader error.
+func (m *tokenManager) adopt(f tokenFile) {
+	m.mu.Lock()
+	m.cur = f
+	m.lastErr = nil
+	m.mu.Unlock()
+}
+
+// Runs fn as the PVMBG token holder: loads or bootstraps the pair, keeps it fresh in the background and, when fn returns or ctx ends, stops and forgets it. ctx carries the lease epoch.
+func (m *tokenManager) lead(ctx context.Context, fn func(context.Context)) {
+	m.mu.Lock()
+	m.epoch, _ = leaseEpoch(ctx)
+	m.mu.Unlock()
+
+	_ = m.load()
+
+	m.mu.RLock()
+	due := m.cur.AccessToken != "" && time.Until(m.cur.ExpiresAt) <= m.margin
+	m.mu.RUnlock()
+
+	if due {
+		_ = m.rotate()
+	}
+
+	rctx, cancel := context.WithCancel(ctx)
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() { m.run(rctx) })
+
+	defer func() {
+		cancel()
+		wg.Wait()
+
+		m.mu.Lock()
+		m.cur, m.lastErr = tokenFile{}, errNotLeader
+		m.mu.Unlock()
+	}()
+
+	fn(ctx)
+}
+
 // Swaps the refresh token for a new pair. errInvalidGrant means PVMBG rejected the grant itself (unknown refresh token).
 var errInvalidGrant = errors.New("invalid_grant")
 
 func (m *tokenManager) rotate() error {
+	m.flushShared()
+
 	m.mu.RLock()
 	refresh := m.cur.RefreshToken
 	m.mu.RUnlock()
@@ -129,9 +276,59 @@ func (m *tokenManager) rotate() error {
 		return err
 	}
 
+	// Another holder may have rotated the pair already. Try the stored one before the one time code, which is spent after the first use.
+	if next, ok := m.newerSharedRefresh(refresh); ok {
+		withID("").Warn("token refresh retry", "reason", "invalid_grant, shared store holds a newer pair")
+
+		err = m.obtain(grantRefreshToken, url.Values{"refresh_token": {next}})
+		if !errors.Is(err, errInvalidGrant) {
+			return err
+		}
+	}
+
 	withID("").Warn("token bootstrap fallback", "reason", "refresh token rejected with invalid_grant")
 
 	return m.obtain(grantAuthCode, url.Values{"code": {m.oneTimeCode}})
+}
+
+// The refresh token in the shared store when it differs from used, so it is a newer pair.
+func (m *tokenManager) newerSharedRefresh(used string) (string, bool) {
+	if m.shared == nil {
+		return "", false
+	}
+
+	f, _, ok, err := m.shared.load(context.Background())
+	if err != nil || !ok || f.RefreshToken == "" || f.RefreshToken == used {
+		return "", false
+	}
+
+	return f.RefreshToken, true
+}
+
+// Retries a shared save that failed earlier. A refused save means a newer term owns the pair, so this holder drops it.
+func (m *tokenManager) flushShared() {
+	m.mu.RLock()
+	pending, f, epoch := m.pendingShared, m.cur, m.epoch
+	m.mu.RUnlock()
+
+	if !pending || m.shared == nil || f.AccessToken == "" {
+		return
+	}
+
+	err := m.shared.save(context.Background(), f, epoch)
+
+	switch {
+	case err == nil:
+		m.mu.Lock()
+		m.pendingShared = false
+		m.mu.Unlock()
+	case errors.Is(err, errStaleToken):
+		m.mu.Lock()
+		m.cur, m.pendingShared, m.lastErr = tokenFile{}, false, err
+		m.mu.Unlock()
+	default:
+		log.Printf("pvmbg token still not in the shared store: %v", err)
+	}
 }
 
 // Calls PVMBG's token endpoint and persists the new pair before exposing it through Token().
@@ -221,8 +418,44 @@ func (m *tokenManager) exchange(grant string, form url.Values) (err error) {
 	}, ttl/3)
 }
 
-// Persists f (temp file, then rename) and only then makes it current, so the volume never lags behind.
+// Persists f (shared store with the epoch, then the volume file) and only then makes it current, so neither copy lags behind. A refused shared write means a newer term owns the pair.
 func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
+	m.mu.RLock()
+	epoch := m.epoch
+	m.mu.RUnlock()
+
+	pending := false
+
+	if m.shared != nil {
+		if err := m.shared.save(context.Background(), f, epoch); err != nil {
+			if errors.Is(err, errStaleToken) {
+				return fmt.Errorf("saving the token pair: %w", err)
+			}
+
+			// PVMBG already rotated, so this pair is the only valid one. Keep it here and retry the save.
+			log.Printf("pvmbg token not saved to the shared store, keeping it locally: %v", err)
+
+			pending = true
+		}
+	}
+
+	if err := m.writeFile(f); err != nil {
+		return err
+	}
+
+	m.mu.Lock()
+	m.cur = f
+	m.margin = margin
+	m.pendingShared = pending
+	m.mu.Unlock()
+
+	log.Printf("pvmbg token stored, expires_at=%s", f.ExpiresAt.Format(time.RFC3339))
+
+	return nil
+}
+
+// Writes the volume copy (temp file, then rename).
+func (m *tokenManager) writeFile(f tokenFile) error {
 	b, err := json.Marshal(f) //nolint:gosec // persisting the token to the volume is the point
 	if err != nil {
 		return err
@@ -245,18 +478,7 @@ func (m *tokenManager) store(f tokenFile, margin time.Duration) error {
 		return err
 	}
 
-	if err = os.Rename(tmp.Name(), m.path); err != nil { //nolint:gosec // operator-configured volume path
-		return err
-	}
-
-	m.mu.Lock()
-	m.cur = f
-	m.margin = margin
-	m.mu.Unlock()
-
-	log.Printf("pvmbg token stored, expires_at=%s", f.ExpiresAt.Format(time.RFC3339))
-
-	return nil
+	return os.Rename(tmp.Name(), m.path) //nolint:gosec // operator-configured volume path
 }
 
 // Waits until the token is due for rotation, or retryDelay if there is no token or the last attempt failed.
@@ -268,23 +490,45 @@ func (m *tokenManager) nextWait() time.Duration {
 		return m.retryDelay
 	}
 
-	return max(time.Until(m.cur.ExpiresAt)-m.margin, 0)
+	due := max(time.Until(m.cur.ExpiresAt)-m.margin, 0)
+	if m.pendingShared {
+		return min(due, m.retryDelay)
+	}
+
+	return due
 }
 
 // Keeps the token fresh until ctx is done. Failures are logged and retried.
 func (m *tokenManager) run(ctx context.Context) {
 	for {
+		forced := false
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(m.nextWait()):
 		case <-m.kick:
+			forced = true
 		}
 
 		if m.Token() == "" {
 			_ = m.load()
-		} else {
+
+			continue
+		}
+
+		m.flushShared()
+
+		if forced || m.refreshDue() {
 			_ = m.rotate()
 		}
 	}
+}
+
+// False while the current pair is still valid for longer than the margin, so a retry of the shared save does not burn a refresh.
+func (m *tokenManager) refreshDue() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.cur.AccessToken != "" && time.Until(m.cur.ExpiresAt) <= m.margin
 }

@@ -19,6 +19,7 @@ step "secrets"
 
 step "schema and broker ConfigMaps"
 "$HERE/make-schema.sh"
+"$HERE/make-coordination.sh"
 "$HERE/make-rabbitmq.sh"
 
 step "manifests"

@@ -8,6 +8,7 @@ resources:
   - bmkg-mock.yaml
   - pvmbg-mock.yaml
   - user-db.yaml
+  - coordination-db.yaml
   - auth-service.yaml
   - client-facing-api.yaml
   - web-frontend.yaml

@@ -10,6 +10,7 @@ Everything lives in one namespace, `sistem-informasi-kebencanaan-bnpb`. Point `k
 2. `kubectl apply -k deploy/` creates the namespace, the ConfigMap `bnpb-config`, the sharded store, the Aggregator and the observability stack.
 3. `deploy/make-secrets.sh` creates the Secrets from `.env`. Run it again after a change, it updates in place.
 4. `deploy/make-schema.sh` creates the ConfigMap `store-schema` from `services/aggregator/migrations`. The store pods start once it and `store-credentials` exist.
+5. `deploy/make-coordination.sh` creates the ConfigMap `coordination-db-init` from the coordination migrations only. The pod `coordination-db` starts once it and `store-credentials` exist.
 
 Postgres builds the tables from `store-schema` only on an empty data directory. A migration added later does not run on a node that already has data.
 
@@ -19,6 +20,7 @@ Postgres builds the tables from `store-schema` only on an empty data directory. 
 |---|---|---|---|
 | `bnpb-config` | ConfigMap | `kubectl apply -k` | Non-secret settings, same names as `.env.example` |
 | `store-schema` | ConfigMap | `make-schema.sh` | The SQL migrations |
+| `coordination-db-init` | ConfigMap | `make-coordination.sh` | `004_source_lease.sql`, `005_source_lease_sources.sql`, `006_source_cursors.sql`, `011_shard_state.sql`, `012_source_token.sql` |
 | `rabbitmq-definitions` | ConfigMap | `make-rabbitmq.sh` | The broker topology template, render script and config from `infra/rabbitmq` |
 | `bmkg-credentials` | Secret | `make-secrets.sh` | `api_key` |
 | `pvmbg-credentials` | Secret | `make-secrets.sh` | `client_id`, `client_secret`, `one_time_code` |
@@ -34,7 +36,7 @@ Postgres builds the tables from `store-schema` only on an empty data directory. 
 
 ## The Aggregator
 
-`deploy/aggregator.yaml` holds the Service `aggregator` (gRPC 9091, health 8091) and a Deployment with `role: aggregator` and 256Mi/512Mi memory. `replicas` is 1 for now, spreading three replicas over the nodes is a separate issue. An init container waits until the Service `store` answers.
+`deploy/aggregator.yaml` holds the headless Service `aggregator` (HTTP, health and metrics on 8091, `publishNotReadyAddresses: true`), the headless Service `aggregator-grpc` (gRPC 9091) and a Deployment with 3 replicas, `role: aggregator` and 256Mi/512Mi memory each. A topology spread constraint on `kubernetes.io/hostname` (`ScheduleAnyway`, so it still schedules on one node) spreads the pods over the nodes. The readiness probe is `/health`, which answers 503 only when the store ping fails, and the liveness probe is a TCP check that ignores the store. The Client-Facing API dials `dns:///aggregator-grpc:9091` with `round_robin` and the gRPC health check, so it only sends to pods whose store answers. The Aggregator closes each connection after 30 s, which makes the client resolve DNS again and meet new pods. Every pod runs the lease, so only one of them polls a source (the lease, the cursor and the token pair live in the coordination database, see below). An init container waits until the Services `store` and `coordination-db` answer. The HTTP Service lists every pod, ready or not, because it carries the Audit API and the metrics: during a store outage the readiness probe drops pods from `aggregator-grpc` but the auditor still reaches them, and Prometheus can read every replica through the DNS name `aggregator` (an A record per pod). Check readiness routing with `kubectl get endpoints aggregator-grpc`.
 
 The image name and tag are set once, in the `images` block of `deploy/kustomization.yaml` (`10.77.0.11:5000/aggregator:0.1.0`). Bump the tag there and below on every new build, so all replicas run the same image. Build and push from the host:
 
@@ -56,11 +58,11 @@ done
 
 Until it is applied the rebalancer cannot read the shard state of that node: its scan fails, nothing is copied to or from it, and reads keep their normal owner order without preferring synced copies. The error shows in the Aggregator log as a failed scan. The rebalancer starts working on its next round after the table exists.
 
-The rebalancer is set with `STORE_REBALANCE_INTERVAL`, `REBALANCE_PAGE_PAUSE` and `REBALANCE_DELETE`, see [CONFIGURATION.md](CONFIGURATION.md). Keep `REBALANCE_DELETE` off until the coordination database exists, because the rebalance lease lives on the store nodes and several Aggregator replicas can then run a round at once. With delete off that is harmless, copies are idempotent.
+The rebalancer is set with `STORE_REBALANCE_INTERVAL`, `REBALANCE_PAGE_PAUSE` and `REBALANCE_DELETE`, see [CONFIGURATION.md](CONFIGURATION.md). The rebalance lease lives in the coordination database too, so only one replica runs a round at a time and `REBALANCE_DELETE` no longer needs the extra care that several simultaneous rounds would have asked for.
 
 The credentials sit inside the DSN, and the template goes through `Sprintf`. `make-secrets.sh` therefore only accepts letters, digits and `. _ ~ -` in the store and RabbitMQ user names and passwords, and stops with a message otherwise.
 
-The PVMBG token file is on a per-pod `emptyDir`. A container restart keeps it, but a new pod starts without it and signs in again with the one-time code. Handing the token over on a takeover is part of the lease design, not of this manifest.
+Only the replica that holds the PVMBG lease talks to the token endpoint. On acquiring the lease it loads the token pair from the table `source_token` (migration `012_source_token.sql`, in the coordination database next to the lease), then from the file on its `emptyDir`, and uses the one-time code only if neither exists. Every rotated pair is written to the table with the lease epoch before it is used, and a write from a lower epoch is refused, so a replica that took over continues with the pair its predecessor left and a replica that lost the lease cannot overwrite it. The file on the `emptyDir` is only a local cache. The one-time code is spent once, so wiping the table and the pods together needs a fresh code (or a restart of the PVMBG mock). If the write to the table fails after PVMBG issued a pair, the holder keeps that pair in memory and on the file and retries the write until it succeeds, so one database blip does not lose it. If a refresh is rejected with `invalid_grant`, the holder reloads the table and retries once with the stored refresh token before it touches the one-time code.
 
 The BMKG and PVMBG mocks and RabbitMQ come in their own manifests. Until they exist the Aggregator logs `no such host` for them and its circuit breakers open, which is expected.
 
@@ -97,7 +99,7 @@ For the exam profile, put the key file from the assistants in `PANTAI_KEY_FILE`,
 
 ## The user database, Auth, Client-Facing API and web frontend
 
-`deploy/user-db.yaml`, `auth-service.yaml`, `client-facing-api.yaml` and `web-frontend.yaml` hold, in this order, the StatefulSet `user-db` (Postgres, `role: store`, 512Mi/1Gi, 1Gi local-path volume), and the Deployments `auth-service` and `client-facing-api` (`role: api`, 128Mi/256Mi) and `web-frontend` (`role: other`, 128Mi/256Mi). The API reaches the Aggregator at `aggregator:9091` and Auth at `auth-service:9092`.
+`deploy/user-db.yaml`, `auth-service.yaml`, `client-facing-api.yaml` and `web-frontend.yaml` hold, in this order, the StatefulSet `user-db` (Postgres, `role: store`, 512Mi/1Gi, 1Gi local-path volume), and the Deployments `auth-service` and `client-facing-api` (`role: api`, 128Mi/256Mi) and `web-frontend` (`role: other`, 128Mi/256Mi). The API reaches the Aggregator at `dns:///aggregator-grpc:9091` and Auth at `auth-service:9092`.
 
 `deploy/make-schema.sh` also creates the ConfigMap `user-db-init` from `services/auth-service/migrations`. Postgres runs the schema and the seed Operator script from it on an empty volume only, so deleting the `user-db` pod and its PVC (`data-user-db-0`) brings the account back on the next start.
 
@@ -119,7 +121,7 @@ done
 
 ## One command deploy and the check
 
-`deploy/deploy.sh [env-file]` does steps 2 to 4 above in the right order. It applies the namespace, runs `make-secrets.sh`, `make-schema.sh` and `make-rabbitmq.sh`, runs `kubectl apply -k deploy/`, then waits for every Deployment, StatefulSet and DaemonSet (the store is a DaemonSet) with `kubectl rollout status --timeout $TIMEOUT` (default `300s` each). A workload that is not ready is listed with the pods that are not Running and a hint to describe them, and the script exits 1. It ends with `deploy/check.sh`. The name differs from `deploy/cluster/up.sh`, which starts the VMs.
+`deploy/deploy.sh [env-file]` does steps 2 to 5 above in the right order. It applies the namespace, runs `make-secrets.sh`, `make-schema.sh`, `make-coordination.sh` and `make-rabbitmq.sh`, runs `kubectl apply -k deploy/`, then waits for every Deployment, StatefulSet and DaemonSet (the store is a DaemonSet) with `kubectl rollout status --timeout $TIMEOUT` (default `300s` each). A workload that is not ready is listed with the pods that are not Running and a hint to describe them, and the script exits 1. It ends with `deploy/check.sh`. The name differs from `deploy/cluster/up.sh`, which starts the VMs.
 
 ```bash
 export KUBECONFIG=$HOME/vms/k3s/kubeconfig
@@ -137,9 +139,41 @@ deploy/tests/check_test.sh                        # offline tests with the fixtu
 
 The `-k` mode needs `python3` with PyYAML, and `jq` is needed in every mode.
 
+## The coordination database
+
+`deploy/coordination-db.yaml` holds the StatefulSet `coordination-db` (one Postgres 16 replica, 512Mi/1Gi, a 1Gi local-path volume) and the headless Service `coordination-db`. The pod is labelled `app: coordination-db` and `role: store`, the same memory class as `user-db`, because `check.sh` has no other class for a database. It reuses the Secret `store-credentials` (no new key in `.env`) and a database named `coordination`.
+
+Why: the data store is a DaemonSet behind the headless Service `store`, so each Aggregator connection may reach a different store pod. Lease rows, source cursors and the PVMBG token pair would then differ per pod, and replicas would disagree on lease epochs and on the token pair. The Aggregator reads `COORDINATION_DATABASE_URL` and opens a second pool from it (5 connections) for the tables `source_lease`, `source_cursors` and `source_token`. Hazard upserts, `critical_outbox` (same transaction as the upsert), `failed_messages`, `write_fence` and the shard state stay on `DATABASE_URL` and the shard owners, and fencing stays per store. When the variable is empty or equal to `DATABASE_URL` one pool serves both, which is what docker-compose and the tests use.
+
+Schema: no migration is renumbered or copied. `make-coordination.sh` builds `coordination-db-init` from the five migration files listed above, straight from `services/aggregator/migrations`, so each table has one definition. `011_shard_state.sql` is needed for its change to the `source_lease` check, which allows the `rebalance` lease name. It also creates an unused `shard_state` table there. The store DaemonSet still receives the whole folder through `store-schema` and keeps its (now unused) lease tables, which are harmless. `deploy/deploy.sh` runs the script.
+
+NetworkPolicy: `coordination-db-from-aggregator` lets only `role=aggregator` (and the node network) reach TCP 5432. The policy `store-from-aggregator` now excludes `app` in `user-db` and `coordination-db`.
+
+Trade-off: this is a single point. While `coordination-db` is down no new lease is granted, and a holder that cannot renew stops polling at its lease deadline. Hazard ingestion from sources pauses until it returns, reads and the data store are unaffected. The data survives a pod restart on the local-path volume. Postgres runs init scripts on an empty volume only, so an existing cluster needs the one time steps below.
+
+On a cluster that already runs, after pulling this change (`.env` stays as it is):
+
+```bash
+NS=sistem-informasi-kebencanaan-bnpb
+deploy/make-coordination.sh
+kubectl apply -k deploy/
+kubectl -n $NS rollout status statefulset/coordination-db
+kubectl -n $NS rollout status deployment/aggregator
+```
+
+The new pod has an empty volume, so it runs the five migrations itself. If you must re-apply them by hand: `kubectl -n $NS exec coordination-db-0 -- sh -c 'for f in /docker-entrypoint-initdb.d/*.sql; do psql -U "$POSTGRES_USER" -d coordination -f "$f"; done'`. The old lease rows, cursors and token pair stay on the store pods and are not copied. The new lease epochs start at 0, so a store that still holds a higher fence epoch from the old lease refuses writes until the new epoch passes it. If that happens, copy the rows once: `kubectl -n $NS exec store-<pod> -- pg_dump -U "$POSTGRES_USER" -d canonical_store -t source_lease -t source_cursors -t source_token --data-only | kubectl -n $NS exec -i coordination-db-0 -- psql -U "$POSTGRES_USER" -d coordination`.
+
+### Known gaps
+
+- `coordination-db` is a single replica without failover (see the trade-off above).
+- The Service `store` selects `role: store` and `app: store`, so only the store DaemonSet pods answer on `DATABASE_URL`. `user-db` and `coordination-db` carry `role: store` for the memory class only. On a running cluster the label change restarts the store pods once (the data stays on the node).
+- The PVMBG one-time code is spent once, see the token paragraph above.
+- A holder that was paused past its lease deadline can still finish a refresh at PVMBG and rotate the pair before its own write is refused. The new holder then recovers through the stored pair or, if that one was also rotated away, only through a new one-time code. The lease deadline keeps this window short.
+- Replicas and stores of an old cluster keep `write_fence` rows with the highest epochs of the earlier split leases. Reset them once (`truncate write_fence` on every store) when moving to the coordination database.
+
 ## Storage isolation (NetworkPolicy)
 
-`deploy/networkpolicy.yaml` holds two ingress policies and no egress rule. `store-from-aggregator` lets only pods with `role=aggregator` (and the node network, for the hostNetwork Tester Agent) reach the store pods on TCP 5432. `user-db-from-auth` lets only `app=auth-service` (and the node network) reach the user DB on TCP 5432. The store pods do not talk to each other, because the Aggregator does the replication and repair. The kubelet probes are `exec` probes and DNS is egress, so neither is affected. No policy exists in the `tester-agent` namespace.
+`deploy/networkpolicy.yaml` holds three ingress policies and no egress rule. `store-from-aggregator` lets only pods with `role=aggregator` (and the node network, for the hostNetwork Tester Agent) reach the store pods on TCP 5432. `user-db-from-auth` lets only `app=auth-service` (and the node network) reach the user DB on TCP 5432. `coordination-db-from-aggregator` lets only `role=aggregator` (and the node network) reach the coordination database on TCP 5432. The store pods do not talk to each other, because the Aggregator does the replication and repair. The kubelet probes are `exec` probes and DNS is egress, so neither is affected. No policy exists in the `tester-agent` namespace.
 
 k3s enforces policies with its embedded kube-router controller. It is on unless the server runs with `--disable-network-policy`:
 

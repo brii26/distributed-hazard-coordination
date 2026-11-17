@@ -117,9 +117,12 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 	return c, nil
 }
 
-const defaultDBPoolSize = 20
+const (
+	defaultDBPoolSize    = 20
+	defaultCoordPoolSize = 5
+)
 
-// Opens the Canonical Store from DATABASE_URL. An unreachable database stops the service at start.
+// Opens the Canonical Store from DATABASE_URL and, when COORDINATION_DATABASE_URL differs, the coordination pool. An unreachable database stops the service at start.
 func loadStore() (*store, error) {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -131,7 +134,18 @@ func loadStore() (*store, error) {
 		return nil, err
 	}
 
-	return openStore(url, poolSize)
+	st, err := openStore(url, poolSize)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := st.openCoordination(os.Getenv("COORDINATION_DATABASE_URL"), url, defaultCoordPoolSize); err != nil {
+		_ = st.close()
+
+		return nil, err
+	}
+
+	return st, nil
 }
 
 // Picks where writes go. With STORE_SERVICE set, membership keeps a node list fresh every 2 s and writes go to two owners; without it, to the single DATABASE_URL store.
@@ -229,8 +243,6 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		return errors.New("PVMBG_BASE_URL, PVMBG_OAUTH_CLIENT_ID, PVMBG_OAUTH_CLIENT_SECRET and PVMBG_TOKEN_VOLUME_PATH must be set")
 	}
 
-	_ = tokens.load()
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -240,8 +252,6 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}
 
 	defer shutdownTracing()
-
-	go tokens.run(ctx)
 
 	pc, err := loadPollConfig(tokens)
 	if err != nil {
@@ -317,7 +327,13 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		p.ingest.fail, p.ingest.retry = db.insertFailed, rc
 
 		p.ingest.stage = relay.stage
-		p.lease = newElector(p.poller.name, lc, pgLease{db: db.db})
+		p.lease = newElector(p.poller.name, lc, pgLease{db: db.coordDB()})
+
+		if p.poller.name == sourcePVMBG {
+			tokens.shared = pgTokenStore{db: db.coordDB(), source: sourcePVMBG}
+			p.lead = tokens.lead
+		}
+
 		electors = append(electors, p.lease)
 		p.poller.loadSince = func(ctx context.Context) (time.Time, error) { return db.lastOccurred(ctx, p.poller.name) }
 
@@ -345,7 +361,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		}
 
 		rb = newRebalancer(cl, pause, del)
-		rbLease = newElector("rebalance", lc, pgLease{db: db.db})
+		rbLease = newElector("rebalance", lc, pgLease{db: db.coordDB()})
 		electors = append(electors, rbLease)
 
 		wg.Go(func() { rbLease.run(ctx, func(wctx context.Context) { rb.run(wctx, interval) }) })
@@ -362,6 +378,8 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	if api.auditTok == "" {
 		log.Print("WARNING: AUDIT_TOKEN is empty, every audit request will be refused")
 	}
+
+	go api.watchStore(ctx, storeWatchEvery)
 
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -63,6 +64,17 @@ func storedIsNewer(ctx context.Context, tx *sql.Tx, h HazardEvent, guard time.Ti
 // The only door to the Canonical Store. *sql.DB is a pool, safe for concurrent use.
 type store struct {
 	db *sql.DB
+	// Pool of the coordination database (lease, cursors, token pair). Nil means the same database as db.
+	coord *sql.DB
+}
+
+// The pool for coordination state, the data pool when no separate coordination database is set.
+func (s *store) coordDB() *sql.DB {
+	if s.coord != nil {
+		return s.coord
+	}
+
+	return s.db
 }
 
 // Connects with a pool of at most poolSize and pings, so a wrong URL fails at startup.
@@ -88,7 +100,39 @@ func openStore(url string, poolSize int) (*store, error) {
 }
 
 func (s *store) close() error {
+	if s.coord != nil {
+		_ = s.coord.Close()
+	}
+
 	return s.db.Close()
+}
+
+// Connects the coordination pool. An empty url or the same url as the data pool keeps one shared pool.
+func (s *store) openCoordination(url, dataURL string, poolSize int) error {
+	if url == "" || url == dataURL {
+		return nil
+	}
+
+	db, err := sql.Open("pgx", url)
+	if err != nil {
+		return err
+	}
+
+	db.SetMaxOpenConns(poolSize)
+	db.SetMaxIdleConns(poolSize)
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbQueryTimeout)
+	defer cancel()
+
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+
+		return fmt.Errorf("coordination database: %w", err)
+	}
+
+	s.coord = db
+
+	return nil
 }
 
 // Writes h to the store's own pool.
