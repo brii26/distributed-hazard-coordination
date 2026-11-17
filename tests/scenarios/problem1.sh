@@ -9,7 +9,7 @@ confidence='[.data[] | {area_name, severity, confidence: .attributes.confidence_
 
 step "Switch PVMBG back to the legacy schema"
 for _ in 1 2; do
-  v=$(curl -s -X POST "$PVMBG/admin/schema-version" -H "X-Admin-Key: $PVMBG_ADMIN_KEY" | jq -r .schema_version)
+  v=$(curl -s -X POST "$PVMBG/admin/schema-version" | jq -r .schema_version)
   [ "$v" = legacy ] && break
 done
 expect "PVMBG is on the legacy schema" "$v" legacy
@@ -21,10 +21,10 @@ hazards op "type=VOLCANIC&limit=3" | jq "$confidence"
 aggregator_before=$(started aggregator)
 
 step "PVMBG adds confidence_level"
-show "curl -s -X POST \$PVMBG/admin/schema-version -H \"X-Admin-Key: \$PVMBG_ADMIN_KEY\""
-v=$(curl -s -X POST "$PVMBG/admin/schema-version" -H "X-Admin-Key: $PVMBG_ADMIN_KEY" | jq -r .schema_version)
+show "curl -s -X POST \$PVMBG/admin/schema-version"
+v=$(curl -s -X POST "$PVMBG/admin/schema-version" | jq -r .schema_version)
 expect "PVMBG is on the extended schema" "$v" extended
-cleanup_hooks+=("curl -s -o /dev/null -X POST $PVMBG/admin/schema-version -H 'X-Admin-Key: $PVMBG_ADMIN_KEY'")
+cleanup_hooks+=("curl -s -o /dev/null -X POST $PVMBG/admin/schema-version")
 
 step "After the change: new reports carry confidence_level"
 has_confidence() { hazards op "type=VOLCANIC&limit=3" | jq -e '[.data[] | select(.attributes.confidence_level != null)] | length > 0' >/dev/null; }

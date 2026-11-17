@@ -22,10 +22,11 @@ import (
 )
 
 type itAgg struct {
-	db                      *store
-	read                    aggregatorpb.AggregatorClient
-	bmkgURL, bmkgKey        string
-	pvmbgURL, pvmbgAdminKey string
+	db               *store
+	read             aggregatorpb.AggregatorClient
+	bmkgURL, bmkgKey string
+	pvmbgURL         string
+	pvmbgSecret      string
 }
 
 func aggIntegration(t *testing.T) itAgg {
@@ -53,7 +54,7 @@ func aggIntegration(t *testing.T) itAgg {
 	return itAgg{
 		db: db, read: aggregatorpb.NewAggregatorClient(conn),
 		bmkgURL: os.Getenv("IT_BMKG_URL"), bmkgKey: os.Getenv("IT_BMKG_KEY"),
-		pvmbgURL: os.Getenv("IT_PVMBG_URL"), pvmbgAdminKey: os.Getenv("IT_PVMBG_ADMIN_KEY"),
+		pvmbgURL: os.Getenv("IT_PVMBG_URL"), pvmbgSecret: os.Getenv("IT_PVMBG_CLIENT_SECRET"),
 	}
 }
 
@@ -162,7 +163,7 @@ func TestIntegrationBMKGKeyIsAcceptedAndRejected(t *testing.T) {
 		want      int
 	}{
 		{"missing key", "", http.StatusUnauthorized},
-		{"another institution's key", e.pvmbgAdminKey, http.StatusForbidden},
+		{"another institution's key", e.pvmbgSecret, http.StatusForbidden},
 		{"wrong key", "not-the-key", http.StatusForbidden},
 		{"the Aggregator's key", e.bmkgKey, http.StatusOK},
 	}
@@ -320,7 +321,7 @@ func TestIntegrationBMKGEventsAndWarningsAreMappedAndStored(t *testing.T) { //no
 func (e itAgg) toggle(t *testing.T, path string) map[string]any {
 	t.Helper()
 
-	code, body := send(t, http.MethodPost, e.pvmbgURL+path, "X-Admin-Key", e.pvmbgAdminKey)
+	code, body := send(t, http.MethodPost, e.pvmbgURL+path, "", "")
 	if code != http.StatusOK {
 		t.Fatalf("POST %s: %d %s", path, code, body)
 	}

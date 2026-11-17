@@ -40,7 +40,7 @@ If one of the host ports below is already taken on your machine, change it in `.
 | <http://localhost:3000> | Web frontend (log in as `SEED_OPERATOR_EMAIL` / `SEED_OPERATOR_PASSWORD` from `.env`) |
 | <http://localhost:8080> | Client-Facing API, the only public API (`/auth/*`, `/accounts`, `/me`, `/hazards`, `/health`) |
 | <http://localhost:8081> | BMKG mock, to poke it directly (needs `X-BMKG-Key`) |
-| <http://localhost:8082> | PVMBG mock, including the demo switches `/admin/outage` and `/admin/schema-version` (need `X-Admin-Key`) |
+| <http://localhost:8082> | PVMBG mock, including the demo switches `/admin/outage` and `/admin/schema-version` (no header needed; an optional `{"version":N}` body sets the schema) |
 | <http://localhost:15672> | RabbitMQ management UI (`RABBITMQ_USER` / `RABBITMQ_PASSWORD` from `.env`) |
 
 The Aggregator, Auth Service, both databases and the consumers publish no host port. Their health is reachable from inside the stack, for example `docker compose exec aggregator wget -qO- localhost:8091/health`; every service's `/health` answers `{"status":"ok"|"degraded"|"down",...}`.

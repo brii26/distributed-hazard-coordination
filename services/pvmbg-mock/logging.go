@@ -53,6 +53,31 @@ const correlationHeader = "X-Correlation-ID"
 
 var validCorrelation = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
+// The caller's correlation ID, "-" if missing or not a safe token.
+func correlationID(r *http.Request) string {
+	id := r.Header.Get(correlationHeader)
+	if !validCorrelation.MatchString(id) {
+		return "-"
+	}
+
+	return id
+}
+
+const maxAdminBody = 1024
+
+// Reads up to 1 KB of an admin call and returns a logger that carries method, path, body and correlation ID.
+func adminCall(r *http.Request) ([]byte, *slog.Logger) {
+	raw, _ := io.ReadAll(io.LimitReader(r.Body, maxAdminBody+1))
+
+	cut := len(raw) > maxAdminBody
+	if cut {
+		raw = raw[:maxAdminBody]
+	}
+
+	return raw, base.Load().With("correlation_id", correlationID(r),
+		"method", r.Method, "path", r.URL.Path, "body", string(raw), "body_truncated", cut)
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 
@@ -67,11 +92,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 // Logs one line per request with the poll cycle's correlation ID from the Aggregator ("-" if none). /health logs at debug so the healthcheck doesn't flood the output.
 func withRequestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get(correlationHeader)
-		if !validCorrelation.MatchString(id) {
-			id = "-"
-		}
-
+		id := correlationID(r)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		start := time.Now()
 

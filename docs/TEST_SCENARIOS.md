@@ -24,7 +24,7 @@ Read the newest volcanic reports, then switch PVMBG to the extended schema. The 
 
 ```bash
 curl -s -b op.jar "$API/hazards?type=VOLCANIC&limit=3" | jq '[.data[] | {area_name, severity, confidence: .attributes.confidence_level}]'
-curl -s -X POST $PVMBG/admin/schema-version -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+curl -s -X POST $PVMBG/admin/schema-version; echo
 ```
 
 ```bash
@@ -65,7 +65,7 @@ Outage on, stale data, recovery:
 Turn the PVMBG outage on. The answer is `{"outage_active":true}`.
 
 ```bash
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+curl -s -X POST $PVMBG/admin/outage; echo
 ```
 
 Wait, then ask for volcanic data. `source_status` is DOWN, `stale_since` is set and the data is still served.
@@ -84,7 +84,7 @@ curl -s -b op.jar "$API/hazards?type=SEISMIC&limit=1" | jq .meta
 Turn the outage off. The answer is `{"outage_active":false}`.
 
 ```bash
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+curl -s -X POST $PVMBG/admin/outage; echo
 ```
 
 Wait for PVMBG to come back, then read its status. It is UP, `stale_since` is null and nothing was restarted.
@@ -99,7 +99,7 @@ With nothing stored for the source the answer is an explicit 503 instead of stal
 Turn the outage on, wait, delete the volcanic rows and ask again. The answer is HTTP 503 with an error body.
 
 ```bash
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+curl -s -X POST $PVMBG/admin/outage; echo
 sleep 20
 docker compose exec -T canonical-store psql -U "$CANONICAL_DB_USER" -d "$CANONICAL_DB_NAME" -c "DELETE FROM hazard_events WHERE hazard_type = 'VOLCANIC'"
 curl -s -w '\nHTTP %{http_code}\n' -b op.jar "$API/hazards?type=VOLCANIC"
@@ -108,7 +108,7 @@ curl -s -w '\nHTTP %{http_code}\n' -b op.jar "$API/hazards?type=VOLCANIC"
 Turn the outage off again. The data comes back.
 
 ```bash
-curl -s -X POST $PVMBG/admin/outage -H "X-Admin-Key: $PVMBG_ADMIN_KEY"; echo
+curl -s -X POST $PVMBG/admin/outage; echo
 ```
 
 Restore the normal PVMBG latency with `docker compose up -d --wait pvmbg-mock`.
@@ -125,10 +125,10 @@ No key: the answer is 401.
 curl -s -o /dev/null -w 'BMKG, no key: %{http_code}\n' $BMKG/seismic-events
 ```
 
-PVMBG's admin key sent to BMKG: the answer is 403.
+PVMBG's OAuth client secret sent to BMKG: the answer is 403.
 
 ```bash
-curl -s -o /dev/null -w 'BMKG, PVMBG admin key: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_ADMIN_KEY" $BMKG/seismic-events
+curl -s -o /dev/null -w 'BMKG, PVMBG client secret: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_OAUTH_CLIENT_SECRET" $BMKG/seismic-events
 ```
 
 BMKG key sent as a PVMBG token: the answer is 401.

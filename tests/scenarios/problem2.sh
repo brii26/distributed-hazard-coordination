@@ -12,15 +12,14 @@ for a in "$@"; do
 done
 
 login op "$SEED_OPERATOR_EMAIL" "$SEED_OPERATOR_PASSWORD" >/dev/null
-admin=(-H "X-Admin-Key: $PVMBG_ADMIN_KEY")
 # The endpoint toggles, so only switch the outage off when it is on. The exit hook and the recovery step both call this.
-outage_off() { [ "$(curl -s "$PVMBG/health" | jq -r .outage_active)" = true ] && curl -s -o /dev/null -X POST "$PVMBG/admin/outage" "${admin[@]}"; return 0; }
+outage_off() { [ "$(curl -s "$PVMBG/health" | jq -r .outage_active)" = true ] && curl -s -o /dev/null -X POST "$PVMBG/admin/outage"; return 0; }
 status() { hazards op "type=$1&limit=1" | jq -r '.meta.source_status'; }
 volcanic_up() { [ "$(status VOLCANIC)" = UP ]; }
 cleanup_hooks+=("docker compose up -d --wait pvmbg-mock >/dev/null 2>&1")
 
 step "Make sure PVMBG is not in outage"
-state=$(curl -s -X POST "$PVMBG/admin/outage" "${admin[@]}" | jq -r .outage_active)
+state=$(curl -s -X POST "$PVMBG/admin/outage" | jq -r .outage_active)
 [ "$state" = true ] && outage_off
 wait_until 120 volcanic_up
 
@@ -42,9 +41,9 @@ if [ "$load" = 1 ]; then
 fi
 
 step "Outage: PVMBG goes down"
-show "curl -s -X POST \$PVMBG/admin/outage -H \"X-Admin-Key: \$PVMBG_ADMIN_KEY\""
+show "curl -s -X POST \$PVMBG/admin/outage"
 cleanup_hooks+=("outage_off")
-expect "outage is active" "$(curl -s -X POST "$PVMBG/admin/outage" "${admin[@]}" | jq -r .outage_active)" true
+expect "outage is active" "$(curl -s -X POST "$PVMBG/admin/outage" | jq -r .outage_active)" true
 is_down() { [ "$(status VOLCANIC)" = DOWN ]; }
 wait_until 60 is_down
 show "curl -s -b op.jar \"\$API/hazards?type=VOLCANIC&limit=1\" | jq .meta"
