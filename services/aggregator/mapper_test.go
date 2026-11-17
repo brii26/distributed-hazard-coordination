@@ -21,7 +21,7 @@ func testMapper() *mapper {
 
 	return &mapper{
 		now: func() time.Time { return fixedNow },
-		newID: func() string {
+		newID: func(_, _ string) string {
 			n++
 
 			return "id-" + strconv.Itoa(n)
