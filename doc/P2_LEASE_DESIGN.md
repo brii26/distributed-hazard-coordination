@@ -150,3 +150,10 @@ Pemetaan: #283 election/poll/cursor/token lifecycle; #284 fencing/receipt/outbox
 - [ ] Sepakati mekanisme integrasi authority dan batch dengan owner P1, terutama kombinasi W1, epoch barrier dan repair loop.
 
 #282 tetap terbuka sampai review yang diwajibkan dilakukan. Batas integrasi dipindahkan ke pekerjaan implementasi atau diselesaikan melalui revisi desain, bukan dihapus dari laporan.
+
+## 10. Catatan implementasi #283
+
+- Acquire yang jawabannya hilang tidak diverifikasi dengan renew. Instance itu tetap follower dan baru bisa mengambil lease setelah TTL habis. Ini penundaan yang diterima, bukan pelanggaran jaminan.
+- Leader baru langsung polling dan kursornya `max(occurred_at)` dari store. Satu request bisa terulang di sekitar failover. Aman karena penulisan idempotent.
+- Lease ada di koneksi database kanonik (`DATABASE_URL`). Pada store sharded itu satu node, jadi lease belum tahan kehilangan node tersebut. Keputusannya diambil bersama #284.
+

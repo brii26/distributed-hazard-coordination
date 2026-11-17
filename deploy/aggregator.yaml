@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: aggregator
+spec:
+  selector:
+    role: aggregator
+  ports:
+    - name: grpc
+      port: 9091
+      targetPort: grpc
+    - name: health
+      port: 8091
+      targetPort: health
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: aggregator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      role: aggregator
+  template:
+    metadata:
+      labels:
+        role: aggregator
+    spec:
+      initContainers:
+        - name: wait-for-store
+          image: postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h store -p 5432; do sleep 2; done"]
+          resources:
+            requests:
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      containers:
+        - name: aggregator
+          image: aggregator
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: bnpb-config
+          env:
+            - name: STORE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: user
+            - name: STORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: password
+            - name: STORE_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: CANONICAL_DB_NAME
+            - name: DATABASE_URL
+              value: postgres://$(STORE_USER):$(STORE_PASSWORD)@store:5432/$(STORE_DB)?sslmode=disable
+            - name: STORE_SERVICE
+              value: store
+            - name: STORE_DSN_TEMPLATE
+              value: postgres://$(STORE_USER):$(STORE_PASSWORD)@%s:5432/$(STORE_DB)?sslmode=disable
+            - name: GRPC_PORT
+              value: "9091"
+            - name: HEALTH_PORT
+              value: "8091"
+            - name: MAX_INFLIGHT_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: AGGREGATOR_MAX_INFLIGHT_REQUESTS
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: user
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_URL
+              value: amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq:5672/
+            - name: BMKG_BASE_URL
+              value: http://bmkg-mock:8081
+            - name: BMKG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bmkg-credentials
+                  key: api_key
+            - name: PVMBG_BASE_URL
+              value: http://pvmbg-mock:8082
+            - name: PVMBG_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: pvmbg-credentials
+                  key: client_id
+            - name: PVMBG_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pvmbg-credentials
+                  key: client_secret
+            - name: PVMBG_ONE_TIME_CODE
+              valueFrom:
+                secretKeyRef:
+                  name: pvmbg-credentials
+                  key: one_time_code
+            - name: PVMBG_TOKEN_VOLUME_PATH
+              value: /var/lib/aggregator/pvmbg-token.json
+          ports:
+            - name: grpc
+              containerPort: 9091
+            - name: health
+              containerPort: 8091
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: token
+              mountPath: /var/lib/aggregator
+      volumes:
+        - name: token
+          emptyDir: {}
