@@ -1,0 +1,74 @@
+# Run: promtool test rules deploy/observability/prometheus/slo-rules_test.yml
+rule_files:
+  - slo-rules.yml
+evaluation_interval: 1m
+tests:
+  - name: no critical traffic with the series present is a zero ratio, not NaN
+    interval: 1m
+    input_series:
+      - series: 'critical_alert_latency_seconds_bucket{le="5"}'
+        values: '7+0x40'
+      - series: 'critical_alert_latency_seconds_count'
+        values: '7+0x40'
+    promql_expr_test:
+      - expr: slo:critical_alert_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples:
+          - labels: 'slo:critical_alert_error_ratio:rate5m'
+            value: 0
+      - expr: slo:critical_alert_error_budget_remaining:ratio2h
+        eval_time: 30m
+        exp_samples:
+          - labels: 'slo:critical_alert_error_budget_remaining:ratio2h'
+            value: 1
+
+  - name: no critical series at all is a zero ratio
+    interval: 1m
+    input_series:
+      - series: 'up{job="x"}'
+        values: '1+0x40'
+    promql_expr_test:
+      - expr: slo:critical_alert_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples:
+          - labels: 'slo:critical_alert_error_ratio:rate5m'
+            value: 0
+
+  - name: no read traffic with the series present is a zero ratio, not NaN
+    interval: 1m
+    input_series:
+      - series: 'traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER"}'
+        values: '10+0x40'
+    promql_expr_test:
+      - expr: slo:read_error_ratio:rate5m
+        eval_time: 20m
+        exp_samples:
+          - labels: 'slo:read_error_ratio:rate5m'
+            value: 0
+      - expr: slo:read_sli:ratio_rate5m
+        eval_time: 20m
+        exp_samples:
+          - labels: 'slo:read_sli:ratio_rate5m'
+            value: 1
+
+  - name: one late alert in 60 is about 1.67 percent and fast burn fires
+    interval: 1m
+    input_series:
+      - series: 'critical_alert_latency_seconds_bucket{le="5"}'
+        values: '0+11.8x70'
+      - series: 'critical_alert_latency_seconds_count'
+        values: '0+12x70'
+    promql_expr_test:
+      - expr: (slo:critical_alert_error_ratio:rate5m > bool 0.015) * (slo:critical_alert_error_ratio:rate5m < bool 0.02)
+        eval_time: 65m
+        exp_samples:
+          - value: 1
+    alert_rule_test:
+      - alertname: CriticalAlertFastBurn
+        eval_time: 65m
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              slo: critical_alert
+            exp_annotations:
+              summary: "Fast burn of the critical alert timeliness error budget (over 14.4x on both 5m and 1h)"
