@@ -123,3 +123,25 @@ deploy/tests/check_test.sh                        # offline tests with the fixtu
 ```
 
 The `-k` mode needs `python3` with PyYAML, and `jq` is needed in every mode.
+
+## Storage isolation (NetworkPolicy)
+
+`deploy/networkpolicy.yaml` holds two ingress policies and no egress rule. `store-from-aggregator` lets only pods with `role=aggregator` (and the node network, for the hostNetwork Tester Agent) reach the store pods on TCP 5432. `user-db-from-auth` lets only `app=auth-service` (and the node network) reach the user DB on TCP 5432. The store pods do not talk to each other, because the Aggregator does the replication and repair. The kubelet probes are `exec` probes and DNS is egress, so neither is affected. No policy exists in the `tester-agent` namespace.
+
+k3s enforces policies with its embedded kube-router controller. It is on unless the server runs with `--disable-network-policy`:
+
+```bash
+kubectl get netpol -n sistem-informasi-kebencanaan-bnpb
+ssh node-a 'systemctl cat k3s | rg -c disable-network-policy'   # 0 matches means enforcement is on
+ssh node-a 'sudo iptables -S | rg KUBE-NWPLCY | head -3'        # chains exist when it is on
+```
+
+Check from throwaway pods. A pod without the allowed label is refused, and a pod labelled like the Aggregator or Auth connects:
+
+```bash
+NS=sistem-informasi-kebencanaan-bnpb
+kubectl run np-deny -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels=role=other -- sh -c 'nc -zw2 store 5432; echo store=$?; nc -zw2 user-db 5432; echo userdb=$?'   # both non-zero
+kubectl run np-agg -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels=role=aggregator -- nc -zvw2 store 5432            # open
+kubectl run np-auth -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels=app=auth-service -- nc -zvw2 user-db 5432     # open
+kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice kill-store                                              # still works
+```
