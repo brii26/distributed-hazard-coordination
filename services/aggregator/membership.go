@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"net"
 	"sync"
 	"time"
@@ -74,9 +75,7 @@ func (m *membership) refresh(ctx context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for name, s := range state {
-		m.synced[name] = s
-	}
+	maps.Copy(m.synced, state)
 
 	for _, n := range found {
 		m.seen(n, now)

@@ -125,6 +125,7 @@ func assertPlacement(t *testing.T, c *cluster, ids []string, strict bool) {
 	}
 }
 
+//nolint:paralleltest // the nodes are real databases shared by every step
 func TestRebalanceRealPostgres(t *testing.T) {
 	ns := rebalanceNodes(t)
 	ctx := t.Context()
@@ -188,7 +189,9 @@ func TestRebalanceRealPostgres(t *testing.T) {
 			}
 
 			wmu.Lock()
+
 			more = append(more, h.HazardID)
+
 			wmu.Unlock()
 			time.Sleep(2 * time.Millisecond)
 		}
@@ -199,6 +202,7 @@ func TestRebalanceRealPostgres(t *testing.T) {
 	rb.pass(ctx)
 
 	ids = append(ids, more...)
+
 	t.Logf("after join: copied=%d under=%d misplaced=%d rows: %s", rb.repairRows.Load(), rb.under.Load(), rb.misplaced.Load(), rowCounts(t, ns))
 	assertPlacement(t, c, ids, true)
 
@@ -206,6 +210,7 @@ func TestRebalanceRealPostgres(t *testing.T) {
 
 	for _, n := range ns {
 		var cnt int
+
 		_ = n.db.QueryRowContext(ctx, `SELECT count(*) FROM hazard_events`).Scan(&cnt)
 		total += cnt
 	}
@@ -215,6 +220,7 @@ func TestRebalanceRealPostgres(t *testing.T) {
 	}
 
 	var onNew int
+
 	_ = ns[3].db.QueryRowContext(ctx, `SELECT count(*) FROM hazard_events`).Scan(&onNew)
 
 	if onNew == 0 {

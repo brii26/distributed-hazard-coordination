@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -283,6 +284,7 @@ func TestRebalanceStopsWhenLeaseLost(t *testing.T) {
 	}
 }
 
+//nolint:gocyclo // one table-like scenario, splitting it hides the order check
 func TestRebalanceJoinDeletesOnlyAfterSynced(t *testing.T) {
 	t.Parallel()
 
@@ -343,14 +345,7 @@ func TestRebalanceJoinDeletesOnlyAfterSynced(t *testing.T) {
 	}
 }
 
-func copyRows(in map[string]HazardEvent) map[string]HazardEvent {
-	out := make(map[string]HazardEvent, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-
-	return out
-}
+func copyRows(in map[string]HazardEvent) map[string]HazardEvent { return maps.Clone(in) }
 
 func mustInt(s string) int {
 	n, err := strconv.Atoi(s)
@@ -405,6 +400,43 @@ func TestRebalanceRunOnLiveSetChange(t *testing.T) {
 	mu.Unlock()
 
 	waitUntil(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return len(x.synced["c"]) > 0 })
+}
+
+// Prints the real placement of the 16 shards for the design figures: go test -run PlacementCounts -v.
+func TestPlacementCounts(t *testing.T) {
+	t.Parallel()
+
+	group := func(names ...string) map[string][]int {
+		out := map[string][]int{}
+
+		for s := range numShards {
+			var pair []string
+			for _, o := range owners(s, nodes(names...)) {
+				pair = append(pair, o.node.name)
+			}
+
+			sort.Strings(pair)
+
+			k := strings.Join(pair, "+")
+			out[k] = append(out[k], s)
+		}
+
+		return out
+	}
+
+	t.Logf("3 nodes: %v", group("node-1", "node-2", "node-3"))
+
+	before, after := group("node-1", "node-3"), group("node-1", "node-2", "node-3")
+	held := map[string]int{}
+
+	for k, v := range after {
+		for n := range strings.SplitSeq(k, "+") {
+			held[n] += len(v)
+		}
+	}
+
+	t.Logf("2 nodes: %v", before)
+	t.Logf("join: shards held per node after: %v", held)
 }
 
 func waitUntil(t *testing.T, ok func() bool) {

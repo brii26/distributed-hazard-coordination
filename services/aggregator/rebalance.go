@@ -181,26 +181,7 @@ func (r *rebalancer) settle(ctx context.Context, shard int, own []copyRef, live 
 			return false
 		}
 
-		copied := false
-
-		for _, o := range own {
-			for _, h := range live {
-				hs, os := stats[h.name][shard], stats[o.node.name][shard]
-				if h.name == o.node.name || hs.count == 0 || hs.digest == os.digest {
-					continue
-				}
-
-				if err := r.copyShard(ctx, shard, h, o.node); err != nil {
-					withID("-").Warn("rebalance copy failed", "shard", shard, "from", h.name, "to", o.node.name, "error", err.Error())
-
-					continue
-				}
-
-				copiedFrom[h.name], copied = true, true
-			}
-		}
-
-		if copied {
+		if r.fillOwners(ctx, shard, own, live, stats, copiedFrom) {
 			r.rescan(ctx, live, stats)
 		}
 
@@ -219,6 +200,41 @@ func (r *rebalancer) settle(ctx context.Context, shard int, own []copyRef, live 
 		r.rescan(ctx, live, stats)
 	}
 
+	if !r.markOwners(ctx, shard, own, stats) {
+		return false
+	}
+
+	r.dropDisplaced(ctx, shard, own, live, stats, copiedFrom, allOK)
+
+	return true
+}
+
+// Copies into each owner from every holder whose digest differs. True if any page was copied.
+func (r *rebalancer) fillOwners(ctx context.Context, shard int, own []copyRef, live []*node, stats map[string]map[int]shardStat, copiedFrom map[string]bool) bool {
+	copied := false
+
+	for _, o := range own {
+		for _, h := range live {
+			hs, os := stats[h.name][shard], stats[o.node.name][shard]
+			if h.name == o.node.name || hs.count == 0 || hs.digest == os.digest {
+				continue
+			}
+
+			if err := r.copyShard(ctx, shard, h, o.node); err != nil {
+				withID("-").Warn("rebalance copy failed", "shard", shard, "from", h.name, "to", o.node.name, "error", err.Error())
+
+				continue
+			}
+
+			copiedFrom[h.name], copied = true, true
+		}
+	}
+
+	return copied
+}
+
+// Sets the synced mark on every owner that lacks it.
+func (r *rebalancer) markOwners(ctx context.Context, shard int, own []copyRef, stats map[string]map[int]shardStat) bool {
 	for _, o := range own {
 		st := stats[o.node.name][shard]
 		if st.synced {
@@ -234,8 +250,6 @@ func (r *rebalancer) settle(ctx context.Context, shard int, own []copyRef, live 
 		st.synced = true
 		stats[o.node.name][shard] = st
 	}
-
-	r.dropDisplaced(ctx, shard, own, live, stats, copiedFrom, allOK)
 
 	return true
 }
@@ -370,13 +384,19 @@ func (r *rebalancer) writeMetrics(w io.Writer, leader bool) {
 		return
 	}
 
-	fmt.Fprintf(w, "# TYPE store_shards_underreplicated gauge\nstore_shards_underreplicated %d\n", r.under.Load())
-	fmt.Fprintf(w, "# TYPE store_shards_misplaced gauge\nstore_shards_misplaced %d\n", r.misplaced.Load())
-	fmt.Fprintf(w, "# TYPE store_repair_rows_total counter\nstore_repair_rows_total %d\n", r.repairRows.Load())
-	fmt.Fprint(w, "# TYPE store_shard_rows gauge\n")
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "# TYPE store_shards_underreplicated gauge\nstore_shards_underreplicated %d\n", r.under.Load())
+	fmt.Fprintf(&b, "# TYPE store_shards_misplaced gauge\nstore_shards_misplaced %d\n", r.misplaced.Load())
+	fmt.Fprintf(&b, "# TYPE store_repair_rows_total counter\nstore_repair_rows_total %d\n", r.repairRows.Load())
+	b.WriteString("# TYPE store_shard_rows gauge\n")
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	defer func() {
+		r.mu.Unlock()
+
+		_, _ = io.WriteString(w, b.String())
+	}()
 
 	names := make([]string, 0, len(r.rowGauge))
 	for name := range r.rowGauge {
@@ -388,7 +408,7 @@ func (r *rebalancer) writeMetrics(w io.Writer, leader bool) {
 	for _, name := range names {
 		for sh := range numShards {
 			if c, ok := r.rowGauge[name][sh]; ok {
-				fmt.Fprintf(w, "store_shard_rows{node=%q,shard=\"%d\"} %d\n", name, sh, c)
+				fmt.Fprintf(&b, "store_shard_rows{node=%q,shard=\"%d\"} %d\n", name, sh, c)
 			}
 		}
 	}
@@ -399,35 +419,10 @@ func scanOn(ctx context.Context, n *node) (map[int]shardStat, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*dbQueryTimeout)
 	defer cancel()
 
-	out := map[int]shardStat{}
-
-	rows, err := n.db.QueryContext(ctx, `
-SELECT shard, count(*), md5(string_agg(hazard_id::text, ',' ORDER BY hazard_id))
-FROM hazard_events WHERE shard IS NOT NULL GROUP BY shard`)
+	out, err := digestsOn(ctx, n.db)
 	if err != nil {
 		return nil, err
 	}
-
-	for rows.Next() {
-		var (
-			sh int
-			st shardStat
-		)
-
-		if err := rows.Scan(&sh, &st.count, &st.digest); err != nil {
-			_ = rows.Close()
-
-			return nil, err
-		}
-
-		out[sh] = st
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	_ = rows.Close()
 
 	synced, err := syncedShards(ctx, n.db)
 	if err != nil {
@@ -442,6 +437,34 @@ FROM hazard_events WHERE shard IS NOT NULL GROUP BY shard`)
 
 	// A synced empty shard has no hazard rows: its digest is the empty string, same as a node with no row.
 	return out, nil
+}
+
+func digestsOn(ctx context.Context, db *sql.DB) (map[int]shardStat, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT shard, count(*), md5(string_agg(hazard_id::text, ',' ORDER BY hazard_id))
+FROM hazard_events WHERE shard IS NOT NULL GROUP BY shard`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	out := map[int]shardStat{}
+
+	for rows.Next() {
+		var (
+			sh int
+			st shardStat
+		)
+
+		if err := rows.Scan(&sh, &st.count, &st.digest); err != nil {
+			return nil, err
+		}
+
+		out[sh] = st
+	}
+
+	return out, rows.Err()
 }
 
 // The shards a node has marked synced.
