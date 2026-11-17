@@ -26,6 +26,7 @@ type itAgg struct {
 	read             aggregatorpb.AggregatorClient
 	bmkgURL, bmkgKey string
 	pvmbgURL         string
+	pvmbgSecret      string
 }
 
 func aggIntegration(t *testing.T) itAgg {
@@ -53,7 +54,7 @@ func aggIntegration(t *testing.T) itAgg {
 	return itAgg{
 		db: db, read: aggregatorpb.NewAggregatorClient(conn),
 		bmkgURL: os.Getenv("IT_BMKG_URL"), bmkgKey: os.Getenv("IT_BMKG_KEY"),
-		pvmbgURL: os.Getenv("IT_PVMBG_URL"),
+		pvmbgURL: os.Getenv("IT_PVMBG_URL"), pvmbgSecret: os.Getenv("IT_PVMBG_CLIENT_SECRET"),
 	}
 }
 
@@ -162,6 +163,7 @@ func TestIntegrationBMKGKeyIsAcceptedAndRejected(t *testing.T) {
 		want      int
 	}{
 		{"missing key", "", http.StatusUnauthorized},
+		{"another institution's key", e.pvmbgSecret, http.StatusForbidden},
 		{"wrong key", "not-the-key", http.StatusForbidden},
 		{"the Aggregator's key", e.bmkgKey, http.StatusOK},
 	}

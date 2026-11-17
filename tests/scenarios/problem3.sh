@@ -9,8 +9,8 @@ login op "$SEED_OPERATOR_EMAIL" "$SEED_OPERATOR_PASSWORD" >/dev/null
 step "Each source accepts only its own credentials"
 show "curl \$BMKG/seismic-events (no key)"
 expect "BMKG without a key" "$(code "$BMKG/seismic-events")" 401
-show "curl -H \"X-BMKG-Key: wrong-key\" \$BMKG/seismic-events"
-expect "BMKG with a wrong key" "$(code -H "X-BMKG-Key: wrong-key" "$BMKG/seismic-events")" 403
+show "curl -H \"X-BMKG-Key: \$PVMBG_OAUTH_CLIENT_SECRET\" \$BMKG/seismic-events"
+expect "BMKG with the PVMBG client secret" "$(code -H "X-BMKG-Key: $PVMBG_OAUTH_CLIENT_SECRET" "$BMKG/seismic-events")" 403
 show "curl -H \"Authorization: Bearer \$BMKG_API_KEY\" \$PVMBG/volcanic-reports"
 expect "PVMBG with the BMKG key as token" "$(code -H "Authorization: Bearer $BMKG_API_KEY" "$PVMBG/volcanic-reports")" 401
 

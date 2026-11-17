@@ -125,10 +125,10 @@ No key: the answer is 401.
 curl -s -o /dev/null -w 'BMKG, no key: %{http_code}\n' $BMKG/seismic-events
 ```
 
-A wrong key sent to BMKG: the answer is 403.
+PVMBG's OAuth client secret sent to BMKG: the answer is 403.
 
 ```bash
-curl -s -o /dev/null -w 'BMKG, wrong key: %{http_code}\n' -H "X-BMKG-Key: wrong-key" $BMKG/seismic-events
+curl -s -o /dev/null -w 'BMKG, PVMBG client secret: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_OAUTH_CLIENT_SECRET" $BMKG/seismic-events
 ```
 
 BMKG key sent as a PVMBG token: the answer is 401.

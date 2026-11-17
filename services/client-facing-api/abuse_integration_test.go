@@ -35,8 +35,8 @@ var abClient = &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport
 type abEnv struct {
 	itEnv
 
-	bmkgURL, bmkgKey, pvmbgURL string
-	dbUser, dbName             string
+	bmkgURL, bmkgKey, pvmbgURL, pvmbgSecret string
+	dbUser, dbName                          string
 }
 
 func abuseEnv(t *testing.T) abEnv {
@@ -54,8 +54,8 @@ func abuseEnv(t *testing.T) abEnv {
 			operatorPassword: os.Getenv("IT_OPERATOR_PASSWORD"),
 		},
 		bmkgURL: os.Getenv("IT_BMKG_URL"), bmkgKey: os.Getenv("IT_BMKG_KEY"),
-		pvmbgURL: os.Getenv("IT_PVMBG_URL"),
-		dbUser:   os.Getenv("IT_CANONICAL_USER"), dbName: os.Getenv("IT_CANONICAL_DB"),
+		pvmbgURL: os.Getenv("IT_PVMBG_URL"), pvmbgSecret: os.Getenv("IT_PVMBG_CLIENT_SECRET"),
+		dbUser: os.Getenv("IT_CANONICAL_USER"), dbName: os.Getenv("IT_CANONICAL_DB"),
 	}
 }
 
@@ -616,7 +616,7 @@ func TestAbuseCredentialsDoNotCrossDomains(t *testing.T) {
 		{"bmkg key on pvmbg", e.pvmbgURL + "/volcanic-reports", map[string]string{"X-BMKG-Key": e.bmkgKey}},
 		{"bmkg key as bearer on pvmbg", e.pvmbgURL + "/volcanic-reports", map[string]string{"Authorization": "Bearer " + e.bmkgKey}},
 		{"bearer on bmkg", e.bmkgURL + "/seismic-events", map[string]string{"Authorization": "Bearer " + e.bmkgKey}},
-		{"wrong key as bmkg key", e.bmkgURL + "/seismic-events", map[string]string{"X-BMKG-Key": "wrong-key"}},
+		{"pvmbg client secret as bmkg key", e.bmkgURL + "/seismic-events", map[string]string{"X-BMKG-Key": e.pvmbgSecret}},
 		{"no credential on bmkg", e.bmkgURL + "/seismic-events", nil},
 		{"no credential on pvmbg", e.pvmbgURL + "/volcanic-reports", nil},
 	}
