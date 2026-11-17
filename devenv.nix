@@ -9,6 +9,8 @@
 let
   # Kubernetes JSON schemas for offline manifest checks (kubeconform), fetched by Nix.
   k8sSchemaVer = "v1.34.1-standalone-strict";
+  # Pinned commit of yannh/kubernetes-json-schema (a branch name like master is mutable).
+  k8sSchemaRev = "6ea44f54bb5cdedb2f61fba42c9b342e97959262";
   k8sSchemaHashes = {
     "deployment-apps-v1" = "sha256-krejM6SRJPUwAJXT53hsogOLfW5gLDCfc+kGMTd+Swo=";
     "daemonset-apps-v1" = "sha256-fNQY+BVhxg0G+r6bbRFF8q7/jtGSwMncL7KAKlH3jCE=";
@@ -21,7 +23,7 @@ let
     lib.mapAttrsToList (name: hash: {
       name = "${name}.json";
       path = pkgs.fetchurl {
-        url = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/${k8sSchemaVer}/${name}.json";
+        url = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/${k8sSchemaRev}/${k8sSchemaVer}/${name}.json";
         inherit hash;
       };
     }) k8sSchemaHashes
