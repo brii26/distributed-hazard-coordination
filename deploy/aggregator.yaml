@@ -95,6 +95,13 @@ spec:
                 secretKeyRef:
                   name: bmkg-credentials
                   key: api_key
+            - name: PANTAI_BASE_URL
+              value: http://sensor-pantai:8080
+            - name: PANTAI_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pantai-token
+                  key: token
             - name: PVMBG_BASE_URL
               value: http://pvmbg-mock:8082
             - name: PVMBG_OAUTH_CLIENT_ID

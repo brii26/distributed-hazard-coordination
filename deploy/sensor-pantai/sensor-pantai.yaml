@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: sensor-pantai
+spec:
+  selector:
+    role: sensor
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: sensor-pantai
+  labels:
+    role: sensor
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: sensor-pantai
+  template:
+    metadata:
+      labels:
+        app: sensor-pantai
+        role: sensor
+    spec:
+      containers:
+        - name: sensor
+          image: sustuna/sensor-pantai@sha256:51fbd90d3891ad6e9f5768ad330ffb65205644cb29e50da65c7538f2e0b4397d
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PANTAI_PROFILE
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PANTAI_PROFILE
+            - name: PANTAI_SEED
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PANTAI_SEED
+            - name: PANTAI_SPEED
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PANTAI_SPEED
+            - name: PANTAI_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pantai-token
+                  key: token
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
