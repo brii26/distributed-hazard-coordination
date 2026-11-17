@@ -37,6 +37,8 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `RABBITMQ_USER`, `RABBITMQ_PASSWORD` | rabbitmq, aggregator, consumers | hazard, change-me | Broker login. The user is created at container start from these, change the password in `.env` and recreate with `docker compose down -v` |
 | `RABBITMQ_MANAGEMENT_PORT` | rabbitmq | 15672 | Host port of the RabbitMQ management UI |
 | `RABBITMQ_EXCHANGE` | aggregator, consumers | hazard.events | Fanout exchange name; must match `infra/rabbitmq/definitions.json` |
+| `CRITICAL_QUEUE_NAME` | aggregator, notifier | critical-alerts | Durable queue for critical alerts; must match `infra/rabbitmq/definitions.json.tpl` |
+| `NOTIFIER_URL` | client-facing-api | empty | Base URL of the Notifier. When set, `GET /alerts/stream` relays its alert stream to Lapangan and Operator, when empty the route is off. Compose and `deploy/client-facing-api.yaml` set `http://notifier:8094` |
 | `POLL_INTERVAL_MS` | aggregator | 3000 | Poll interval per source |
 | `POLL_TIMEOUT_MS` | aggregator | 4000 | Timeout of one poll call |
 | `CB_FAILURE_THRESHOLD` | aggregator | 3 | Failed polls in a row before the circuit breaker opens |

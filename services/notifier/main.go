@@ -1,4 +1,4 @@
-// Command notifier consumes HazardEvents from the fanout exchange and alerts the field teams once per (hazard_id, severity).
+// Command notifier consumes HazardEvents from the fanout exchange and alerts the field teams once per (hazard_id, severity). Critical coastal alerts come from their own queue and are pushed over a server-sent event stream.
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -102,6 +103,8 @@ func run() error {
 	}()
 
 	c := &consumer{url: url, exchange: envOr("RABBITMQ_EXCHANGE", defaultExchange), queue: envOr("QUEUE_NAME", defaultQueue)}
+	cc := &consumer{url: url, queue: envOr("CRITICAL_QUEUE_NAME", defaultCriticalQueue), requeueWait: criticalRequeueWait}
+	hub, metrics := newAlertHub(), newCriticalMetrics()
 	done := make(chan struct{})
 
 	dedup, err := openDedup(envOr("DEDUP_STORE_PATH", defaultDedupPath))
@@ -113,10 +116,17 @@ func run() error {
 
 		c.handle = (&notifier{dedup: dedup, send: logAlert}).handle
 
+		cc.handle = newCriticalAlerts(dedup, hub, metrics).handle
+
+		var wg sync.WaitGroup
+
+		wg.Go(func() { c.run(ctx) })
+		wg.Go(func() { cc.run(ctx) })
+
 		go func() {
 			defer close(done)
 
-			c.run(ctx)
+			wg.Wait()
 		}()
 	}
 
@@ -125,9 +135,13 @@ func run() error {
 		return err
 	}
 
+	mux := newMux(dedup != nil, func() bool { return c.connected() && cc.connected() })
+	mux.Handle("GET /alerts/stream", hub)
+	mux.Handle("GET /metrics", metrics)
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           newMux(dedup != nil, c.connected),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

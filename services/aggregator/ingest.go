@@ -26,6 +26,8 @@ type ingest struct {
 	upsert              func(context.Context, HazardEvent) (bool, error)
 	publish             func(ctx context.Context, h HazardEvent, correlationID string)
 	retryBase, retryMax time.Duration
+	// Set, a critical event is written here before its upsert so it survives a crash or a broker outage.
+	stage func(ctx context.Context, h HazardEvent, correlationID string) error
 	// Called after every batch with whether all of it was stored. Nil for sources that keep no durable cursor.
 	afterBatch func(ctx context.Context, res pollResult, clean bool)
 	// Called when a store rejected a write as stale, with the batch's token. Nil without a lease.
@@ -71,6 +73,20 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	clean := err == nil
 
 	for _, h := range events {
+		if i.stage != nil && isCritical(h) {
+			if err := i.stageCritical(ctx, h, res.correlationID); err != nil {
+				l.Warn("ingest critical stage failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
+
+				clean = false
+
+				if ctx.Err() != nil {
+					break
+				}
+
+				continue
+			}
+		}
+
 		c, err := i.write(ctx, h)
 		if errors.Is(err, errFenced) {
 			l.Warn("fenced", "source", i.name, "source_ref_id", h.SourceRefID, "epoch", res.epoch, "error", err.Error())
@@ -124,6 +140,24 @@ func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 		select {
 		case <-ctx.Done():
 			return false, err
+		case <-time.After(min(i.retryBase*time.Duration(1<<min(attempt, 10)), i.retryMax)):
+		}
+	}
+}
+
+// Stages h with the same retry as the upsert. A failure skips the upsert too, so the record is polled and staged again.
+func (i *ingest) stageCritical(ctx context.Context, h HazardEvent, correlationID string) error {
+	for attempt := 0; ; attempt++ {
+		err := i.stage(context.WithoutCancel(ctx), h, correlationID)
+		if err == nil || isPermanent(err) {
+			return err
+		}
+
+		withID(correlationID).Warn("ingest critical stage retrying", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
+
+		select {
+		case <-ctx.Done():
+			return err
 		case <-time.After(min(i.retryBase*time.Duration(1<<min(attempt, 10)), i.retryMax)):
 		}
 	}

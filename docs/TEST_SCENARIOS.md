@@ -251,3 +251,14 @@ Check the Aggregator. Its uptime shows the producer was not restarted.
 docker compose ps aggregator --format '{{.Status}}'
 ```
 
+
+## Problem 5: critical alerts in 5 seconds without loss
+
+Needs only the store, the broker, the Aggregator and the Notifier. The script stages critical observations in the Aggregator's outbox (as a critical Sensor Pantai observation would be), kills RabbitMQ and the Notifier at different moments, and checks that every observation is alerted exactly once and that p95 latency in normal operation is 5000 ms or less.
+
+```bash
+docker compose up -d --build --wait canonical-store rabbitmq aggregator notifier
+N=90 tests/scenarios/critical-alerts.sh
+```
+
+How it works: a critical event is written to the `critical_outbox` table before its upsert, a relay publishes it persistent with a publisher confirm to the durable queue `critical-alerts`, and the Notifier alerts (log line plus push on `GET /alerts/stream`, relayed by the Client-Facing API) before it acks. Metrics on the Notifier's `/metrics`: `critical_alert_latency_seconds` (from ingest to delivery), `critical_events_seen_total`, `critical_alerts_delivered_total`.

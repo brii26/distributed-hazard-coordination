@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log"
@@ -37,10 +38,12 @@ const (
 	drop                   // can never be processed, don't redeliver
 )
 
-// Keeps one subscription alive: its own durable queue bound to the fanout exchange, manual ack after handle, reconnect with a growing delay. The Aggregator never knows it exists.
+// Keeps one subscription alive: its own durable queue bound to the fanout exchange (an empty exchange means no binding, for a queue the publisher sends to directly), manual ack after handle, reconnect with a growing delay. The Aggregator never knows it exists.
 type consumer struct {
 	url, exchange, queue string
 	handle               func(message) outcome
+	// Zero means requeueDelay.
+	requeueWait time.Duration
 
 	up atomic.Bool
 }
@@ -93,8 +96,10 @@ func (c *consumer) session(ctx context.Context) (established bool, err error) {
 		return false, err
 	}
 
-	if err := ch.QueueBind(c.queue, "", c.exchange, false, nil); err != nil {
-		return false, err
+	if c.exchange != "" {
+		if err := ch.QueueBind(c.queue, "", c.exchange, false, nil); err != nil {
+			return false, err
+		}
 	}
 
 	if err := ch.Qos(prefetch, 0, false); err != nil {
@@ -137,7 +142,7 @@ func (c *consumer) dispatch(d amqp.Delivery) {
 		err = d.Ack(false)
 		withID(d.CorrelationId).Info("ack sent", "delivery_tag", d.DeliveryTag)
 	case requeue:
-		time.Sleep(requeueDelay)
+		time.Sleep(cmp.Or(c.requeueWait, requeueDelay))
 
 		err = d.Nack(false, true)
 		withID(d.CorrelationId).Warn("nack sent", "requeue", "true", "delivery_tag", d.DeliveryTag)
