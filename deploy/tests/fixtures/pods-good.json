@@ -1,0 +1,242 @@
+{
+  "kind": "List",
+  "items": [
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "agg-1",
+        "labels": {
+          "app": "agg-1",
+          "role": "aggregator"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "256Mi"
+              },
+              "limits": {
+                "memory": "512Mi"
+              }
+            }
+          }
+        ],
+        "initContainers": [
+          {
+            "name": "i",
+            "resources": {
+              "requests": {
+                "memory": "16Mi"
+              },
+              "limits": {
+                "memory": "64Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "db-0",
+        "labels": {
+          "app": "db-0",
+          "role": "store"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "512Mi"
+              },
+              "limits": {
+                "memory": "1Gi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "mq-0",
+        "labels": {
+          "app": "mq-0",
+          "role": "broker"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "512Mi"
+              },
+              "limits": {
+                "memory": "1024Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "n-1",
+        "labels": {
+          "app": "n-1",
+          "role": "consumer"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "api-1",
+        "labels": {
+          "app": "api-1",
+          "role": "api"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "mock-1",
+        "labels": {
+          "app": "mock-1",
+          "role": "mock"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "64Mi"
+              },
+              "limits": {
+                "memory": "128Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "sensor-1",
+        "labels": {
+          "app": "sensor-1",
+          "role": "sensor"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "web-1",
+        "labels": {
+          "app": "web-1",
+          "role": "other"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    }
+  ]
+}

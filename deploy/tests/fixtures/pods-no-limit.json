@@ -1,0 +1,30 @@
+{
+  "kind": "List",
+  "items": [
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "nolimit-1",
+        "labels": {
+          "app": "nolimit-1",
+          "role": "other"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    }
+  ]
+}

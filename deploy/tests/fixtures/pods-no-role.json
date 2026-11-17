@@ -1,0 +1,60 @@
+{
+  "kind": "List",
+  "items": [
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "ok-1",
+        "labels": {
+          "app": "ok-1",
+          "role": "api"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    },
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "nolabel-1",
+        "labels": {
+          "app": "nolabel-1"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    }
+  ]
+}

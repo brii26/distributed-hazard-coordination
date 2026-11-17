@@ -1,0 +1,33 @@
+{
+  "kind": "List",
+  "items": [
+    {
+      "kind": "Pod",
+      "metadata": {
+        "name": "weird-1",
+        "labels": {
+          "app": "weird-1",
+          "role": "database"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "name": "c",
+            "resources": {
+              "requests": {
+                "memory": "128Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            }
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running"
+      }
+    }
+  ]
+}
