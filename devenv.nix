@@ -6,6 +6,27 @@
   ...
 }:
 
+let
+  # Kubernetes JSON schemas for offline manifest checks (kubeconform), fetched by Nix.
+  k8sSchemaVer = "v1.34.1-standalone-strict";
+  k8sSchemaHashes = {
+    "deployment-apps-v1" = "sha256-krejM6SRJPUwAJXT53hsogOLfW5gLDCfc+kGMTd+Swo=";
+    "daemonset-apps-v1" = "sha256-fNQY+BVhxg0G+r6bbRFF8q7/jtGSwMncL7KAKlH3jCE=";
+    "service-v1" = "sha256-i/AZhU2u1RHnwXSJaomBc/pl2I7Fk3xoejcwPUzJNRs=";
+    "configmap-v1" = "sha256-4Ord69Z3wIqgkrLaImTYasT8NO7RErn6wpRbPwDB6bE=";
+    "namespace-v1" = "sha256-Mk+uZ3uY0abVQ0DbDDNNBT6P+6/Os/czJuQd4mENWEM=";
+    "secret-v1" = "sha256-3nYcywa9HSxkH7Vzl/YbaOf/U6OE8IF85A5d7YzuhvM=";
+  };
+  k8sSchemas = pkgs.linkFarm "k8s-schemas" (
+    lib.mapAttrsToList (name: hash: {
+      name = "${name}.json";
+      path = pkgs.fetchurl {
+        url = "https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/${k8sSchemaVer}/${name}.json";
+        inherit hash;
+      };
+    }) k8sSchemaHashes
+  );
+in
 {
   # https://devenv.sh/basics/
   env.GREET = "devenv";
@@ -20,6 +41,7 @@
     pkgs.poppler-utils
     pkgs.graphviz
     pkgs.kubectl
+    pkgs.kubeconform
   ];
 
   # https://devenv.sh/languages/
@@ -37,6 +59,8 @@
   # https://devenv.sh/scripts/
   scripts.tex-build.exec = "for f in doc/latex/figures/*.dot; do [ -e \"$f\" ] && dot -Tpdf \"$f\" -o \"\${f%.dot}.pdf\"; done; latexmk -xelatex -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex && cp doc/latex/build/main.pdf doc/latex/build/IF4031_M1_Ingress.pdf";
   scripts.tex-watch.exec = "for f in doc/latex/figures/*.dot; do [ -e \"$f\" ] && dot -Tpdf \"$f\" -o \"\${f%.dot}.pdf\"; done; latexmk -xelatex -pvc -view=none -cd -outdir=build -interaction=nonstopmode -synctex=1 doc/latex/main.tex";
+  # Validate every k8s manifest in deploy/ offline against the pinned schemas.
+  scripts.k8s-check.exec = "kubeconform -strict -summary -schema-location '${k8sSchemas}/{{.ResourceKind}}{{.KindSuffix}}.json' $(git ls-files 'deploy/*.yaml' 'deploy/**/*.yaml')";
   # scripts.hello.exec = ''
   #   echo hello from $GREET
   # '';
