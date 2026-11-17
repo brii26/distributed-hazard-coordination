@@ -68,9 +68,19 @@
       "targets": [{"refId": "A", "legendFormat": "{{pod}}",
         "expr": "kube_pod_status_ready{condition=\"true\"}"}]
     },
-    {"id": 8, "type": "row", "title": "Lag", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}, "panels": []},
-    {"id": 9, "type": "row", "title": "Breaker", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25}, "panels": []},
-    {"id": 10, "type": "row", "title": "Shards", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26}, "panels": []},
-    {"id": 11, "type": "row", "title": "Replicas", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27}, "panels": []}
+    {
+      "id": 12, "type": "stat", "title": "Deployments short of desired replicas (red = scaled down or failing)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 24},
+      "options": {"colorMode": "background", "textMode": "value_and_name", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"min": 0, "decimals": 0, "unit": "short",
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "targets": [{"refId": "A", "legendFormat": "{{deployment}}",
+        "expr": "kube_deployment_spec_replicas - kube_deployment_status_replicas_available"}]
+    },
+    {"id": 8, "type": "row", "title": "Lag", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 30}, "panels": []},
+    {"id": 9, "type": "row", "title": "Breaker", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31}, "panels": []},
+    {"id": 10, "type": "row", "title": "Shards", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}, "panels": []},
+    {"id": 11, "type": "row", "title": "Replicas", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}, "panels": []}
   ]
 }
