@@ -112,13 +112,24 @@ func isPermanent(err error) bool {
 type pipeline struct {
 	poller *poller
 	ingest *ingest
+	// Set, the poller only runs while this lease is held.
+	lease *elector
 }
 
 // Runs both stages until ctx is done and ingest has drained.
 func (p pipeline) run(ctx context.Context) {
 	var wg sync.WaitGroup
 
-	wg.Go(func() { p.poller.run(ctx) })
+	if p.lease == nil {
+		wg.Go(func() { p.poller.run(ctx) })
+	} else {
+		wg.Go(func() {
+			defer close(p.poller.out)
+
+			p.lease.run(ctx, p.poller.loop)
+		})
+	}
+
 	wg.Go(func() { p.ingest.run(ctx) })
 
 	wg.Wait()

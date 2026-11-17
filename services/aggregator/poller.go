@@ -39,6 +39,9 @@ type poller struct {
 	breaker  *breaker
 	out      chan<- pollResult
 
+	// loadSince reads the stored cursor. Set, it is read at the start of every cycle and a new lease term starts from it.
+	loadSince func(context.Context) (time.Time, error)
+
 	// since is only touched by the run goroutine.
 	// ponytail: the cursor lives in memory, so a restart re-reads everything once (upsert dedup makes that safe). Assumes source timestamps never go backwards.
 	since time.Time
@@ -52,6 +55,15 @@ func nextWait(interval, elapsed time.Duration) time.Duration {
 // Polls until ctx is done, then closes out.
 func (p *poller) run(ctx context.Context) {
 	defer close(p.out)
+
+	p.loop(ctx)
+}
+
+// Polls until ctx is done and leaves out open, so a later lease term can use it again.
+func (p *poller) loop(ctx context.Context) {
+	if p.loadSince != nil {
+		p.since = time.Time{}
+	}
 
 	for {
 		start := time.Now()
@@ -81,6 +93,14 @@ func (p *poller) pollOnce(ctx context.Context) {
 	}
 
 	l := withID(id)
+
+	if p.loadSince != nil {
+		if t, err := p.loadSince(ctx); err != nil {
+			l.Warn("poll cursor read failed", "source", p.name, "error", err.Error())
+		} else if t.After(p.since) {
+			p.since = t
+		}
+	}
 
 	start := time.Now()
 	res, err := p.fetch(withCorrelation(ctx, id), p.since)
