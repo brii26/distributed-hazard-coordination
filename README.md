@@ -75,6 +75,7 @@ Every box except the client is its own container. The nginx container serves the
 | `dashboard-updater`, `notifier`, `audit-logger` | Independent consumers, each with its own dedup store |
 | `web-frontend` | SvelteKit static app served by nginx, which also proxies `/api/*` |
 | `jaeger`, `prometheus` | Traces (the trace ID is the `correlation_id` in logs) and request metrics |
+| `grafana` (k8s only) | One dashboard of all services. `kubectl port-forward svc/grafana 3000`, then http://localhost:3000, login `admin`, password from `deploy/make-secrets.sh` (see [OBSERVABILITY.md](docs/OBSERVABILITY.md)) |
 
 ## Tech stack
 

@@ -66,3 +66,19 @@ count by (service_name) (increase(traces_span_metrics_calls_total[10m]) > 0)
 Notes: the error-ratio query returns no data until at least one ERROR span exists. After a Jaeger or
 Prometheus restart the series are empty until the next span arrives, so alerts can fire on an idle stack.
 Resource limits on k8s: Jaeger 128Mi/256Mi with `max_traces: 15000` (in-memory), Prometheus 128Mi/256Mi.
+
+## Grafana dashboard (k8s)
+
+One dashboard, "Hazard Coordination Overview", is provisioned from ConfigMaps (`deploy/observability/grafana/`),
+so nothing is clicked by hand and a Grafana restart loses nothing. Edit the JSON in git, not in the UI.
+
+```bash
+kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/grafana 3000
+# http://localhost:3000, login admin, password printed once by deploy/make-secrets.sh
+# (read it again: kubectl -n sistem-informasi-kebencanaan-bnpb get secret grafana-admin -o jsonpath='{.data.password}' | base64 -d)
+```
+
+Panels: request rate, error rate, p50 and p95 latency per service (span metrics), a traffic-based "service alive",
+pod restarts and pod ready (from `kube-state-metrics`, a second Prometheus job). The rows Lag, Breaker, Shards and
+Replicas are collapsed and empty, for the issues that own those metrics. Stopping a service turns its pod
+red in "Pod ready" on the next 15 s scrape. Limits: Grafana 128Mi/256Mi, kube-state-metrics 64Mi/128Mi.

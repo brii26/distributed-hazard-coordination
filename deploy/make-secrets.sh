@@ -58,3 +58,12 @@ else
     --from-file=key=<(printf '%s' "change-me") --dry-run=client -o yaml | apply
 fi
 echo "secret/pantai-key"
+
+if ! kubectl get secret grafana-admin --namespace "$NAMESPACE" >/dev/null 2>&1; then
+  pw="$(openssl rand -hex 16)"
+  kubectl create secret generic grafana-admin --namespace "$NAMESPACE" \
+    --from-literal=password="$pw" --dry-run=client -o yaml | apply
+  echo "secret/grafana-admin (login admin, password $pw, shown once)"
+else
+  echo "secret/grafana-admin (kept)"
+fi
