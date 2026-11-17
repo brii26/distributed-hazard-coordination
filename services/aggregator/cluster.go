@@ -18,7 +18,8 @@ type cluster struct {
 	write func(ctx context.Context, n *node, h HazardEvent) (bool, error)
 	read  func(ctx context.Context, n *node, id string) (*HazardEvent, error)
 
-	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error)
+	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error)
+	idsShard  func(ctx context.Context, n *node, shard int, source string) ([]string, error)
 
 	mu    sync.Mutex
 	dirty map[int]bool
@@ -29,8 +30,11 @@ func newCluster(live func() []*node) *cluster {
 		live:  live,
 		write: func(ctx context.Context, n *node, h HazardEvent) (bool, error) { return upsertOn(ctx, n.db, h) },
 		read:  func(ctx context.Context, n *node, id string) (*HazardEvent, error) { return getOn(ctx, n.db, id) },
-		listShard: func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error) {
-			return listShardOn(ctx, n.db, shard, after, limit)
+		listShard: func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error) {
+			return listShardOn(ctx, n.db, shard, after, limit, f)
+		},
+		idsShard: func(ctx context.Context, n *node, shard int, source string) ([]string, error) {
+			return idsShardOn(ctx, n.db, shard, source)
 		},
 		dirty: map[int]bool{},
 	}
