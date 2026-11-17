@@ -100,10 +100,34 @@ The Milestone 2 backlog, same idea as above. Each issue has real `blocked-by` li
 
 ### Ready now (no open blockers)
 
+These have no blocking dependency. Dependencies are only set when the core of an issue cannot start without the other one. Needs that only apply to the final check on the cluster are written in each issue's Notes, not as a link.
+
 - #268 Set up a 2-node k3s cluster (VMs) and write the topology doc
+- #270 Base namespace, Secrets and ConfigMaps
 - #277 PVMBG schema admin endpoint without X-Admin-Key
+- #279 Latency, error and throughput metrics per service in Prometheus
+- #281 Verify traces and correlation ID across services on Kubernetes
+- #282 Spike: decide the time source and lease mechanism for single polling
+- #289 Spike: decide the storage engine and the shard and replica strategy
+- #295 Audit API events and checksum
+- #297 Analytics dashboard with an incomplete marker
+- #299 Schema policy and a validator in the mapper
+- #300 Store for failed messages
+- #302 Harden against malformed messages
+- #305 POST /field-reports answers 202 with a durable inbox
 - #308 Spike: read the live satellite feed and record its behavior (needs the group token from the assistants)
+- #309 SSE client with offset tracking and reconnect
 - #310 Fire clusterer as a pure function with unit tests
+- #317 Sensor Pantai manifest and token Secret
+- #318 Sensor client with a restart safe cursor and dedup
+- #319 Contract validator and quarantine with reasons
+- #322 Priority load shedding for Tim Lapangan over Media
+- #326 Bonus: AI component that stays off the alert path
+- #330 Report: general part
+- #331 Report: Problem 1 and Problem 2
+- #332 Report: Problem 3 and Problem 4
+- #333 Report: Problem 5 and the game day post-mortem
+- #334 Report: bonus sections and the AI usage form
 
 ### Waiting on the assistants
 
@@ -208,93 +232,77 @@ graph TD
   336["#336 Z9 Record the demo video and submit the l.."]
 
   268 --> 269
-  268 --> 270
+  269 --> 287
+  269 --> 298
+  269 --> 307
   270 --> 271
   270 --> 272
-  271 --> 272
-  272 --> 273
-  272 --> 274
+  270 --> 273
+  270 --> 274
+  271 --> 275
+  272 --> 275
+  272 --> 276
+  272 --> 285
+  272 --> 286
   273 --> 275
+  273 --> 276
+  273 --> 285
   274 --> 275
-  275 --> 276
+  275 --> 325
   277 --> 278
-  275 --> 279
+  278 --> 307
   279 --> 280
-  275 --> 281
-  272 --> 282
+  280 --> 315
+  280 --> 323
   282 --> 283
-  283 --> 284
-  275 --> 285
-  283 --> 285
-  285 --> 286
+  282 --> 284
+  283 --> 287
   284 --> 287
   285 --> 287
-  269 --> 287
-  286 --> 288
-  272 --> 289
+  285 --> 288
+  285 --> 327
+  288 --> 328
   289 --> 290
   290 --> 291
   290 --> 292
-  291 --> 293
+  290 --> 293
   291 --> 294
-  292 --> 295
   291 --> 296
-  292 --> 297
   294 --> 298
-  269 --> 298
-  278 --> 299
-  299 --> 300
+  295 --> 298
+  296 --> 298
+  298 --> 328
   300 --> 301
-  299 --> 302
-  301 --> 303
   300 --> 304
-  274 --> 305
-  305 --> 306
+  301 --> 303
+  302 --> 307
   303 --> 307
   304 --> 307
+  305 --> 306
   306 --> 307
-  269 --> 307
-  308 --> 309
+  307 --> 328
+  309 --> 313
   310 --> 311
   311 --> 312
-  309 --> 313
   312 --> 313
-  313 --> 314
+  312 --> 314
+  313 --> 315
   314 --> 315
-  280 --> 315
   315 --> 316
-  270 --> 317
-  317 --> 318
-  318 --> 319
-  300 --> 319
+  315 --> 328
   318 --> 320
   318 --> 321
-  274 --> 321
-  273 --> 322
-  280 --> 323
-  321 --> 323
   319 --> 324
   320 --> 324
+  321 --> 323
   322 --> 324
   323 --> 324
-  275 --> 325
-  274 --> 326
-  285 --> 327
-  279 --> 327
-  288 --> 328
-  298 --> 328
-  307 --> 328
-  315 --> 328
   324 --> 328
-  328 --> 329
   325 --> 329
   326 --> 329
   327 --> 329
-  329 --> 330
-  329 --> 331
-  329 --> 332
-  329 --> 333
-  330 --> 334
+  328 --> 329
+  329 --> 335
   330 --> 335
   331 --> 335
   332 --> 335
@@ -307,8 +315,8 @@ graph TD
 
 ### Notes on reading this
 
-- **Critical path:** #268 (cluster) leads to the manifests (#270 to #275), which unlock observability (#279 to #281), the Aggregator replicas (#285) and everything that needs a running cluster.
+- **Critical path:** #268 (cluster) and the manifests (#270 to #275) unlock the Aggregator replicas (#285) and the tests that run on the cluster. Observability code (#279, #281), the design spikes (#282, #289) and the report issues (#330 to #334) do not wait for the cluster.
 - **Two design spikes come first inside their problem:** #282 (lease and time source, P2) and #289 (storage engine and sharding, P1). Write the doc and get a review before building on it.
-- **P4 can start without the cluster:** #310 (fire clusterer) is a pure function and #308 (feed spike) only needs the token.
-- **Final chain:** #328 (end to end script) leads to #329 (fresh clone check), then the report issues (#330 to #334), then #335 (tag and release) and #336 (video).
+- **P4 can start without the cluster:** #310 (fire clusterer) is a pure function, #309 (SSE client) can use a fake server, and #308 (feed spike) only needs the token.
+- **Final chain:** #328 (end to end script) leads to #329 (fresh clone check), then #335 (tag and release, also needs the five report issues #330 to #334) and #336 (video). The report issues themselves can be written in parallel with the code.
 - **Bonus issues** (#325 to #327) are required. They block #329 so they cannot be skipped.
