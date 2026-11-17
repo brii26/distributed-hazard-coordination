@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Print the topology declaration for the machine and cluster you are running now,
-# as a markdown table to paste into the report or the README.
-# Read only: it changes nothing.
-#
-# Usage: export KUBECONFIG=<path from k3s.sh>; deploy/cluster/topology.sh
+# Prints the topology declaration as markdown. Read only.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

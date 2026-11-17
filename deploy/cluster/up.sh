@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# Create the two VirtualBox VMs (node-a, node-b) on a private NAT Network.
-# Safe to run again: existing VMs and networks are kept.
-#
-# This script never touches the host network configuration (no routes, no
-# metrics, no interface priority). The VMs live on the VirtualBox NAT Network
-# `k3s-net`, and the host reaches them through port forwards bound to 127.0.0.1.
-#
-# Usage: deploy/cluster/up.sh            create and start the VMs
-#        NODE_RAM_MB=2048 deploy/cluster/up.sh
+# Creates the VirtualBox VMs for the k3s cluster. Safe to run again.
+# Usage: [NODE_COUNT=3] deploy/cluster/up.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,12 +27,10 @@ fi
 
 vm_exists() { VBoxManage showvminfo "$1" >/dev/null 2>&1; }
 
-# NAT Network, no DHCP: the nodes get static addresses from cloud-init.
 if ! VBoxManage natnetwork list | grep -q "^Name:  *$CLUSTER_NET\$"; then
   VBoxManage natnetwork add --netname "$CLUSTER_NET" --network "$CLUSTER_CIDR" --enable --dhcp off
 fi
 
-# Template VM: import the cloud image once, clone it for every node.
 if ! vm_exists "$TEMPLATE_VM"; then
   VBoxManage import "$CLUSTER_OVA" --vsys 0 --vmname "$TEMPLATE_VM" \
     --cpus "$NODE_CPUS" --memory "$NODE_RAM_MB" --basefolder "$VM_DIR" >/dev/null
@@ -47,7 +38,6 @@ fi
 
 [ "$NODE_COUNT" -ge 2 ] && [ "$NODE_COUNT" -le 9 ] || { echo "NODE_COUNT must be 2 to 9" >&2; exit 1; }
 
-# /etc/hosts lines for every node, with a literal backslash-n so cloud-init's printf expands them.
 HOSTS=""
 for i in $(seq "$NODE_COUNT"); do HOSTS+="$(node_ip "$i") $(node_name "$i")\\n"; done
 
@@ -73,8 +63,6 @@ make_seed() { # name ip -> $SEED_DIR/<name>.vdi (cloud-init NoCloud disk, label 
   VBoxManage convertfromraw "$dir/seed.img" "$SEED_DIR/$name.vdi" --format VDI >/dev/null
 }
 
-# Base disk: the cloud image converted to VDI and grown once. A VMDK resized in place
-# does not boot, so every node gets its own VDI copy of this file.
 BASE_DISK="$CLUSTER_WORK_DIR/disks/base.vdi"
 make_base_disk() {
   [ -f "$BASE_DISK" ] && return
@@ -95,8 +83,11 @@ create_node() { # name ip
   make_base_disk
   VBoxManage clonevm "$TEMPLATE_VM" --name "$name" --basefolder "$VM_DIR" --register >/dev/null
   local disk="$CLUSTER_WORK_DIR/disks/$name.vdi"
+  local cloned
+  cloned="$(VBoxManage showvminfo "$name" --machinereadable | sed -n 's/^"SCSI-0-0"="\(.*\)"$/\1/p')"
   VBoxManage storageattach "$name" --storagectl SCSI --port 0 --device 0 --medium none
   VBoxManage storagectl "$name" --name SCSI --remove
+  [ -f "$cloned" ] && VBoxManage closemedium disk "$cloned" --delete >/dev/null
   [ -f "$disk" ] || VBoxManage clonemedium disk "$BASE_DISK" "$disk" --format VDI >/dev/null
   VBoxManage modifyvm "$name" --memory "$NODE_RAM_MB" --cpus "$NODE_CPUS" \
     --nic1 natnetwork --nat-network1 "$CLUSTER_NET" --nictype1 virtio --cableconnected1 on \
@@ -109,7 +100,6 @@ create_node() { # name ip
 
 for i in $(seq "$NODE_COUNT"); do create_node "$(node_name "$i")" "$(node_ip "$i")"; done
 
-# Port forwards, bound to the loopback address only (not reachable from the LAN).
 fwd() { # rule-name host-port guest-ip guest-port
   VBoxManage natnetwork modify --netname "$CLUSTER_NET" --port-forward-4 delete "$1" 2>/dev/null || true
   VBoxManage natnetwork modify --netname "$CLUSTER_NET" \

@@ -306,6 +306,7 @@ Stop it with `docker compose down` (add `-v` to wipe the data).
 | Document | Contents |
 |---|---|
 | [docs/RUNNING.md](docs/RUNNING.md) | Prerequisites, running from a clean clone, repository layout, database isolation check, single service, web frontend |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Kubernetes: the namespace, ConfigMaps, Secrets and the order to apply them |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | The `.env` file and every variable |
 | [docs/TEST_SCENARIOS.md](docs/TEST_SCENARIOS.md) | Copy-paste walkthroughs for Problems 1 to 5 |
 | [docs/TESTING.md](docs/TESTING.md) | Integration, smoke, load and storage tests, pre-push checks |

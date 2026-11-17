@@ -1,6 +1,3 @@
-# Local image registry on node-a. k3s applies every file in its server manifests directory.
-# Images are pushed from the host to 127.0.0.1:5000 (port forward) and pulled by the nodes
-# from 10.77.0.11:5000 (see registries.yaml written by k3s.sh).
 apiVersion: v1
 kind: Namespace
 metadata:

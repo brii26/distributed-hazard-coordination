@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Install k3s on the two VMs from up.sh: server on node-a (control plane and worker),
-# agent on node-b, a local image registry on node-a, and a kubeconfig on the host.
-# Safe to run again.
-#
-# Usage: deploy/cluster/k3s.sh
-#        K3S_VERSION=v1.34.1+k3s1 deploy/cluster/k3s.sh   pin a version
+# Installs k3s on the VMs from up.sh, plus a local registry and a kubeconfig. Safe to run again.
+# Usage: [K3S_VERSION=v1.34.1+k3s1] deploy/cluster/k3s.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,7 +27,6 @@ mirrors:
 EOF
 }
 
-# Server on node-a
 if ! ssh_node "$(ssh_port 1)" 'systemctl is-active --quiet k3s'; then
   registries_yaml | ssh_node "$(ssh_port 1)" 'sudo mkdir -p /etc/rancher/k3s && sudo tee /etc/rancher/k3s/registries.yaml >/dev/null'
   ssh_node "$(ssh_port 1)" 'sudo mkdir -p /var/lib/rancher/k3s/server/manifests /var/lib/registry'
@@ -44,7 +39,6 @@ else
   echo "k3s server already running on node-a"
 fi
 
-# Agents on node-b, node-c, ...
 TOKEN="$(ssh_node "$(ssh_port 1)" 'sudo cat /var/lib/rancher/k3s/server/node-token')"
 for i in $(seq 2 "$NODE_COUNT"); do
   n="$(node_name "$i")"; ip="$(node_ip "$i")"; port="$(ssh_port "$i")"
@@ -58,7 +52,6 @@ for i in $(seq 2 "$NODE_COUNT"); do
   fi
 done
 
-# Kubeconfig for the host. The API is reachable on 127.0.0.1:$API_PORT through the port forward.
 ssh_node "$(ssh_port 1)" 'cat /etc/rancher/k3s/k3s.yaml' \
   | sed -e "s|https://127.0.0.1:6443|https://127.0.0.1:$API_PORT|" -e 's/: default$/: k3s-bnpb/; s/name: default/name: k3s-bnpb/' \
   > "$KUBECONFIG_OUT"
