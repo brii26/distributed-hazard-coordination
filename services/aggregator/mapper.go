@@ -13,11 +13,11 @@ import (
 // Turns raw source records into HazardEvents, working on generic maps. Clock and ID generator are fields so tests can pin them.
 type mapper struct {
 	now   func() time.Time
-	newID func() string
+	newID func(source, ref string) string
 }
 
 func newMapper() *mapper {
-	return &mapper{now: time.Now, newID: newHazardID}
+	return &mapper{now: time.Now, newID: hazardID}
 }
 
 // One row of the volcano reference table. PVMBG only sends volcano_id.
@@ -85,7 +85,7 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	used[idKey], used[timeKey] = true, true
 
 	return HazardEvent{
-		HazardID:    m.newID(),
+		HazardID:    m.newID(source, id),
 		Source:      source,
 		SourceRefID: id,
 		HazardType:  hazardType,

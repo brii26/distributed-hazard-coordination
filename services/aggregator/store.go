@@ -18,8 +18,8 @@ const dbQueryTimeout = 2 * time.Second
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-     latitude, longitude, occurred_at, ingested_at, attributes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+     latitude, longitude, occurred_at, ingested_at, attributes, shard)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
 ON CONFLICT (source, source_ref_id) DO UPDATE SET
     hazard_type = EXCLUDED.hazard_type,
     severity    = EXCLUDED.severity,
@@ -102,7 +102,7 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 
 	err = tx.QueryRowContext(ctx, upsertSQL,
 		h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
-		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw),
+		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID),
 	).Scan(&id, &inserted)
 
 	changed := err == nil

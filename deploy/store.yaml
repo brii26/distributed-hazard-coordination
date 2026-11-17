@@ -1,0 +1,89 @@
+# Sharded store: one Postgres per node. Aggregator picks the shard owners (see doc/P1_STORAGE_DESIGN.md).
+# Namespace: sistem-informasi-kebencanaan-bnpb (all objects).
+# Required Secret `store-credentials` (created by #270 from .env via deploy/make-secrets.sh) must have keys:
+#   user      -> POSTGRES_USER
+#   password  -> POSTGRES_PASSWORD
+# ConfigMap `store-schema`: content is owned by P1 and created from services/aggregator/migrations
+#   (001_hazard_events.sql, 002_shard.sql); #270 only adds it to the kustomization.
+# hostPath /var/lib/bnpb-store must match the Tester Agent wipe-node path (verify in #269).
+# Memory stays 512Mi requests / 1Gi limits (Appendix B, checked by #275); shared_buffers=128MB.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: store
+spec:
+  clusterIP: None
+  selector:
+    role: store
+  ports:
+    - name: pg
+      port: 5432
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: store
+spec:
+  selector:
+    matchLabels:
+      role: store
+  template:
+    metadata:
+      labels:
+        role: store
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          args:
+            - -c
+            - bnpb.node_name=$(NODE_NAME)
+            - -c
+            - shared_buffers=128MB
+            - -c
+            - max_connections=60
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: password
+            - name: POSTGRES_DB
+              value: canonical_store
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d canonical_store"]
+            periodSeconds: 2
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: schema
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/lib/bnpb-store
+            type: DirectoryOrCreate
+        - name: schema
+          configMap:
+            name: store-schema
