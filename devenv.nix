@@ -44,6 +44,9 @@ in
     pkgs.graphviz
     pkgs.kubectl
     pkgs.kubeconform
+    pkgs.protobuf
+    pkgs.protoc-gen-go
+    pkgs.protoc-gen-go-grpc
   ];
 
   # https://devenv.sh/languages/

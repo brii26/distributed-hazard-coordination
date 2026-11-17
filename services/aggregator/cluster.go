@@ -18,6 +18,8 @@ type cluster struct {
 	write func(ctx context.Context, n *node, h HazardEvent) (bool, error)
 	read  func(ctx context.Context, n *node, id string) (*HazardEvent, error)
 
+	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error)
+
 	mu    sync.Mutex
 	dirty map[int]bool
 }
@@ -27,6 +29,9 @@ func newCluster(live func() []*node) *cluster {
 		live:  live,
 		write: func(ctx context.Context, n *node, h HazardEvent) (bool, error) { return upsertOn(ctx, n.db, h) },
 		read:  func(ctx context.Context, n *node, id string) (*HazardEvent, error) { return getOn(ctx, n.db, id) },
+		listShard: func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error) {
+			return listShardOn(ctx, n.db, shard, after, limit)
+		},
 		dirty: map[int]bool{},
 	}
 }

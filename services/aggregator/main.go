@@ -122,15 +122,15 @@ func loadStore() (*store, error) {
 }
 
 // Picks where writes go. With STORE_SERVICE set, membership keeps a node list fresh every 2 s and writes go to two owners; without it, to the single DATABASE_URL store.
-func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardEvent) (bool, error), error) {
+func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardEvent) (bool, error), *cluster, error) {
 	service := os.Getenv("STORE_SERVICE")
 	if service == "" {
-		return db.upsert, nil
+		return db.upsert, nil, nil
 	}
 
 	tmpl := os.Getenv("STORE_DSN_TEMPLATE")
 	if tmpl == "" {
-		return nil, errors.New("STORE_DSN_TEMPLATE must be set when STORE_SERVICE is")
+		return nil, nil, errors.New("STORE_DSN_TEMPLATE must be set when STORE_SERVICE is")
 	}
 
 	m := newMembership(dnsResolver(service), pgNodeName(tmpl), 30*time.Second)
@@ -147,7 +147,9 @@ func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardE
 		}
 	}()
 
-	return newCluster(m.live).upsert, nil
+	cl := newCluster(m.live)
+
+	return cl.upsert, cl, nil
 }
 
 // Binds the gRPC read API on GRPC_PORT. A taken port stops the service at start.
@@ -242,7 +244,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	defer func() { _ = db.close() }()
 
-	upsert, err := chooseUpsert(ctx, db)
+	upsert, cl, err := chooseUpsert(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -270,6 +272,8 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	if err != nil {
 		return err
 	}
+
+	api.cl = cl
 
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {

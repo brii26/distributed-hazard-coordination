@@ -182,6 +182,7 @@ graph TD
   296["#296 E8 Audit API location"]
   297["#297 E9 Analytics dashboard with an incomplete.."]
   298["#298 E10 Test script for wipe-node, node join a.."]
+  353["#353 Client-Facing API: call ListHazards and GetHazard"]
 
   %% P3 failed messages
   299["#299 F1 Schema policy and a validator in the m.."]
@@ -266,6 +267,7 @@ graph TD
   290 --> 291
   290 --> 292
   290 --> 293
+  292 --> 353
   291 --> 294
   291 --> 296
   294 --> 298

@@ -42,6 +42,7 @@ type readAPI struct {
 	ping     func(ctx context.Context) error // checks the Canonical Store
 	rabbitUp func(ctx context.Context) error
 	breakers map[string]*breaker // by source name
+	cl       *cluster            // nil without STORE_SERVICE; ListHazards and GetHazard need it
 
 	sem chan struct{}
 }
@@ -320,4 +321,87 @@ func toProto(e HazardEvent) (*aggregatorpb.HazardEvent, error) {
 		IngestedAt:  timestamppb.New(e.IngestedAt),
 		Attributes:  attrs,
 	}, nil
+}
+
+// Cross-shard list over all hazard types, newest ingested first. A shard that cannot be reached is reported as partial, never as an error.
+func (a *readAPI) ListHazards(ctx context.Context, req *aggregatorpb.ListHazardsRequest) (*aggregatorpb.ListHazardsResponse, error) {
+	id, role := caller(ctx)
+	withID(id).Info("read api request", "method", "ListHazards", "role", role)
+
+	if a.cl == nil {
+		return nil, status.Error(codes.Unimplemented, "cross-shard read needs STORE_SERVICE")
+	}
+
+	limit := int(req.GetLimit())
+
+	switch {
+	case limit < 0:
+		return nil, status.Error(codes.InvalidArgument, "limit must not be negative")
+	case limit == 0:
+		limit = defaultPageLimit
+	case limit > maxPageLimit:
+		limit = maxPageLimit
+	}
+
+	after, err := decodeCursor(req.GetCursor())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	events, more, unavailable := a.cl.list(withCorrelation(ctx, id), limit, after)
+
+	resp := &aggregatorpb.ListHazardsResponse{HasMore: more, Partial: len(unavailable) > 0, UnavailableUnits: unavailable}
+
+	for _, e := range events {
+		pb, err := toProto(e)
+		if err != nil {
+			return nil, status.Error(codes.Internal, "failed to encode hazard event")
+		}
+
+		resp.Data = append(resp.Data, pb)
+	}
+
+	if more && len(events) > 0 {
+		last := events[len(events)-1]
+		resp.NextCursor = listPos{T: last.IngestedAt, ID: last.HazardID}.encode()
+	}
+
+	return resp, nil
+}
+
+// One hazard by id: primary copy first, then the replica. NOT_FOUND when no copy has it, UNAVAILABLE when no copy answered.
+func (a *readAPI) GetHazard(ctx context.Context, req *aggregatorpb.GetHazardRequest) (*aggregatorpb.GetHazardResponse, error) {
+	id, role := caller(ctx)
+	withID(id).Info("read api request", "method", "GetHazard", "role", role, "hazard_id", req.GetHazardId())
+
+	if a.cl == nil {
+		return nil, status.Error(codes.Unimplemented, "read by id needs STORE_SERVICE")
+	}
+
+	if req.GetHazardId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "hazard_id is required")
+	}
+
+	h, placement, err := a.cl.get(withCorrelation(ctx, id), req.GetHazardId())
+	if err != nil {
+		withID(id).Warn("read api get failed", "method", "GetHazard", "error", err.Error())
+
+		return nil, status.Error(codes.Unavailable, "no copy of the hazard could be reached")
+	}
+
+	if h == nil {
+		return nil, status.Error(codes.NotFound, "hazard not found")
+	}
+
+	pb, err := toProto(*h)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to encode hazard event")
+	}
+
+	resp := &aggregatorpb.GetHazardResponse{Event: pb}
+	for _, c := range placement {
+		resp.Placement = append(resp.Placement, c.unit+"@"+c.node.name)
+	}
+
+	return resp, nil
 }
