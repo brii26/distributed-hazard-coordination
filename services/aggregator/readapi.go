@@ -42,7 +42,8 @@ type readAPI struct {
 	ping     func(ctx context.Context) error // checks the Canonical Store
 	rabbitUp func(ctx context.Context) error
 	breakers map[string]*breaker // by source name
-	cl       *cluster            // nil without STORE_SERVICE; ListHazards and GetHazard need it
+	cl       *cluster            // nil without STORE_SERVICE; ListHazards, GetHazard and the audit routes need it
+	auditTok string              // bearer token for the audit routes
 
 	sem chan struct{}
 }
@@ -348,7 +349,7 @@ func (a *readAPI) ListHazards(ctx context.Context, req *aggregatorpb.ListHazards
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	events, more, unavailable := a.cl.list(withCorrelation(ctx, id), limit, after)
+	events, more, unavailable := a.cl.list(withCorrelation(ctx, id), limit, after, listFilter{})
 
 	resp := &aggregatorpb.ListHazardsResponse{HasMore: more, Partial: len(unavailable) > 0, UnavailableUnits: unavailable}
 

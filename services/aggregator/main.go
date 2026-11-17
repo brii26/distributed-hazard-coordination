@@ -31,6 +31,8 @@ var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.healthHandler)
+	mux.HandleFunc("GET /internal/audit/events", api.auditEvents)
+	mux.HandleFunc("GET /internal/audit/checksum", api.auditChecksum)
 
 	return mux
 }
@@ -285,6 +287,11 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}
 
 	api.cl = cl
+	api.auditTok = os.Getenv("AUDIT_TOKEN")
+
+	if api.auditTok == "" {
+		log.Print("WARNING: AUDIT_TOKEN is empty, every audit request will be refused")
+	}
 
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
