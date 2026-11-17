@@ -120,3 +120,7 @@ P1 starts from an empty store. Rows written before this branch keep their random
 ## Rollback
 
 With one store node, `cluster` behaves like the single-DB version (every shard has one owner). Rollback is to pin the DaemonSet to one node or revert the #290 PR.
+
+## Kubernetes
+
+`deploy/store.yaml` lives in namespace `sistem-informasi-kebencanaan-bnpb`. It reads Secret `store-credentials` keys `user` and `password` (created by #270 from `.env`). ConfigMap `store-schema` is owned by P1 and built from `services/aggregator/migrations` (`001_hazard_events.sql`, `002_shard.sql`); #270 only adds it to the kustomization. Memory stays 512Mi requests / 1Gi limits and `shared_buffers=128MB`. The hostPath `/var/lib/bnpb-store` must match the Tester Agent wipe-node path (to be verified in #269).

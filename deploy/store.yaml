@@ -1,8 +1,16 @@
 # Sharded store: one Postgres per node. Aggregator picks the shard owners (see doc/P1_STORAGE_DESIGN.md).
-# Secret `store-credentials` and ConfigMap `store-schema` names must match #270.
+# Namespace: sistem-informasi-kebencanaan-bnpb (all objects).
+# Required Secret `store-credentials` (created by #270 from .env via deploy/make-secrets.sh) must have keys:
+#   user      -> POSTGRES_USER
+#   password  -> POSTGRES_PASSWORD
+# ConfigMap `store-schema`: content is owned by P1 and created from services/aggregator/migrations
+#   (001_hazard_events.sql, 002_shard.sql); #270 only adds it to the kustomization.
+# hostPath /var/lib/bnpb-store must match the Tester Agent wipe-node path (verify in #269).
+# Memory stays 512Mi requests / 1Gi limits (Appendix B, checked by #275); shared_buffers=128MB.
 apiVersion: v1
 kind: Service
 metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
   name: store
 spec:
   clusterIP: None
@@ -15,6 +23,7 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
   name: store
 spec:
   selector:
