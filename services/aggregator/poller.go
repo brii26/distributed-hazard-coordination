@@ -36,6 +36,7 @@ type pollResult struct {
 	generatedAt time.Time
 	nextCursor  string
 	gen         uint64
+	slow        bool // some call answered 200 but over the slow limit
 
 	// Fencing token of the lease term that fetched this batch, 0 when no lease is involved.
 	epoch int64
@@ -54,6 +55,12 @@ type poller struct {
 
 	// Runs at the start of every lease term.
 	onTerm func()
+
+	// Optional. backoff stretches the wait after failed polls, onReject runs when the breaker turns a poll away and onWait gets
+	// the extra delay in use.
+	backoff  *backoff
+	onReject func()
+	onWait   func(time.Duration)
 
 	// since is only touched by the run goroutine.
 	// ponytail: the cursor lives in memory, so a restart re-reads everything once (upsert dedup makes that safe). Assumes source timestamps never go backwards.
@@ -82,23 +89,55 @@ func (p *poller) loop(ctx context.Context) {
 		p.since = time.Time{}
 	}
 
+	if p.backoff != nil {
+		p.backoff.reset()
+	}
+
 	for {
 		start := time.Now()
+		out := p.pollOnce(ctx)
+		wait := nextWait(p.interval, time.Since(start))
 
-		p.pollOnce(ctx)
+		switch out {
+		case pollFailed:
+			if p.backoff != nil {
+				wait = max(wait, p.backoff.failed())
+			}
+		case pollOK:
+			if p.backoff != nil {
+				p.backoff.reset()
+			}
+		case pollSkipped:
+		}
+
+		if p.backoff != nil && p.onWait != nil {
+			p.onWait(p.backoff.last)
+		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(nextWait(p.interval, time.Since(start))):
+		case <-time.After(wait):
 		}
 	}
 }
 
+type pollOutcome int
+
+const (
+	pollOK pollOutcome = iota
+	pollFailed
+	pollSkipped // the breaker did not let the poll through
+)
+
 // One call: log the result, hand over the records. Any error, timeout included, is a failed poll, and the cursor only moves after the hand-over.
-func (p *poller) pollOnce(ctx context.Context) {
+func (p *poller) pollOnce(ctx context.Context) pollOutcome {
 	if !p.breaker.allow() {
-		return
+		if p.onReject != nil {
+			p.onReject()
+		}
+
+		return pollSkipped
 	}
 
 	ctx, span := tracer.Start(ctx, "poll "+p.name)
@@ -126,11 +165,22 @@ func (p *poller) pollOnce(ctx context.Context) {
 	res.trace = span.SpanContext()
 	res.epoch, _ = leaseEpoch(ctx)
 
-	if err != nil {
+	outcome := pollOK
+
+	switch {
+	case err != nil:
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		p.breaker.failure()
-	} else {
+
+		outcome = pollFailed
+	case res.slow:
+		// The data is good and is kept, but a slow sensor counts against the breaker.
+		l.Warn("poll slow", "source", p.name, "duration_ms", elapsed)
+		p.breaker.failure()
+
+		outcome = pollFailed
+	default:
 		p.breaker.success()
 	}
 
@@ -143,6 +193,8 @@ func (p *poller) pollOnce(ctx context.Context) {
 	default:
 		l.Warn("poll", "source", p.name, "result", "failure", "duration_ms", elapsed, "error", err.Error())
 	}
+
+	return outcome
 }
 
 // Sends records to ingest and waits if the channel is full, since a dropped batch would never be fetched again.
@@ -321,6 +373,7 @@ type pollConfig struct {
 	rejectToken       func() // PVMBG answered 401: renew the token now
 	pantaiURL         string // empty leaves Sensor Pantai off
 	pantaiToken       string
+	sensor            sensorConfig
 	pantai            *sensorClient // built in run once the store is open
 }
 
@@ -337,7 +390,25 @@ func newPollers(c pollConfig) []*poller {
 	}
 
 	if c.pantai != nil {
-		out = append(out, &poller{name: sourceSensorPantai, interval: c.interval, fetch: c.pantai.fetch, onTerm: c.pantai.newTerm, breaker: newBreaker(sourceSensorPantai, c.cbThreshold, c.cbOpenFor)})
+		sc := c.sensor.orDefaults()
+		br := newBreaker(sourceSensorPantai, sc.cbThreshold, sc.cbOpenFor)
+
+		if c.pantai.stats == nil {
+			c.pantai.stats = &sensorStats{}
+		}
+
+		st := c.pantai.stats
+		st.breaker = br
+		c.pantai.staleAfter = sc.staleAfter
+		c.pantai.onStale = func(stale bool, since time.Time) {
+			br.setStale(stale, since)
+			st.setStale(stale)
+		}
+
+		out = append(out, &poller{
+			name: sourceSensorPantai, interval: c.interval, fetch: c.pantai.fetch, onTerm: c.pantai.newTerm, breaker: br,
+			backoff: newBackoff(sc.backoffBase, sc.backoffMax), onReject: func() { st.breakerRejected() }, onWait: st.setBackoff,
+		})
 	}
 
 	return out

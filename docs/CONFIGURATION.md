@@ -62,6 +62,15 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `SATELLITE_GROUP_TOKEN` | Kubernetes Secret `satellite-token` | change-me | Group token for the assistants' satellite feed |
 | `PANTAI_AUTH_TOKEN` | Kubernetes Secret `pantai-token`, aggregator | change-me | Bearer token the Sensor Pantai checks. The Aggregator sends it as `Authorization: Bearer` and needs it together with `PANTAI_BASE_URL` |
 | `PANTAI_BASE_URL` | aggregator | unset | Base URL of the Sensor Pantai, for example `http://sensor-pantai:8080`. Unset turns the Pantai poller off; set only one of the two and the Aggregator refuses to start |
+| `SENSOR_TIMEOUT_MS` | aggregator | 1000 | Timeout of one call to the sensor |
+| `SENSOR_SLOW_MS` | aggregator | 800 | A call that answers 200 but takes longer than this counts as a failure. Must not be above `SENSOR_TIMEOUT_MS` |
+| `SENSOR_CB_FAILURE_THRESHOLD` | aggregator | 3 | Failed or slow polls in a row before the sensor breaker opens |
+| `SENSOR_CB_OPEN_MS` | aggregator | 10000 | How long the sensor breaker stays open before one trial poll |
+| `SENSOR_BACKOFF_BASE_MS` | aggregator | 3000 | First delay after a failed sensor poll, doubled for every failure in a row, with jitter. The wait is never shorter than `POLL_INTERVAL_MS` |
+| `SENSOR_BACKOFF_MAX_MS` | aggregator | 30000 | Cap of that delay. Must not be below `SENSOR_BACKOFF_BASE_MS` |
+| `SENSOR_MAX_CONCURRENT` | aggregator | 2 | Most calls in flight to the sensor, also the size of its own connection pool. A call over the limit fails at once |
+| `SENSOR_MAX_PAGES` | aggregator | 20 | Most pages read in one sensor poll, the rest comes in the next poll |
+| `SENSOR_STALE_AFTER_MS` | aggregator | 60000 | The sensor answers but its clock and newest observation have not moved for this long: the source is marked `STALE` |
 | `PANTAI_PROFILE` | Sensor Pantai (ConfigMap) | practice | `practice` or `exam`. `exam` needs the key and `deploy/overlays/exam`, see [DEPLOY.md](DEPLOY.md) |
 | `PANTAI_SEED` | Sensor Pantai (ConfigMap) | 42 | Seed of the generated data |
 | `PANTAI_SPEED` | Sensor Pantai (ConfigMap) | 60 | Simulation speed, 1 to 100000 |

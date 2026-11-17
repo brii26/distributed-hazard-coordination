@@ -101,6 +101,10 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 		return pollConfig{}, firstErr
 	}
 
+	if c.sensor, err = loadSensorConfig(); err != nil {
+		return pollConfig{}, err
+	}
+
 	if c.bmkgURL == "" || c.bmkgKey == "" {
 		return pollConfig{}, errors.New("BMKG_BASE_URL and BMKG_API_KEY must be set")
 	}
@@ -318,6 +322,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 		if pc.pantai != nil {
 			pc.pantai.rejects.writeMetrics(w)
+			pc.pantai.stats.writeMetrics(w)
 		}
 	})
 
