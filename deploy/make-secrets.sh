@@ -37,6 +37,11 @@ secret() {
   echo "secret/$name"
 }
 
+for k in CANONICAL_DB_USER CANONICAL_DB_PASSWORD RABBITMQ_USER RABBITMQ_PASSWORD; do
+  need "$k"
+  [[ "${V[$k]}" =~ ^[A-Za-z0-9._~-]+$ ]] || { echo "$k may only use letters, digits and . _ ~ - because it goes into a URL" >&2; exit 1; }
+done
+
 kubectl apply -f "$HERE/namespace.yaml" >/dev/null
 
 secret bmkg-credentials api_key=BMKG_API_KEY

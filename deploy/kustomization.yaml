@@ -4,6 +4,7 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - store.yaml
+  - aggregator.yaml
   - observability/observability.yaml
   - observability/grafana.yaml
   - observability/kube-state-metrics.yaml
@@ -19,3 +20,7 @@ configMapGenerator:
     files: [observability/grafana/dashboard.json]
 generatorOptions:
   disableNameSuffixHash: true
+images:
+  - name: aggregator
+    newName: 10.77.0.11:5000/aggregator
+    newTag: "0.1.0"
