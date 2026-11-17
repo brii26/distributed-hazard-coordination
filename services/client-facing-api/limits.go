@@ -27,29 +27,6 @@ func tooMany(w http.ResponseWriter, retryAfter int) {
 	writeJSON(w, http.StatusTooManyRequests, errBody("too many requests"))
 }
 
-// Global concurrency cap, a semaphore of max slots. A full cap refuses at once with 429, never queues. /health and the long-lived /hazards/stream (own cap) are exempt.
-func capInflight(maxInflight int, next http.Handler) http.Handler {
-	sem := make(chan struct{}, maxInflight)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" || r.URL.Path == "/hazards/stream" {
-			next.ServeHTTP(w, r)
-
-			return
-		}
-
-		select {
-		case sem <- struct{}{}:
-			defer func() { <-sem }()
-
-			next.ServeHTTP(w, r)
-		default:
-			logFor(r.Context()).Warn("rate-limit", "kind", "inflight", "path", r.URL.Path, "remaining", 0)
-			tooMany(w, 1)
-		}
-	})
-}
-
 // Token bucket per client: rps tokens a second, burst up to one second's worth, so a client hammering the API only empties its own bucket.
 type rateLimiter struct {
 	rps float64

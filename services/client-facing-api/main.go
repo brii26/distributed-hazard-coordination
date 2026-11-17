@@ -163,13 +163,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	mux := newMux(auth)
-	mux.Handle("GET /health", health)
-
-	maxInflight, err := envPositiveInt("MAX_INFLIGHT_REQUESTS", defaultMaxInflight)
+	inflight, err := configuredInflightLimiter(auth.verifier)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	mux := newMux(auth)
+	mux.Handle("GET /health", health)
+
+	mux.Handle("GET /metrics", http.HandlerFunc(inflight.metrics))
 
 	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
 
@@ -184,7 +186,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           otelhttp.NewHandler(withCorrelation(capInflight(maxInflight, mux)), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
+		Handler:           otelhttp.NewHandler(withCorrelation(inflight.wrap(mux)), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

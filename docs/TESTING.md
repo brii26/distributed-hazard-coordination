@@ -72,6 +72,59 @@ MIXED_VUS=100 MIXED_DURATION=120s tests/load/run.sh
 
 k6 prints throughput, avg/p50/p90/p95/p99 latency, and request counts per status code (200, 401, 429, 500, 502, 503, 504, so 429s are visible apart from real failures). The summary is saved as `tests/load/results/p2-<timestamp>.txt` and `.json` (git-ignored). The script exits non-zero if a threshold fails. Needs Docker Compose; it uses `.env.example`, so no `.env` is needed, and publishes its host ports on 38080-38082, 35672 and 33000. Results depend on the machine it runs on.
 
+# Priority load shedding (M2 #322)
+
+Run the isolated mixed-role test with Go, Docker and Python 3:
+
+```bash
+tests/load/priority.sh
+```
+
+This starts the real API admission middleware, JWT verifier, per-account limiter
+and `/hazards` handler on a loopback HTTP port. The Aggregator client is a test
+fixture taking 100 ms per request. No Compose stack or VM is started. k6 runs
+40 Media VUs and 4 Lapangan VUs for 30 seconds against a global cap of 8 and a
+shared Media/anonymous cap of 4. The per-account rate is raised in this fixture
+to isolate concurrency shedding. `DURATION`, `MEDIA_VUS`, `FIELD_VUS` and
+`K6_IMAGE` override the defaults. Increasing field VUs past reserved capacity
+can legitimately cause field 429s.
+
+Thresholds require field success >=99%, field and Media error rates excluding
+429 <1%, at least one Media 429, and a valid `Retry-After` on every 429. Field
+429s still count against the field success threshold. Text/JSON summaries and
+final Prometheus samples go to `tests/load/results/priority-<timestamp>.*`.
+Temporary fixture config and server logs stay under `/tmp/hazard-priority.*`.
+
+The same `tests/load/priority.js` can target a deployed API with `BASE_URL`,
+`MEDIA_JWT`, and `FIELD_JWT` supplied to k6. Use valid tokens that outlive the
+run, enough per-account `RATE_LIMIT_RPS` to avoid testing that separate limit,
+and field concurrency within the reserved capacity. Deployment performance,
+database latency and Kubernetes recovery need a separate full-stack run.
+
+Admission uses the existing signed JWT cookie, never a role header. Media and
+anonymous requests share the low budget so login, malformed tokens and refresh
+cannot exhaust the reserved slots. An expired JWT uses the anonymous budget
+while transparent refresh runs. With fresh JWTs, Lapangan and Operator can use
+all global slots. Both budgets are per API process, and reject immediately with
+429 plus `Retry-After: 1`. Existing per-account rate limits still apply.
+`/health`, `/metrics` and `/hazards/stream` bypass the request concurrency cap;
+streams retain their existing separate global/account limits.
+
+Prometheus scrapes `/metrics` from `client-facing-api:8080` in Compose:
+
+- `client_api_inflight_requests{role}` is the active admitted request count.
+- `client_api_inflight_rejected_requests_total{role,reason}` counts concurrency
+  rejections, with `reason="media_cap"` or `reason="global_cap"`. It does not
+  include per-account rate rejections or downstream rejections.
+
+Roles are `Media`, `Lapangan`, `Operator`, and `anonymous`. No account identifiers
+are exposed. Probes and scrapes work while the concurrency budget is full.
+
+Recorded local fixture run (2026-11-17): 99,799 total requests, 1,192/1,192 field
+successes (100%), 97,431 Media 429s out of 98,607 Media requests, zero other
+errors and zero invalid Retry-After headers. This proves the isolated admission
+behavior, and is not a full-stack or cluster benchmark.
+
 # Go workspace notes
 
 - Adding a new service: create `services/<new-name>/`, add its `go.mod`, then `go work use ./services/<new-name>` from the repo root so it joins the workspace.
