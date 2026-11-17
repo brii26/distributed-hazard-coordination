@@ -137,7 +137,7 @@ func TestInflightCapRefusesAtOnceAndSparesHealth(t *testing.T) {
 
 	entered, release := make(chan struct{}, 2), make(chan struct{})
 
-	h := capInflight(2, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := newInflightLimiter(2, 2, nil).wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
 			entered <- struct{}{}
 
@@ -194,7 +194,7 @@ func TestManyConcurrentClientsGetOnlySuccessOr429(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
-	h := capInflight(20, slow)
+	h := newInflightLimiter(20, 20, v).wrap(slow)
 
 	tokens := make([]string, 50)
 	for i := range tokens {

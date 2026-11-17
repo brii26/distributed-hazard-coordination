@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Caps open streams. They skip capInflight (a long-lived stream would hold a slot for its whole life), so they get their own cap.
+// Caps open streams. They skip the request concurrency limiter (a long-lived stream would hold a slot for its whole life), so they get their own cap.
 const (
 	maxStreams = 500
 

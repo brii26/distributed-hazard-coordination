@@ -224,6 +224,7 @@ services:
       DASHBOARD_UPDATER_URL: http://dashboard-updater:8093
       JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET}
       MAX_INFLIGHT_REQUESTS: ${CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS:-100}
+      MEDIA_MAX_INFLIGHT: ${MEDIA_MAX_INFLIGHT:-}
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-50}
       AUTH_RATE_LIMIT_RPS: ${AUTH_RATE_LIMIT_RPS:-10}
       UPSTREAM_TIMEOUT_MS: ${UPSTREAM_TIMEOUT_MS:-1000}
@@ -381,6 +382,9 @@ configs:
         - job_name: aggregated-trace-metrics
           static_configs:
             - targets: ['jaeger:8889']
+        - job_name: client-api-admission
+          static_configs:
+            - targets: ['client-facing-api:8080']
   prometheus_rules:
     content: |
       groups:

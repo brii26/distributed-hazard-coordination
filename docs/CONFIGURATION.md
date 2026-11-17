@@ -48,7 +48,8 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Access token lifetime for every role (seconds) |
 | `SEED_OPERATOR_EMAIL` / `SEED_OPERATOR_PASSWORD` | user-db, auth-service | none | The Operator account created on a fresh User DB |
 | `CLIENT_FACING_API_PORT` | client-facing-api | 8080 | Host port of the public API |
-| `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` | client-facing-api | 100 | Global concurrency cap (429 + `Retry-After` beyond it) |
+| `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` | client-facing-api | 100 | Global concurrency cap, at least 2 (429 + `Retry-After` beyond it) |
+| `MEDIA_MAX_INFLIGHT` | client-facing-api | 80% of global cap | Shared Media and anonymous concurrency budget. Must be positive and less than the global cap. Lapangan and Operator can use all global slots |
 | `RATE_LIMIT_RPS` | client-facing-api | 50 | Token bucket per client (account) |
 | `AUTH_RATE_LIMIT_RPS` | client-facing-api | 10 | Token bucket per client IP on `/auth/login` and `/auth/register` |
 | `UPSTREAM_TIMEOUT_MS` | client-facing-api | 1000 | Timeout of each call to the Aggregator and the Auth Service |
