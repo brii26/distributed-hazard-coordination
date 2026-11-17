@@ -262,8 +262,19 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	pubWG.Go(func() { pub.run(pubCtx) })
 
+	lc, err := loadLeaseConfig()
+	if err != nil {
+		return err
+	}
+
+	var electors []*elector
+
 	for _, p := range newPipelines(pc, upsert, pub.publish) {
 		breakers[p.poller.name] = p.poller.breaker
+
+		p.lease = newElector(p.poller.name, lc, pgLease{db: db.db})
+		electors = append(electors, p.lease)
+		p.poller.loadSince = func(ctx context.Context) (time.Time, error) { return db.lastOccurred(ctx, p.poller.name) }
 
 		wg.Go(func() { p.run(ctx) })
 	}
@@ -282,9 +293,12 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		}
 	}()
 
+	mux := newMux(api)
+	mux.HandleFunc("GET /metrics", leaseMetricsHandler(electors))
+
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           otelhttp.NewHandler(newMux(api), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
+		Handler:           otelhttp.NewHandler(mux, "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" && r.URL.Path != "/metrics" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
