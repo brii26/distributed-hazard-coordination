@@ -19,6 +19,7 @@
     pkgs.libreoffice
     pkgs.poppler-utils
     pkgs.graphviz
+    pkgs.kubectl
   ];
 
   # https://devenv.sh/languages/
