@@ -35,8 +35,8 @@ var abClient = &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport
 type abEnv struct {
 	itEnv
 
-	bmkgURL, bmkgKey, pvmbgURL, pvmbgAdminKey string
-	dbUser, dbName                            string
+	bmkgURL, bmkgKey, pvmbgURL string
+	dbUser, dbName             string
 }
 
 func abuseEnv(t *testing.T) abEnv {
@@ -54,8 +54,8 @@ func abuseEnv(t *testing.T) abEnv {
 			operatorPassword: os.Getenv("IT_OPERATOR_PASSWORD"),
 		},
 		bmkgURL: os.Getenv("IT_BMKG_URL"), bmkgKey: os.Getenv("IT_BMKG_KEY"),
-		pvmbgURL: os.Getenv("IT_PVMBG_URL"), pvmbgAdminKey: os.Getenv("IT_PVMBG_ADMIN_KEY"),
-		dbUser: os.Getenv("IT_CANONICAL_USER"), dbName: os.Getenv("IT_CANONICAL_DB"),
+		pvmbgURL: os.Getenv("IT_PVMBG_URL"),
+		dbUser:   os.Getenv("IT_CANONICAL_USER"), dbName: os.Getenv("IT_CANONICAL_DB"),
 	}
 }
 
@@ -239,11 +239,10 @@ func logCount(t *testing.T, service string, parts ...string) int {
 	return n
 }
 
-func postAdmin(t *testing.T, base, adminKey, path string) reply {
+func postAdmin(t *testing.T, base, path string) reply {
 	t.Helper()
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, base+path, nil)
-	req.Header.Set("X-Admin-Key", adminKey)
 
 	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
@@ -434,14 +433,14 @@ func TestAbusePVMBGOutageToggle(t *testing.T) {
 
 	jar := e.operator(t)
 
-	on := postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/outage")
+	on := postAdmin(t, e.pvmbgURL, "/admin/outage")
 	if !strings.Contains(on.body, `"outage_active":true`) {
 		t.Fatalf("outage did not switch on: %d %s", on.code, on.body)
 	}
 
 	defer func() {
-		if r := postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/outage"); strings.Contains(r.body, `"outage_active":true`) {
-			postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/outage")
+		if r := postAdmin(t, e.pvmbgURL, "/admin/outage"); strings.Contains(r.body, `"outage_active":true`) {
+			postAdmin(t, e.pvmbgURL, "/admin/outage")
 		}
 	}()
 
@@ -453,7 +452,7 @@ func TestAbusePVMBGOutageToggle(t *testing.T) {
 		t.Errorf("seismic read during the PVMBG outage: %d in %s", r.code, time.Since(began))
 	}
 
-	off := postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/outage")
+	off := postAdmin(t, e.pvmbgURL, "/admin/outage")
 	if !strings.Contains(off.body, `"outage_active":false`) {
 		t.Fatalf("outage did not switch off: %s", off.body)
 	}
@@ -487,18 +486,18 @@ func TestAbuseSchemaVersionToggle(t *testing.T) {
 	jar := e.operator(t)
 	before := e.count(t, "source='PVMBG'")
 
-	r := postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
+	r := postAdmin(t, e.pvmbgURL, "/admin/schema-version")
 	if !strings.Contains(r.body, "extended") {
-		r = postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
+		r = postAdmin(t, e.pvmbgURL, "/admin/schema-version")
 		before = e.count(t, "source='PVMBG'")
-		r = postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
+		r = postAdmin(t, e.pvmbgURL, "/admin/schema-version")
 	}
 
 	if !strings.Contains(r.body, "extended") {
 		t.Fatalf("schema did not switch to extended: %s", r.body)
 	}
 
-	defer postAdmin(t, e.pvmbgURL, e.pvmbgAdminKey, "/admin/schema-version")
+	defer postAdmin(t, e.pvmbgURL, "/admin/schema-version")
 
 	eventually(t, 45*time.Second, "new PVMBG records after the schema change", func() bool { return e.count(t, "source='PVMBG'") > before })
 
@@ -616,22 +615,15 @@ func TestAbuseCredentialsDoNotCrossDomains(t *testing.T) {
 	}{
 		{"bmkg key on pvmbg", e.pvmbgURL + "/volcanic-reports", map[string]string{"X-BMKG-Key": e.bmkgKey}},
 		{"bmkg key as bearer on pvmbg", e.pvmbgURL + "/volcanic-reports", map[string]string{"Authorization": "Bearer " + e.bmkgKey}},
-		{"pvmbg admin key on pvmbg data", e.pvmbgURL + "/volcanic-reports", map[string]string{"X-Admin-Key": e.pvmbgAdminKey}},
-		{"bearer on bmkg", e.bmkgURL + "/seismic-events", map[string]string{"Authorization": "Bearer " + e.pvmbgAdminKey}},
-		{"pvmbg admin key as bmkg key", e.bmkgURL + "/seismic-events", map[string]string{"X-BMKG-Key": e.pvmbgAdminKey}},
+		{"bearer on bmkg", e.bmkgURL + "/seismic-events", map[string]string{"Authorization": "Bearer " + e.bmkgKey}},
+		{"wrong key as bmkg key", e.bmkgURL + "/seismic-events", map[string]string{"X-BMKG-Key": "wrong-key"}},
 		{"no credential on bmkg", e.bmkgURL + "/seismic-events", nil},
 		{"no credential on pvmbg", e.pvmbgURL + "/volcanic-reports", nil},
-		{"bmkg key on pvmbg admin", e.pvmbgURL + "/admin/outage", map[string]string{"X-Admin-Key": e.bmkgKey}},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			method := http.MethodGet
-			if strings.HasSuffix(c.url, "/admin/outage") {
-				method = http.MethodPost
-			}
-
-			req, _ := http.NewRequestWithContext(context.Background(), method, c.url, nil)
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, c.url, nil)
 			for k, v := range c.hdr {
 				req.Header.Set(k, v)
 			}
