@@ -110,6 +110,10 @@ func decodeFailedCursor(c string) (time.Time, string, error) {
 
 // One page of rows with the given status in (received_at, message_id) order, after cursor ("" for the first page). next is "" on the last page.
 func (s *store) listFailed(ctx context.Context, status, cursor string, limit int) (rows []failedMessage, next string, err error) {
+	if limit <= 0 {
+		return nil, "", errors.New("listFailed: limit must be positive")
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 

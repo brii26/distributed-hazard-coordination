@@ -2,7 +2,7 @@
 -- Idempotent in case it is applied by hand again.
 CREATE TABLE IF NOT EXISTS failed_messages (
     message_id     TEXT PRIMARY KEY,
-    source         VARCHAR(16) NOT NULL CHECK (source IN ('BMKG','PVMBG')),
+    source         VARCHAR(16) NOT NULL CHECK (source IN ('BMKG','PVMBG','SATELIT','SENSOR_PANTAI')),
     received_at    TIMESTAMPTZ NOT NULL,
     payload        BYTEA NOT NULL,
     payload_sha256 BYTEA NOT NULL,

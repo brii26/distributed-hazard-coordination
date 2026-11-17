@@ -197,3 +197,15 @@ func TestFailedStoreParallelAttempts(t *testing.T) { //nolint:paralleltest // sh
 		t.Fatalf("attempts must be 20: %+v", rows)
 	}
 }
+
+func TestListFailedRejectsNonPositiveLimit(t *testing.T) {
+	t.Parallel()
+
+	s := &store{} // validation runs before any DB access
+
+	for _, limit := range []int{0, -1} {
+		if _, _, err := s.listFailed(context.Background(), failedParked, "", limit); err == nil {
+			t.Fatalf("limit %d must return an error", limit)
+		}
+	}
+}
