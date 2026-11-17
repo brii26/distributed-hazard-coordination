@@ -36,6 +36,9 @@ type pollResult struct {
 	generatedAt time.Time
 	nextCursor  string
 	gen         uint64
+
+	// Fencing token of the lease term that fetched this batch, 0 when no lease is involved.
+	epoch int64
 }
 
 // One source's polling loop. One goroutine, one call at a time, so there are never two calls in flight for a source.
@@ -121,6 +124,7 @@ func (p *poller) pollOnce(ctx context.Context) {
 	elapsed := time.Since(start).Milliseconds()
 	res.correlationID = id
 	res.trace = span.SpanContext()
+	res.epoch, _ = leaseEpoch(ctx)
 
 	if err != nil {
 		span.RecordError(err)

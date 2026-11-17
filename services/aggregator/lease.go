@@ -149,6 +149,11 @@ const (
 
 type epochKey struct{}
 
+// Marks ctx as work of the lease with this epoch, the fencing token of every store write made with it.
+func withLeaseEpoch(ctx context.Context, epoch int64) context.Context {
+	return context.WithValue(ctx, epochKey{}, epoch)
+}
+
 // Epoch of the lease this context belongs to.
 func leaseEpoch(ctx context.Context) (int64, bool) {
 	e, ok := ctx.Value(epochKey{}).(int64)
@@ -172,10 +177,32 @@ type elector struct {
 	isLeader  atomic.Int32
 	token     atomic.Int64
 	takeovers atomic.Int64
+	fenced    atomic.Int64
+
+	// Highest epoch a store rejected as stale, read by the run goroutine. wake nudges it.
+	fencedEpoch atomic.Int64
+	wake        chan struct{}
 }
 
 func newElector(source string, cfg leaseConfig, b leaseBackend) *elector {
-	return &elector{source: source, holder: newHazardID(), cfg: cfg, backend: b, now: time.Now}
+	return &elector{source: source, holder: newHazardID(), cfg: cfg, backend: b, now: time.Now, wake: make(chan struct{}, 1)}
+}
+
+// Called when a store rejected a write made under this epoch. Counts it and, if the epoch is still the current term, makes the run loop drop the lease.
+func (e *elector) fence(epoch int64) {
+	e.fenced.Add(1)
+
+	for {
+		cur := e.fencedEpoch.Load()
+		if epoch <= cur || e.fencedEpoch.CompareAndSwap(cur, epoch) {
+			break
+		}
+	}
+
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
 }
 
 // One attempt: acquire as a follower, renew as the leader.
@@ -206,6 +233,20 @@ func (e *elector) step(ctx context.Context) leaseTransition {
 		l.Info("lease acquired", "source", e.source, "holder", e.holder, "epoch", epoch, "takeover", epoch > 1)
 
 		return leaseAcquired
+	}
+
+	if e.fencedEpoch.Load() >= e.epoch {
+		l.Warn("lease lost", "source", e.source, "holder", e.holder, "epoch", e.epoch, "reason", "fenced")
+
+		// Release so the next acquire gets a fresh epoch. It is conditional, so it does nothing if another holder owns the lease.
+		if err := e.backend.release(context.WithoutCancel(ctx), e.source, e.holder, e.epoch); err != nil {
+			l.Warn("lease release failed", "source", e.source, "epoch", e.epoch, "error", err.Error())
+		}
+
+		e.held = false
+		e.isLeader.Store(0)
+
+		return leaseLost
 	}
 
 	ok, err := e.backend.renew(ctx, e.source, e.holder, e.epoch, e.cfg.ttl)
@@ -256,7 +297,7 @@ func (e *elector) run(ctx context.Context, work func(ctx context.Context)) {
 	for {
 		switch e.step(ctx) {
 		case leaseAcquired:
-			wctx, cancel := context.WithCancel(context.WithValue(ctx, epochKey{}, e.epoch))
+			wctx, cancel := context.WithCancel(withLeaseEpoch(ctx, e.epoch))
 			stopWork, done = cancel, make(chan struct{})
 
 			go func() {
@@ -285,11 +326,12 @@ func (e *elector) run(ctx context.Context, work func(ctx context.Context)) {
 
 			return
 		case <-t.C:
+		case <-e.wake:
 		}
 	}
 }
 
-// Prometheus text for lease_is_leader, lease_token and lease_takeovers_total, one series per source.
+// Prometheus text for lease_is_leader, lease_token, lease_takeovers_total and fenced_writes_total, one series per source.
 func leaseMetricsHandler(es []*elector) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		var b strings.Builder
@@ -301,6 +343,7 @@ func leaseMetricsHandler(es []*elector) http.HandlerFunc {
 			{"lease_is_leader", "gauge", func(e *elector) int64 { return int64(e.isLeader.Load()) }},
 			{"lease_token", "gauge", func(e *elector) int64 { return e.token.Load() }},
 			{"lease_takeovers_total", "counter", func(e *elector) int64 { return e.takeovers.Load() }},
+			{"fenced_writes_total", "counter", func(e *elector) int64 { return e.fenced.Load() }},
 		}
 
 		for _, s := range series {
