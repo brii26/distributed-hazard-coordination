@@ -1,7 +1,8 @@
 // Problem 2 load test, run by tests/load/run.sh with k6.
 //
-//   bmkg_only  p95 latency of /hazards?type=SEISMIC (BMKG data) while PVMBG answers after 3 s
-// mixed      >= 50 concurrent connections for 60 s of mixed traffic, errors exclude the controlled 429
+//   bmkg_only    p95 latency of /hazards?type=SEISMIC (BMKG data) while PVMBG answers after 3 s
+//   volcanic_bg  /hazards?type=VOLCANIC traffic at the same time as bmkg_only, so a slow PVMBG request is in flight while the BMKG-only p95 is measured
+// mixed        >= 50 concurrent connections for 60 s of mixed traffic, errors exclude the controlled 429
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate } from 'k6/metrics';
@@ -26,6 +27,15 @@ export const options = {
       maxVUs: 20,
       exec: 'bmkgOnly',
     },
+    volcanic_bg: {
+      executor: 'constant-arrival-rate',
+      rate: 10,
+      timeUnit: '1s',
+      duration: '30s',
+      preAllocatedVUs: 15,
+      maxVUs: 40,
+      exec: 'volcanicBg',
+    },
     mixed: {
       executor: 'constant-vus',
       vus: VUS,
@@ -39,6 +49,12 @@ export const options = {
       'http_req_duration{scenario:bmkg_only}': ['p(95)<300'],
       'failed{scenario:mixed}': ['rate<0.01'],
       'failed{scenario:bmkg_only}': ['rate<0.01'],
+      'failed{scenario:volcanic_bg}': ['rate<0.01'],
+      'checks{scenario:bmkg_only}': ['rate>0.99'],
+      'http_reqs{scenario:bmkg_only,status:429}': ['count>=0'],
+      'http_reqs{scenario:volcanic_bg,status:429}': ['count>=0'],
+      'http_req_duration{scenario:volcanic_bg}': ['p(95)>=0'],
+      'http_req_duration{scenario:mixed}': ['p(95)>=0'],
     },
     ...statuses.map((s) => ({ [`http_reqs{scenario:mixed,status:${s}}`]: ['count>=0'] })),
   ),
@@ -63,6 +79,11 @@ function get(path, data) {
 export function bmkgOnly(data) {
   const res = get('/hazards?type=SEISMIC', data);
   check(res, { 'seismic 200': (r) => r.status === 200 });
+}
+
+export function volcanicBg(data) {
+  const res = get('/hazards?type=VOLCANIC', data);
+  check(res, { 'volcanic 200 or 429': (r) => r.status === 200 || r.status === 429 });
 }
 
 const mix = [
