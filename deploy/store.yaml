@@ -1,0 +1,79 @@
+# Sharded store: one Postgres per node. Aggregator picks the shard owners (see doc/P1_STORAGE_DESIGN.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: store
+spec:
+  clusterIP: None
+  selector:
+    role: store
+  ports:
+    - name: pg
+      port: 5432
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: store
+spec:
+  selector:
+    matchLabels:
+      role: store
+  template:
+    metadata:
+      labels:
+        role: store
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          args:
+            - -c
+            - bnpb.node_name=$(NODE_NAME)
+            - -c
+            - shared_buffers=128MB
+            - -c
+            - max_connections=60
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: password
+            - name: POSTGRES_DB
+              value: canonical_store
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "aggregator", "-d", "canonical_store"]
+            periodSeconds: 2
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: schema
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: data
+          hostPath:
+            path: /var/lib/bnpb-store
+            type: DirectoryOrCreate
+        - name: schema
+          configMap:
+            name: store-schema
