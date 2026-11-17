@@ -1,0 +1,63 @@
+# Overlay: three Canonical Store nodes instead of one, for the replica checks.
+# Use: docker compose -f docker-compose.yml -f compose.cluster.yml up
+# The aggregator finds the nodes through the shared network alias "store-cluster" and writes each record to two of them.
+x-store: &store
+  restart: unless-stopped
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_USER: ${CANONICAL_DB_USER:-aggregator}
+    POSTGRES_PASSWORD: ${CANONICAL_DB_PASSWORD}
+    POSTGRES_DB: ${CANONICAL_DB_NAME:-canonical_store}
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${CANONICAL_DB_USER:-aggregator} -d ${CANONICAL_DB_NAME:-canonical_store}"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+
+services:
+  store-1:
+    <<: *store
+    command: ["postgres", "-c", "bnpb.node_name=store-1"]
+    networks:
+      canonical-net:
+        aliases: [store-cluster]
+    volumes:
+      - store_1_data:/var/lib/postgresql/data
+      - ./services/aggregator/migrations:/docker-entrypoint-initdb.d:ro
+
+  store-2:
+    <<: *store
+    command: ["postgres", "-c", "bnpb.node_name=store-2"]
+    networks:
+      canonical-net:
+        aliases: [store-cluster]
+    volumes:
+      - store_2_data:/var/lib/postgresql/data
+      - ./services/aggregator/migrations:/docker-entrypoint-initdb.d:ro
+
+  store-3:
+    <<: *store
+    command: ["postgres", "-c", "bnpb.node_name=store-3"]
+    networks:
+      canonical-net:
+        aliases: [store-cluster]
+    volumes:
+      - store_3_data:/var/lib/postgresql/data
+      - ./services/aggregator/migrations:/docker-entrypoint-initdb.d:ro
+
+  aggregator:
+    depends_on:
+      store-1:
+        condition: service_healthy
+      store-2:
+        condition: service_healthy
+      store-3:
+        condition: service_healthy
+    environment:
+      STORE_SERVICE: store-cluster
+      STORE_DSN_TEMPLATE: postgres://${CANONICAL_DB_USER:-aggregator}:${CANONICAL_DB_PASSWORD}@%s:5432/${CANONICAL_DB_NAME:-canonical_store}?sslmode=disable
+
+volumes:
+  store_1_data:
+  store_2_data:
+  store_3_data:

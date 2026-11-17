@@ -68,8 +68,13 @@ func (s *store) close() error {
 	return s.db.Close()
 }
 
-// Writes h in one transaction. True if new or changed, false for an identical repeat.
-func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
+// Writes h to the store's own pool.
+func (s *store) upsert(ctx context.Context, h HazardEvent) (bool, error) {
+	return upsertOn(ctx, s.db, h)
+}
+
+// Writes h to db in one transaction. True if new or changed, false for an identical repeat.
+func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "canonical-store upsert")
 
@@ -88,7 +93,7 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (_ bool, err error) {
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
@@ -167,39 +172,9 @@ LIMIT $4 OFFSET $5`, q.HazardType, q.Severity, likeEscaper.Replace(q.Search), q.
 	var out []HazardEvent
 
 	for rows.Next() {
-		var (
-			h        HazardEvent
-			severity sql.NullString
-			area     sql.NullString
-			lat, lon sql.NullFloat64
-			attrs    []byte
-		)
-
-		if err := rows.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &severity, &area,
-			&lat, &lon, &h.OccurredAt, &h.IngestedAt, &attrs); err != nil {
+		h, err := scanHazard(rows)
+		if err != nil {
 			return nil, false, err
-		}
-
-		if severity.Valid {
-			h.Severity = &severity.String
-		}
-
-		if area.Valid {
-			h.AreaName = &area.String
-		}
-
-		if lat.Valid {
-			h.Latitude = &lat.Float64
-		}
-
-		if lon.Valid {
-			h.Longitude = &lon.Float64
-		}
-
-		if len(attrs) > 0 {
-			if err := json.Unmarshal(attrs, &h.Attributes); err != nil {
-				return nil, false, err
-			}
 		}
 
 		out = append(out, h)
@@ -226,4 +201,64 @@ func (s *store) ping(ctx context.Context) (err error) {
 	defer cancel()
 
 	return s.db.PingContext(ctx)
+}
+
+// Reads one hazard row from a row or rows, turning NULLs into nil pointers.
+func scanHazard(sc interface{ Scan(...any) error }) (HazardEvent, error) {
+	var (
+		h        HazardEvent
+		severity sql.NullString
+		area     sql.NullString
+		lat, lon sql.NullFloat64
+		attrs    []byte
+	)
+
+	if err := sc.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &severity, &area,
+		&lat, &lon, &h.OccurredAt, &h.IngestedAt, &attrs); err != nil {
+		return h, err
+	}
+
+	if severity.Valid {
+		h.Severity = &severity.String
+	}
+
+	if area.Valid {
+		h.AreaName = &area.String
+	}
+
+	if lat.Valid {
+		h.Latitude = &lat.Float64
+	}
+
+	if lon.Valid {
+		h.Longitude = &lon.Float64
+	}
+
+	if len(attrs) > 0 {
+		if err := json.Unmarshal(attrs, &h.Attributes); err != nil {
+			return h, err
+		}
+	}
+
+	return h, nil
+}
+
+// Reads one hazard by id from db. A missing row is (nil, nil).
+func getOn(ctx context.Context, db *sql.DB, id string) (*HazardEvent, error) {
+	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+	defer cancel()
+
+	h, err := scanHazard(db.QueryRowContext(ctx, `
+SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+       latitude, longitude, occurred_at, ingested_at, attributes
+FROM hazard_events WHERE hazard_id = $1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil //nolint:nilnil // not found is an answer, not an error
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &h, nil
 }
