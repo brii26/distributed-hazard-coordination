@@ -26,6 +26,7 @@ Postgres builds the tables from `store-schema` only on an empty data directory. 
 | `rabbitmq-credentials` | Secret | `make-secrets.sh` | `user`, `password` |
 | `auth-secrets` | Secret | `make-secrets.sh` | `jwt_signing_secret`, `secret_salt`, `seed_operator_password` |
 | `audit-token`, `pantai-token`, `satellite-token` | Secret | `make-secrets.sh` | `token` |
+| `grafana-admin` | Secret | `make-secrets.sh` (random, created once) | `password` for the Grafana user `admin` |
 | `pantai-key` | Secret | `make-secrets.sh` | `key`, the file from `PANTAI_KEY_FILE` |
 
 `make-secrets.sh` reads `.env` as plain `KEY=VALUE` lines and never runs it as shell. Values reach `kubectl` through a pipe, so they are not written to a file or shown in the process list. Never commit `.env`.

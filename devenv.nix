@@ -18,6 +18,9 @@ let
     "configmap-v1" = "sha256-4Ord69Z3wIqgkrLaImTYasT8NO7RErn6wpRbPwDB6bE=";
     "namespace-v1" = "sha256-Mk+uZ3uY0abVQ0DbDDNNBT6P+6/Os/czJuQd4mENWEM=";
     "secret-v1" = "sha256-3nYcywa9HSxkH7Vzl/YbaOf/U6OE8IF85A5d7YzuhvM=";
+    "serviceaccount-v1" = "sha256-gZPWw1YUdcbT1cROH67bHfU5BTc9kEvBcBVpQybWWc8=";
+    "clusterrole-rbac-v1" = "sha256-B3f5HE+gi9OYm224xZ2tBCmmPeyPWeiD/1XJR6FNDV8=";
+    "clusterrolebinding-rbac-v1" = "sha256-4tBHG0RM9+pP1p1+uhsW4GIVUDv7xlBFDCtq2bQPhjw=";
   };
   k8sSchemas = pkgs.linkFarm "k8s-schemas" (
     lib.mapAttrsToList (name: hash: {
@@ -44,6 +47,7 @@ in
     pkgs.graphviz
     pkgs.kubectl
     pkgs.kubeconform
+    pkgs.jq
     pkgs.protobuf
     pkgs.protoc-gen-go
     pkgs.protoc-gen-go-grpc

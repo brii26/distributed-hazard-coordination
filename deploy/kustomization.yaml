@@ -6,6 +6,20 @@ resources:
   - store.yaml
   - aggregator.yaml
   - observability/observability.yaml
+  - observability/grafana.yaml
+  - observability/kube-state-metrics.yaml
+configMapGenerator:
+  - name: grafana-datasource
+    namespace: sistem-informasi-kebencanaan-bnpb
+    files: [observability/grafana/datasource.yml]
+  - name: grafana-dashboards-provider
+    namespace: sistem-informasi-kebencanaan-bnpb
+    files: [observability/grafana/dashboards.yml]
+  - name: grafana-dashboards
+    namespace: sistem-informasi-kebencanaan-bnpb
+    files: [observability/grafana/dashboard.json]
+generatorOptions:
+  disableNameSuffixHash: true
 images:
   - name: aggregator
     newName: 10.77.0.11:5000/aggregator
