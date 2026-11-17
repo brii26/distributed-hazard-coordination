@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,13 +32,22 @@ func testStore(t *testing.T, poolSize int) *store {
 
 	t.Cleanup(func() { _ = s.close() })
 
-	ddl, err := os.ReadFile("migrations/001_hazard_events.sql")
+	files, err := filepath.Glob("migrations/*.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.db.ExecContext(context.Background(), string(ddl)); err != nil {
-		t.Fatal(err)
+	sort.Strings(files)
+
+	for _, f := range files {
+		ddl, err := os.ReadFile(f) //nolint:gosec // test reads the project's own migration files
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := s.db.ExecContext(context.Background(), string(ddl)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	return s

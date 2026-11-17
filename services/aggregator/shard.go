@@ -49,6 +49,7 @@ func shardOf(id string) int {
 // One store node: its name (from bnpb.node_name) and its Postgres pool.
 type node struct {
 	name string
+	ip   string // pod IP the pool was opened against, set by membership
 	db   *sql.DB
 }
 

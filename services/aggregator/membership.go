@@ -33,17 +33,23 @@ func (m *membership) refresh(ctx context.Context) {
 	ips, err := m.resolve(ctx)
 	now := m.now()
 
+	// Probe without the lock: each probe can take seconds and live() must not wait for it.
+	var found []*node
+
+	if err == nil {
+		for _, ip := range ips {
+			if n, nerr := m.nodeName(ctx, ip); nerr == nil {
+				n.ip = ip
+				found = append(found, n)
+			}
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, ip := range ips {
-		if err != nil {
-			break
-		}
-
-		if n, nerr := m.nodeName(ctx, ip); nerr == nil {
-			m.seen(n, now)
-		}
+	for _, n := range found {
+		m.seen(n, now)
 	}
 
 	for name, t := range m.lastSeen {
@@ -55,12 +61,17 @@ func (m *membership) refresh(ctx context.Context) {
 	}
 }
 
-// Marks n live. If the node is already known the fresh pool is closed and the old one kept.
+// Marks n live. If the node is known at the same IP the fresh pool is closed and the old one kept.
+// If the name came back on a new IP (recreated pod) the old pool is closed and the fresh one used.
 func (m *membership) seen(n *node, now time.Time) {
 	if old, ok := m.known[n.name]; ok {
-		closeNode(n)
+		if old.ip == n.ip {
+			closeNode(n)
 
-		n = old
+			n = old
+		} else {
+			closeNode(old)
+		}
 	}
 
 	m.lastSeen[n.name], m.known[n.name] = now, n

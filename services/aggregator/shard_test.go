@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -179,5 +181,80 @@ func TestMembershipGraceKeepsQuietNodeThenDropsIt(t *testing.T) {
 
 	if l := m.live(); len(l) != 1 || l[0].name != "n1" {
 		t.Fatalf("n2 should be dropped after grace, got %v", l)
+	}
+}
+
+func lazyDB(t *testing.T) *sql.DB {
+	t.Helper()
+
+	db, err := sql.Open("pgx", "postgres://x@127.0.0.1:1/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return db
+}
+
+func TestMembershipNewIPForSameNameReplacesAndClosesOldPool(t *testing.T) {
+	t.Parallel()
+
+	ip := "10.0.0.1"
+	dbs := map[string]*sql.DB{"10.0.0.1": lazyDB(t), "10.0.0.2": lazyDB(t)}
+	m := newMembership(
+		func(context.Context) ([]string, error) { return []string{ip}, nil },
+		func(_ context.Context, ip string) (*node, error) { return &node{name: "store-0", db: dbs[ip]}, nil },
+		30*time.Second,
+	)
+
+	m.refresh(t.Context())
+
+	ip = "10.0.0.2"
+
+	m.refresh(t.Context())
+
+	l := m.live()
+	if len(l) != 1 || l[0].db != dbs["10.0.0.2"] {
+		t.Fatalf("want the pool of the new IP, got %v", l)
+	}
+
+	if dbs["10.0.0.1"].PingContext(t.Context()) == nil || !strings.Contains(dbs["10.0.0.1"].PingContext(t.Context()).Error(), "closed") {
+		t.Fatal("old pool must be closed")
+	}
+
+	if err := dbs["10.0.0.2"].PingContext(t.Context()); err != nil && strings.Contains(err.Error(), "closed") {
+		t.Fatal("new pool must stay open")
+	}
+}
+
+func TestMembershipSlowProbeDoesNotBlockLive(t *testing.T) {
+	t.Parallel()
+
+	release, started := make(chan struct{}), make(chan struct{})
+	m := newMembership(
+		func(context.Context) ([]string, error) { return []string{"1"}, nil },
+		func(_ context.Context, _ string) (*node, error) {
+			close(started)
+			<-release
+
+			return &node{name: "n1"}, nil
+		},
+		time.Minute,
+	)
+
+	done := make(chan struct{})
+
+	go func() { m.refresh(context.Background()); close(done) }()
+
+	<-started
+
+	if len(m.live()) != 0 {
+		t.Fatal("nothing known yet")
+	}
+
+	close(release)
+	<-done
+
+	if len(m.live()) != 1 {
+		t.Fatal("n1 should be live after the probe")
 	}
 }
