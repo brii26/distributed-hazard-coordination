@@ -30,6 +30,8 @@ services:
     configs:
       - source: prometheus_config
         target: /etc/prometheus/prometheus.yml
+      - source: prometheus_rules
+        target: /etc/prometheus/rules.yml
 
   bmkg-mock:
     restart: unless-stopped
@@ -336,7 +338,7 @@ configs:
           backends:
             memory_store:
               memory:
-                max_traces: 100000
+                max_traces: 15000
           metric_backends:
             prometheus_store:
               prometheus:
@@ -374,10 +376,56 @@ configs:
     content: |
       global:
         scrape_interval: 15s
+      rule_files: [/etc/prometheus/rules.yml]
       scrape_configs:
         - job_name: aggregated-trace-metrics
           static_configs:
             - targets: ['jaeger:8889']
+  prometheus_rules:
+    content: |
+      groups:
+        - name: service-traffic
+          rules:
+            - alert: NoSpansFrom_bmkg_mock
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="bmkg-mock"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from bmkg-mock in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_pvmbg_mock
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="pvmbg-mock"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from pvmbg-mock in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_aggregator
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="aggregator"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from aggregator in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_auth_service
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="auth-service"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from auth-service in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_client_facing_api
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="client-facing-api"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from client-facing-api in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_dashboard_updater
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="dashboard-updater"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from dashboard-updater in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_notifier
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="notifier"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from notifier in 10m (down, not exporting, or idle)"}
+            - alert: NoSpansFrom_audit_logger
+              expr: absent_over_time(traces_span_metrics_calls_total{service_name="audit-logger"}[10m])
+              for: 5m
+              labels: {severity: warning}
+              annotations: {summary: "No spans from audit-logger in 10m (down, not exporting, or idle)"}
 
 volumes:
   canonical_store_data:
