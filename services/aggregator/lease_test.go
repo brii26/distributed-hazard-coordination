@@ -514,3 +514,20 @@ func TestPgLeaseConcurrentAcquireHasOneWinner(t *testing.T) { //nolint:parallelt
 		}
 	}
 }
+
+func TestPgLeaseAcceptsTheSensorSource(t *testing.T) { //nolint:paralleltest // shares the lease row with other runs
+	s := testStore(t, 4)
+	ctx := context.Background()
+	l := pgLease{db: s.db}
+
+	reset := func() {
+		_, _ = s.db.ExecContext(ctx, `UPDATE source_lease SET holder = NULL, expires_at = NULL WHERE source = 'SENSOR_PANTAI'`)
+	}
+
+	reset()
+	t.Cleanup(reset)
+
+	if _, ok, err := l.acquire(ctx, "SENSOR_PANTAI", newHazardID(), time.Minute); err != nil || !ok {
+		t.Fatalf("acquire SENSOR_PANTAI: ok=%v err=%v", ok, err)
+	}
+}
