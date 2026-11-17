@@ -5,6 +5,7 @@ resources:
   - configmap.yaml
   - store.yaml
   - aggregator.yaml
+  - sensor-pantai
   - observability/observability.yaml
   - observability/grafana.yaml
   - observability/kube-state-metrics.yaml

@@ -39,6 +39,10 @@ data:
   COOKIE_SECURE: "true"
   # Web frontend
   FRONTEND_POLL_INTERVAL_MS: "5000"
+  # Sensor Pantai (exam: deploy/overlays/exam)
+  PANTAI_PROFILE: practice
+  PANTAI_SEED: "42"
+  PANTAI_SPEED: "60"
   # Tracing
   TRACING_ENABLED: "true"
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
