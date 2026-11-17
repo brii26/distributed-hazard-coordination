@@ -33,11 +33,12 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 // Makes /volcanic-reports fail fast with 503 (no hang, no auto-recovery). /health stays 200 and reports outage_active, only the simulated upstream is down.
 var outageActive atomic.Bool
 
-func outageHandler(w http.ResponseWriter, _ *http.Request) {
+func outageHandler(w http.ResponseWriter, r *http.Request) {
+	_, l := adminCall(r)
 	active := !outageActive.Load()
 	outageActive.Store(active)
 
-	log.Printf("outage toggled: %t -> %t at %s", !active, active, time.Now().UTC().Format(time.RFC3339))
+	l.Info("outage toggled", "from", !active, "to", active)
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -61,13 +62,29 @@ func withOutage(next http.Handler) http.Handler {
 // Read by the /volcanic-reports generator and handler to decide whether reports carry confidence_level.
 var schemaExtended atomic.Bool
 
-func schemaVersionHandler(w http.ResponseWriter, _ *http.Request) {
-	extended := !schemaExtended.Load()
+// Sets the schema when the body has an integer "version" (1 legacy, 2 or more extended), otherwise toggles it. Any body is accepted.
+func schemaVersionHandler(w http.ResponseWriter, r *http.Request) {
+	raw, l := adminCall(r)
+
+	var req struct {
+		Version *int `json:"version"`
+	}
+
+	if json.Unmarshal(raw, &req) != nil {
+		req.Version = nil // any body is fine, unknown means toggle
+	}
+
+	was := schemaExtended.Load()
+	extended := !was
+
+	if req.Version != nil && *req.Version >= 1 {
+		extended = *req.Version >= 2
+	}
+
 	schemaExtended.Store(extended)
 	version := schemaVersion(extended)
 
-	log.Printf("schema-version toggled: %s -> %s at %s",
-		schemaVersion(!extended), version, time.Now().UTC().Format(time.RFC3339))
+	l.Info("schema-version changed", "version", req.Version, "from", schemaVersion(was), "to", version)
 
 	w.Header().Set("Content-Type", "application/json")
 
@@ -84,32 +101,12 @@ func schemaVersion(extended bool) string {
 	return "legacy"
 }
 
-// Guards /admin/* with the X-Admin-Key header: missing is 401, wrong is 403.
-func requireAdminKey(adminKey string, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-Admin-Key")
-		if key == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-
-			return
-		}
-
-		if !equal(key, adminKey) {
-			w.WriteHeader(http.StatusForbidden)
-
-			return
-		}
-
-		next(w, r)
-	}
-}
-
-func newMux(store *tokenStore, adminKey string, reports *reportStore, minDelay, maxDelay time.Duration) http.Handler {
+func newMux(store *tokenStore, reports *reportStore, minDelay, maxDelay time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("POST /oauth/token", store.tokenHandler)
-	mux.HandleFunc("POST /admin/outage", requireAdminKey(adminKey, outageHandler))
-	mux.HandleFunc("POST /admin/schema-version", requireAdminKey(adminKey, schemaVersionHandler))
+	mux.HandleFunc("POST /admin/outage", outageHandler)
+	mux.HandleFunc("POST /admin/schema-version", schemaVersionHandler)
 	mux.HandleFunc("GET /volcanic-reports", requireBearer(store, reportsHandler(reports, minDelay, maxDelay)))
 
 	return withRequestLog(withOutage(mux))
@@ -147,10 +144,9 @@ func main() {
 	clientID := os.Getenv("OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("OAUTH_CLIENT_SECRET")
 	oneTimeCode := os.Getenv("PVMBG_ONE_TIME_CODE")
-	adminKey := os.Getenv("ADMIN_KEY")
 
-	if clientID == "" || clientSecret == "" || oneTimeCode == "" || adminKey == "" {
-		log.Fatal("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, PVMBG_ONE_TIME_CODE and ADMIN_KEY must be set")
+	if clientID == "" || clientSecret == "" || oneTimeCode == "" {
+		log.Fatal("OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET and PVMBG_ONE_TIME_CODE must be set")
 	}
 
 	port, err := resolvePort(os.Getenv("PORT"))
@@ -201,7 +197,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr: ":" + port,
-		Handler: otelhttp.NewHandler(newMux(newTokenStore(clientID, clientSecret, oneTimeCode), adminKey, store,
+		Handler: otelhttp.NewHandler(newMux(newTokenStore(clientID, clientSecret, oneTimeCode), store,
 			time.Duration(delayMinMS)*time.Millisecond, time.Duration(delayMaxMS)*time.Millisecond), "http", otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" })),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

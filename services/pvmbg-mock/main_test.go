@@ -8,7 +8,23 @@ import (
 	"testing"
 )
 
-const testAdminKey = "admin-secret"
+const (
+	wantLegacy   = "legacy"
+	wantExtended = "extended"
+	bodyVersion2 = `{"version":2}`
+)
+
+// Starts a test from both switches off and puts them back off afterwards. Only for tests that are not parallel.
+func resetSwitches(t *testing.T) {
+	t.Helper()
+
+	outageActive.Store(false)
+	schemaExtended.Store(false)
+	t.Cleanup(func() {
+		outageActive.Store(false)
+		schemaExtended.Store(false)
+	})
+}
 
 func TestHealthHandler(t *testing.T) {
 	t.Parallel()
@@ -16,7 +32,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
+	newMux(newTestStore(), &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
@@ -44,15 +60,15 @@ func TestResolvePortInvalid(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // flips the shared switch state
 func TestOutageToggle(t *testing.T) {
-	t.Parallel()
+	resetSwitches(t)
 
 	do := func(method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequestWithContext(context.Background(), method, path, nil)
-		req.Header.Set("X-Admin-Key", testAdminKey)
 
-		newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
+		newMux(newTestStore(), &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 		return rec
 	}
@@ -81,16 +97,15 @@ func TestOutageToggle(t *testing.T) {
 	}
 }
 
+//nolint:paralleltest // flips the shared switch state
 func TestSchemaVersionToggle(t *testing.T) {
-	t.Parallel()
+	resetSwitches(t)
 
-	for _, want := range []string{"extended", "legacy"} {
+	for _, want := range []string{wantExtended, wantLegacy} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/admin/schema-version", nil)
-		req.Header.Set("X-Admin-Key", testAdminKey)
-
 		rec := httptest.NewRecorder()
 
-		newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
+		newMux(newTestStore(), &reportStore{}, 0, 0).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("expected 200 with %q, got %d %s", want, rec.Code, rec.Body.String())
@@ -98,22 +113,61 @@ func TestSchemaVersionToggle(t *testing.T) {
 	}
 }
 
-func TestAdminKeyRequired(t *testing.T) {
-	t.Parallel()
+// Both admin routes work without any credential and always answer 200, whatever the body.
+//
+//nolint:paralleltest // flips the shared switch state
+func TestAdminOpenWithoutKey(t *testing.T) {
+	resetSwitches(t)
 
-	for _, path := range []string{"/admin/outage", "/admin/schema-version"} {
-		for key, want := range map[string]int{"": http.StatusUnauthorized, "wrong": http.StatusForbidden} {
-			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, nil)
-			if key != "" {
-				req.Header.Set("X-Admin-Key", key)
-			}
-
-			rec := httptest.NewRecorder()
-			newMux(newTestStore(), testAdminKey, &reportStore{}, 0, 0).ServeHTTP(rec, req)
-
-			if rec.Code != want {
-				t.Fatalf("%s with key %q: expected %d, got %d", path, key, want, rec.Code)
-			}
+	post := func(path, body string, headers map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(body))
+		for k, v := range headers {
+			req.Header.Set(k, v)
 		}
+
+		rec := httptest.NewRecorder()
+		newMux(newTestStore(), &reportStore{}, 0, 0).ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	cases := []struct {
+		name, body, want string
+		start            bool // schema state before the call
+	}{
+		{"empty toggles on", "", wantExtended, false},
+		{"empty toggles off", "", wantLegacy, true},
+		{"version 2 sets extended", bodyVersion2, wantExtended, false},
+		{"version 2 twice stays extended", bodyVersion2, wantExtended, true},
+		{"version 5 is extended", `{"version":5}`, wantExtended, false},
+		{"version 1 sets legacy", `{"version":1}`, wantLegacy, true},
+		{"version 0 toggles", `{"version":0}`, wantExtended, false},
+		{"negative toggles", `{"version":-3}`, wantLegacy, true},
+		{"not json toggles", `not json`, wantExtended, false},
+		{"array toggles", `[1]`, wantLegacy, true},
+		{"null toggles", `null`, wantExtended, false},
+		{"string version toggles", `{"version":"2"}`, wantLegacy, true},
+		{"2 KB body toggles", `{"version":1,"pad":"` + strings.Repeat("x", 2048) + `"}`, wantExtended, false},
+	}
+
+	for _, tc := range cases {
+		schemaExtended.Store(tc.start)
+
+		rec := post("/admin/schema-version", tc.body, nil)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"`+tc.want+`"`) {
+			t.Fatalf("%s: expected 200 %q, got %d %s", tc.name, tc.want, rec.Code, rec.Body.String())
+		}
+	}
+
+	if rec := post("/admin/schema-version", "", map[string]string{"X-Admin-Key": "whatever"}); rec.Code != http.StatusOK {
+		t.Fatalf("a stray key header must be ignored, got %d", rec.Code)
+	}
+
+	if rec := post("/admin/outage", "ignored", nil); rec.Code != http.StatusOK || !outageActive.Load() {
+		t.Fatalf("outage without key: got %d, active %t", rec.Code, outageActive.Load())
+	}
+
+	if rec := post("/admin/outage", "", nil); rec.Code != http.StatusOK || outageActive.Load() {
+		t.Fatalf("outage second toggle: got %d, active %t", rec.Code, outageActive.Load())
 	}
 }
