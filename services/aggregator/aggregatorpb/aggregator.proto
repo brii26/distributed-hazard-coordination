@@ -25,6 +25,12 @@ service Aggregator {
   // OK with meta.stale_since set for stale data, UNAVAILABLE when the source is
   // down and nothing is stored, RESOURCE_EXHAUSTED past MAX_INFLIGHT_REQUESTS.
   rpc GetHazards(GetHazardsRequest) returns (GetHazardsResponse);
+  // Cross-shard list of all hazard types, ordered by ingested_at then hazard_id,
+  // newest first. Always OK; a shard with no reachable copy sets partial.
+  rpc ListHazards(ListHazardsRequest) returns (ListHazardsResponse);
+  // One hazard by id: primary copy, then the replica. NOT_FOUND when neither has
+  // it, UNAVAILABLE when no copy could be reached.
+  rpc GetHazard(GetHazardRequest) returns (GetHazardResponse);
   rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
 }
 
@@ -41,6 +47,28 @@ message GetHazardsResponse {
   repeated HazardEvent data = 1;
   ResponseMeta meta = 2;
   bool has_more = 3; // another page follows this one
+}
+
+message ListHazardsRequest {
+  int32 limit = 1;   // 0 means the default (50), capped at 200
+  string cursor = 2; // opaque, from the previous page's next_cursor; empty for the first page
+}
+
+message ListHazardsResponse {
+  repeated HazardEvent data = 1;
+  string next_cursor = 2; // empty on the last page
+  bool has_more = 3;
+  bool partial = 4;                      // some records may be missing
+  repeated string unavailable_units = 5; // units with no reachable copy, e.g. "shard-3"
+}
+
+message GetHazardRequest {
+  string hazard_id = 1;
+}
+
+message GetHazardResponse {
+  HazardEvent event = 1;
+  repeated string placement = 2; // "unit@node" per copy, primary first
 }
 
 // HazardEvent is the canonical record (TRD 3.2). Fields a source may not give are
