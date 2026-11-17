@@ -112,6 +112,8 @@ flowchart LR
 - Unknown fields go to a JSONB `attributes` column, so the table never needs a migration and the Aggregator never restarts.
 - Old rows stay as they were. A field that changes meaning, or a moved endpoint, is a documented limit.
 
+Problem 3 schema policy: a PVMBG record must carry all six contract fields with their contract types. A record that misses one, sends `null`, or changes a type is rejected with a `schema_incompatible: ...` reason instead of being stored with nulls. New fields still go to `attributes`, and BMKG keeps the tolerant policy above. See [doc/P3_SCHEMA_POLICY.md](doc/P3_SCHEMA_POLICY.md).
+
 ---
 
 ### Problem 2: a slow or failing source must not drag the others down

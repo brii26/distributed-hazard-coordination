@@ -3,7 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -92,6 +95,15 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	}, nil
 }
 
+// One rejected record and its position in the batch, so the caller can keep the record itself.
+type recordError struct {
+	index int
+	err   error
+}
+
+func (e *recordError) Error() string { return e.err.Error() }
+func (e *recordError) Unwrap() error { return e.err }
+
 // Maps every record and reports rejected ones together, so one bad record never fails the whole poll.
 func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, error)) ([]HazardEvent, error) {
 	var (
@@ -99,10 +111,10 @@ func mapAll(records []map[string]any, fn func(map[string]any) (HazardEvent, erro
 		errs []error
 	)
 
-	for _, r := range records {
+	for i, r := range records {
 		h, err := fn(r)
 		if err != nil {
-			errs = append(errs, err)
+			errs = append(errs, &recordError{i, err})
 
 			continue
 		}
@@ -211,6 +223,10 @@ func (m *mapper) mapVolcanic(reports []map[string]any) ([]HazardEvent, error) {
 }
 
 func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
+	if err := checkContract(sourcePVMBG, r); err != nil {
+		return HazardEvent{}, err
+	}
+
 	used := map[string]bool{}
 
 	h, err := m.base(sourcePVMBG, typeVolcanic, r, "report_id", "reported_at", used)
@@ -244,7 +260,32 @@ func (h *HazardEvent) addLeftovers(r map[string]any, used map[string]bool) {
 	}
 }
 
-// Source fields by name and JSON type as the contract defines them, used to spot schema drift.
+// A record that breaks the declared source contract. Retrying cannot help until the mapping changes.
+type IncompatibleSchema struct{ Reason string } //nolint:errname // the name is the interface later issues use
+
+func (e *IncompatibleSchema) Error() string { return e.Reason }
+
+// Checks that every contract field is present, not null and of its contract type. Other fields are fine, they go to attributes.
+func checkContract(kind string, r map[string]any) error {
+	var bad []string
+
+	for _, k := range slices.Sorted(maps.Keys(knownFields[kind])) {
+		want := knownFields[kind][k]
+		if v, ok := r[k]; !ok || v == nil {
+			bad = append(bad, fmt.Sprintf("field '%s' missing", k))
+		} else if got := jsonKind(v); got != want {
+			bad = append(bad, fmt.Sprintf("field '%s' changed from %s to %s", k, want, got))
+		}
+	}
+
+	if len(bad) == 0 {
+		return nil
+	}
+
+	return &IncompatibleSchema{Reason: "schema_incompatible: " + strings.Join(bad, "; ")}
+}
+
+// Source fields by name and JSON type as the contract defines them. Logging uses all of them; the PVMBG entry is also the contract checkContract enforces.
 var knownFields = map[string]map[string]string{
 	sourceBMKG: {
 		"event_id": "string", "magnitude": "number", "depth_km": "number", "epicenter_lat": "number", "epicenter_lon": "number",
@@ -273,7 +314,7 @@ func jsonKind(v any) string {
 	case []any:
 		return "list"
 	default:
-		return "other"
+		return "object"
 	}
 }
 
