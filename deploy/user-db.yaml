@@ -1,0 +1,99 @@
+# Needs the Secrets user-db-credentials and auth-secrets (make-secrets.sh) and the ConfigMap user-db-init (make-schema.sh).
+# The data lives on a local-path PVC. Deleting the pod and the PVC gives an empty directory, so Postgres
+# runs the init scripts again: the schema and the seed Operator account come back.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: user-db
+spec:
+  clusterIP: None
+  selector:
+    app: user-db
+  ports:
+    - name: pg
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: user-db
+spec:
+  serviceName: user-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-db
+  template:
+    metadata:
+      labels:
+        app: user-db
+        role: store
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: user-db-credentials
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-db-credentials
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: USER_DB_NAME
+            - name: SEED_OPERATOR_EMAIL
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: SEED_OPERATOR_EMAIL
+            - name: SEED_OPERATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: seed_operator_password
+            - name: SECRET_SALT
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: secret_salt
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: pg
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 3
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init
+          configMap:
+            name: user-db-init
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi

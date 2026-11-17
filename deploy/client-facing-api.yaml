@@ -1,0 +1,75 @@
+# NodePort 30081 serves the API directly, the web frontend also proxies it under /api.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: client-facing-api
+spec:
+  type: NodePort
+  selector:
+    app: client-facing-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: client-facing-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client-facing-api
+  template:
+    metadata:
+      labels:
+        app: client-facing-api
+        role: api
+    spec:
+      containers:
+        - name: client-facing-api
+          image: client-facing-api
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: bnpb-config
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AGGREGATOR_GRPC_ADDR
+              value: aggregator:9091
+            - name: AUTH_SERVICE_GRPC_ADDR
+              value: auth-service:9092
+            - name: JWT_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: jwt_signing_secret
+            - name: MAX_INFLIGHT_REQUESTS
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
