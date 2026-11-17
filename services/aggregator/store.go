@@ -37,6 +37,28 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
        EXCLUDED.attributes)
 RETURNING hazard_id, (xmax = 0) AS inserted`
 
+// The retry path's upsert: the same statement, but it writes nothing when the stored row was ingested after $13 (the failure time), so an old record never overwrites a newer one.
+var guardedUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND hazard_events.ingested_at <= $13::timestamptz\nRETURNING", 1)
+
+var errSuperseded = errors.New("a newer write exists")
+
+type notNewerThanKey struct{}
+
+// Makes upserts under ctx skip a stored row ingested after t and return errSuperseded.
+func withNotNewerThan(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, notNewerThanKey{}, t)
+}
+
+// Only labels a skipped guarded upsert as superseded. The write decision was already made atomically by the upsert itself.
+func storedIsNewer(ctx context.Context, tx *sql.Tx, h HazardEvent, guard time.Time) bool {
+	var newer bool
+
+	err := tx.QueryRowContext(ctx, `SELECT ingested_at > $3::timestamptz FROM hazard_events WHERE source = $1 AND source_ref_id = $2`,
+		h.Source, h.SourceRefID, guard).Scan(&newer)
+
+	return err == nil && newer
+}
+
 // The only door to the Canonical Store. *sql.DB is a pool, safe for concurrent use.
 type store struct {
 	db *sql.DB
@@ -105,14 +127,26 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 		inserted bool
 	)
 
-	err = tx.QueryRowContext(ctx, upsertSQL,
+	query := upsertSQL
+	args := []any{
 		h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
 		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID),
-	).Scan(&id, &inserted)
+	}
+
+	guard, guarded := ctx.Value(notNewerThanKey{}).(time.Time)
+	if guarded {
+		query, args = guardedUpsertSQL, append(args, guard)
+	}
+
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&id, &inserted)
 
 	changed := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
+	}
+
+	if guarded && !changed && storedIsNewer(ctx, tx, h, guard) {
+		return false, errSuperseded
 	}
 
 	if err = tx.Commit(); err != nil {

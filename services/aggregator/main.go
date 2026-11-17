@@ -267,10 +267,20 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		return err
 	}
 
+	rc, err := loadRetryConfig()
+	if err != nil {
+		return err
+	}
+
+	worker := &retryWorker{q: db, upsert: upsert, publish: pub.publish, cfg: rc}
+
+	wg.Go(func() { worker.run(ctx) })
+
 	var electors []*elector
 
 	for _, p := range newPipelines(pc, upsert, pub.publish) {
 		breakers[p.poller.name] = p.poller.breaker
+		p.ingest.fail, p.ingest.retry = db.insertFailed, rc
 
 		p.lease = newElector(p.poller.name, lc, pgLease{db: db.db})
 		electors = append(electors, p.lease)
@@ -294,7 +304,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}()
 
 	mux := newMux(api)
-	mux.HandleFunc("GET /metrics", leaseMetricsHandler(electors))
+	mux.HandleFunc("GET /metrics", metricsHandler(leaseMetricsHandler(electors), &failedMetrics{counts: db.failedCounts, w: worker}))
 
 	srv := &http.Server{
 		Addr:              ":" + port,

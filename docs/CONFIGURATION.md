@@ -43,6 +43,9 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `CB_OPEN_DURATION_MS` | aggregator | 10000 | How long the breaker stays open before a trial poll |
 | `AGGREGATOR_MAX_INFLIGHT_REQUESTS` | aggregator | 100 | Concurrency cap of the gRPC read API (`RESOURCE_EXHAUSTED` beyond it) |
 | `DB_POOL_SIZE` | aggregator | 20 | Connection pool to the Canonical Store |
+| `RETRY_BASE` / `RETRY_CAP` | aggregator | 10s / 10m | First wait before a failed record is retried, and the longest wait. The wait doubles per failure, with jitter |
+| `RETRY_MAX_ATTEMPTS` | aggregator | 8 | The failure that reaches this number parks the record (no more automatic retries) |
+| `RETRY_POLL` | aggregator | 5s | How often the retry worker looks for due records |
 | `LEASE_TTL` / `LEASE_RENEW_INTERVAL` | aggregator (Kubernetes) | 15s / 3s | How long the polling lease lasts and how often the holder renews it. Read once the lease code lands |
 | `JWT_SIGNING_SECRET` | auth-service, client-facing-api | none | Shared HMAC secret for JWTs |
 | `SECRET_SALT` | user-db, auth-service | none | Salt in `sha256(password + salt)`; the User DB seed uses it too |
