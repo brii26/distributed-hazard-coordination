@@ -43,6 +43,7 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `CB_OPEN_DURATION_MS` | aggregator | 10000 | How long the breaker stays open before a trial poll |
 | `AGGREGATOR_MAX_INFLIGHT_REQUESTS` | aggregator | 100 | Concurrency cap of the gRPC read API (`RESOURCE_EXHAUSTED` beyond it) |
 | `DB_POOL_SIZE` | aggregator | 20 | Connection pool to the Canonical Store |
+| `LEASE_TTL` / `LEASE_RENEW_INTERVAL` | aggregator (Kubernetes) | 15s / 3s | How long the polling lease lasts and how often the holder renews it. Read once the lease code lands |
 | `JWT_SIGNING_SECRET` | auth-service, client-facing-api | none | Shared HMAC secret for JWTs |
 | `SECRET_SALT` | user-db, auth-service | none | Salt in `sha256(password + salt)`; the User DB seed uses it too |
 | `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Access token lifetime for every role (seconds) |
@@ -57,6 +58,10 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `WEB_FRONTEND_PORT` | web-frontend | 3000 | Host port of the web frontend |
 | `CLIENT_FACING_API_BASE_URL` | web-frontend (build) | /api | API base the static app calls; `/api` goes through the frontend's own nginx |
 | `FRONTEND_POLL_INTERVAL_MS` | web-frontend (build) | 5000 | How often the hazards page refreshes |
+| `AUDIT_TOKEN` | Kubernetes Secret `audit-token` | change-me | Token for the Internal Audit API |
+| `SATELLITE_GROUP_TOKEN` | Kubernetes Secret `satellite-token` | change-me | Group token for the assistants' satellite feed |
+| `PANTAI_AUTH_TOKEN` | Kubernetes Secret `pantai-token` | change-me | Bearer token the Sensor Pantai checks |
+| `PANTAI_KEY_FILE` | `deploy/make-secrets.sh` | empty | Path of the exam key file given by the assistants. Empty uses a placeholder for Secret `pantai-key` |
 
 Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8095), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default).
 
