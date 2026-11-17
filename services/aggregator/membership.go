@@ -97,14 +97,14 @@ func (m *membership) live() []*node {
 }
 
 // Resolves the headless Service name to the IPs of its ready pods.
-func dnsResolver(service string) func(context.Context) ([]string, error) { //nolint:unused // used once the router is wired in
+func dnsResolver(service string) func(context.Context) ([]string, error) {
 	return func(ctx context.Context) ([]string, error) {
 		return net.DefaultResolver.LookupHost(ctx, service)
 	}
 }
 
 // Opens a small pool to the pod at ip (dsnTemplate has one %s for the host) and reads its node name.
-func pgNodeName(dsnTemplate string) func(context.Context, string) (*node, error) { //nolint:unused // used once the router is wired in
+func pgNodeName(dsnTemplate string) func(context.Context, string) (*node, error) {
 	return func(ctx context.Context, ip string) (*node, error) {
 		db, err := sql.Open("pgx", fmt.Sprintf(dsnTemplate, ip))
 		if err != nil {

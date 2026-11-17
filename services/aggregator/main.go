@@ -121,6 +121,35 @@ func loadStore() (*store, error) {
 	return openStore(url, poolSize)
 }
 
+// Picks where writes go. With STORE_SERVICE set, membership keeps a node list fresh every 2 s and writes go to two owners; without it, to the single DATABASE_URL store.
+func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardEvent) (bool, error), error) {
+	service := os.Getenv("STORE_SERVICE")
+	if service == "" {
+		return db.upsert, nil
+	}
+
+	tmpl := os.Getenv("STORE_DSN_TEMPLATE")
+	if tmpl == "" {
+		return nil, errors.New("STORE_DSN_TEMPLATE must be set when STORE_SERVICE is")
+	}
+
+	m := newMembership(dnsResolver(service), pgNodeName(tmpl), 30*time.Second)
+	m.refresh(ctx)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+				m.refresh(ctx)
+			}
+		}
+	}()
+
+	return newCluster(m.live).upsert, nil
+}
+
 // Binds the gRPC read API on GRPC_PORT. A taken port stops the service at start.
 func startReadAPI(db *store, pub *publisher, breakers map[string]*breaker) (*readAPI, *grpc.Server, net.Listener, error) {
 	port, err := resolvePort(os.Getenv("GRPC_PORT"), defaultGRPCPort)
@@ -213,6 +242,11 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	defer func() { _ = db.close() }()
 
+	upsert, err := chooseUpsert(ctx, db)
+	if err != nil {
+		return err
+	}
+
 	var wg sync.WaitGroup
 
 	breakers := map[string]*breaker{}
@@ -226,7 +260,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	pubWG.Go(func() { pub.run(pubCtx) })
 
-	for _, p := range newPipelines(pc, db.upsert, pub.publish) {
+	for _, p := range newPipelines(pc, upsert, pub.publish) {
 		breakers[p.poller.name] = p.poller.breaker
 
 		wg.Go(func() { p.run(ctx) })
