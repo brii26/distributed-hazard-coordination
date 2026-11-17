@@ -40,6 +40,8 @@ spec:
           env:
             - name: PORT
               value: "8080"
+            - name: NOTIFIER_URL
+              value: http://notifier:8094
             - name: AGGREGATOR_GRPC_ADDR
               value: aggregator:9091
             - name: AUTH_SERVICE_GRPC_ADDR

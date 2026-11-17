@@ -279,6 +279,15 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	pubWG.Go(func() { pub.run(pubCtx) })
 
+	criticalQueue := os.Getenv("CRITICAL_QUEUE_NAME")
+	if criticalQueue == "" {
+		criticalQueue = defaultCriticalQueue
+	}
+
+	relay := newCriticalRelay(pgOutbox{db: db.db}, dialCritical(rabbitURL, criticalQueue))
+
+	pubWG.Go(func() { relay.run(pubCtx) })
+
 	lc, err := loadLeaseConfig()
 	if err != nil {
 		return err
@@ -289,6 +298,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	for _, p := range newPipelines(pc, upsert, pub.publish) {
 		breakers[p.poller.name] = p.poller.breaker
 
+		p.ingest.stage = relay.stage
 		p.lease = newElector(p.poller.name, lc, pgLease{db: db.db})
 		electors = append(electors, p.lease)
 		p.poller.loadSince = func(ctx context.Context) (time.Time, error) { return db.lastOccurred(ctx, p.poller.name) }
@@ -319,6 +329,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	leaseMetrics := leaseMetricsHandler(electors)
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		leaseMetrics(w, r)
+		relay.writeMetrics(w)
 
 		if pc.pantai != nil {
 			pc.pantai.rejects.writeMetrics(w)
