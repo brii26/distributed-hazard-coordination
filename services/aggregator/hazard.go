@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -32,6 +33,9 @@ type HazardEvent struct {
 	OccurredAt  time.Time      `json:"occurred_at"`
 	IngestedAt  time.Time      `json:"ingested_at"`
 	Attributes  map[string]any `json:"attributes"`
+
+	// The attributes exactly as stored, set when read from a database. The audit API returns these so numbers keep their format.
+	RawAttributes json.RawMessage `json:"-"`
 }
 
 // Random UUID v4, no dependency.

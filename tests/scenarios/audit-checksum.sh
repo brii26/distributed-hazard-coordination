@@ -5,7 +5,7 @@
 set -euo pipefail
 
 url=${AUDIT_URL:-http://localhost:8091}
-token=${AUDIT_TOKEN:-change-me}
+token=${AUDIT_TOKEN:?set AUDIT_TOKEN}
 source=${1:-BMKG}
 auth=(-H "Authorization: Bearer $token")
 

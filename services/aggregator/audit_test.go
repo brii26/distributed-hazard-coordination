@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,11 +39,11 @@ func auditGet(t *testing.T, a *readAPI, path, token string) (int, string) {
 }
 
 // Walks every events page and returns the items plus the last page.
-func auditWalk(t *testing.T, a *readAPI, query string) ([]HazardEvent, auditEventsResponse) {
+func auditWalk(t *testing.T, a *readAPI, query string) ([]auditItem, auditEventsResponse) {
 	t.Helper()
 
 	var (
-		all    []HazardEvent
+		all    []auditItem
 		cursor string
 		resp   auditEventsResponse
 	)
@@ -97,6 +98,77 @@ func TestAuditRejectsBadTokenWithExactBody(t *testing.T) {
 	if code, _ := auditGet(t, a, "/internal/audit/events", testAuditToken); code != http.StatusOK {
 		t.Fatalf("right token: %d", code)
 	}
+}
+
+func TestAuditEmptyTokenRefusesEverything(t *testing.T) {
+	t.Parallel()
+
+	a := &readAPI{cl: newFake().listCluster("a", "b", "c")}
+
+	for _, tok := range []string{"-", "", "anything"} {
+		for _, p := range []string{"/internal/audit/events", "/internal/audit/checksum?source=BMKG"} {
+			if code, _ := auditGet(t, a, p, tok); code != http.StatusUnauthorized {
+				t.Fatalf("%s token %q: %d", p, tok, code)
+			}
+		}
+	}
+}
+
+// Real SQL: attributes come back exactly as stored, 5.0 stays 5.0 and an integer above 2^53 stays exact. Skips without CANONICAL_DB_TEST_URL.
+func TestAuditAttributesAreRawOnRealDB(t *testing.T) { //nolint:paralleltest // shared database
+	s := testStore(t, 2)
+	ctx := context.Background()
+	h := hazard(sourcePVMBG, ref(t, s))
+
+	if _, err := s.upsert(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.db.ExecContext(ctx, `UPDATE hazard_events SET attributes = '{"x": 5.0, "big": 9007199254740993}'::jsonb WHERE hazard_id = $1::uuid`, h.HazardID); err != nil {
+		t.Fatal(err)
+	}
+
+	var stored string
+	if err := s.db.QueryRowContext(ctx, `SELECT attributes::text FROM hazard_events WHERE hazard_id = $1::uuid`, h.HazardID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := listShardOn(ctx, s.db, shardOf(h.HazardID), nil, 1000, listFilter{Source: sourcePVMBG})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, e := range rows {
+		if e.HazardID != h.HazardID {
+			continue
+		}
+
+		out, err := json.Marshal(newAuditItem(e))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var back struct {
+			Attributes json.RawMessage `json:"attributes"`
+		}
+
+		if err := json.Unmarshal(out, &back); err != nil {
+			t.Fatal(err)
+		}
+
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, []byte(stored)); err != nil {
+			t.Fatal(err)
+		}
+
+		if string(back.Attributes) != compact.String() || !strings.Contains(stored, "5.0") || !strings.Contains(stored, "9007199254740993") {
+			t.Fatalf("got %s, stored %s", back.Attributes, stored)
+		}
+
+		return
+	}
+
+	t.Fatal("row not listed")
 }
 
 func TestAuditEventsPagesAscendingExactlyOnce(t *testing.T) {

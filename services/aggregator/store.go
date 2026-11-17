@@ -238,6 +238,8 @@ func scanHazard(sc interface{ Scan(...any) error }) (HazardEvent, error) {
 		if err := json.Unmarshal(attrs, &h.Attributes); err != nil {
 			return h, err
 		}
+
+		h.RawAttributes = attrs
 	}
 
 	return h, nil

@@ -2,7 +2,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -277,7 +276,11 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}
 
 	api.cl = cl
-	api.auditTok = cmp.Or(os.Getenv("AUDIT_TOKEN"), "change-me")
+	api.auditTok = os.Getenv("AUDIT_TOKEN")
+
+	if api.auditTok == "" {
+		log.Print("WARNING: AUDIT_TOKEN is empty, every audit request will be refused")
+	}
 
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {

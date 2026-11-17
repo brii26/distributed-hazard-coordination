@@ -61,11 +61,29 @@ func knownSource(s string) bool {
 	return s == sourceBMKG || s == sourcePVMBG
 }
 
+// A hazard with its attributes as raw JSON, so stored numbers come out byte for byte.
+type auditItem struct {
+	HazardEvent
+
+	Attributes json.RawMessage `json:"attributes"`
+}
+
+func newAuditItem(e HazardEvent) auditItem {
+	e.OccurredAt, e.IngestedAt = e.OccurredAt.UTC(), e.IngestedAt.UTC()
+
+	raw := e.RawAttributes
+	if raw == nil {
+		raw, _ = json.Marshal(e.Attributes)
+	}
+
+	return auditItem{HazardEvent: e, Attributes: raw}
+}
+
 type auditEventsResponse struct {
-	Items            []HazardEvent `json:"items"`
-	NextCursor       *string       `json:"next_cursor"`
-	Partial          bool          `json:"partial"`
-	UnavailableUnits []string      `json:"unavailable_units"`
+	Items            []auditItem `json:"items"`
+	NextCursor       *string     `json:"next_cursor"`
+	Partial          bool        `json:"partial"`
+	UnavailableUnits []string    `json:"unavailable_units"`
 }
 
 // Reads and checks the events query. A non-empty msg is the 400 message.
@@ -118,11 +136,10 @@ func (a *readAPI) auditEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, more, unavailable := a.cl.list(r.Context(), limit, after, f)
 
-	resp := auditEventsResponse{Items: []HazardEvent{}, Partial: len(unavailable) > 0, UnavailableUnits: nonNil(unavailable)}
+	resp := auditEventsResponse{Items: []auditItem{}, Partial: len(unavailable) > 0, UnavailableUnits: nonNil(unavailable)}
 
 	for _, e := range events {
-		e.OccurredAt, e.IngestedAt = e.OccurredAt.UTC(), e.IngestedAt.UTC()
-		resp.Items = append(resp.Items, e)
+		resp.Items = append(resp.Items, newAuditItem(e))
 	}
 
 	if more && len(events) > 0 {
