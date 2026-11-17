@@ -20,8 +20,34 @@ type cluster struct {
 
 	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error)
 
+	// Whether a node holds a shard in full (shard_state). Nil means every copy counts as synced.
+	isSynced func(name string, shard int) bool
+
 	mu    sync.Mutex
 	dirty map[int]bool
+}
+
+// Owners with synced copies first, so a joined node that is still empty answers only as a last resort. The original order is kept inside each group.
+func (c *cluster) syncedFirst(shard int, own []copyRef) []copyRef {
+	if c.isSynced == nil || len(own) < 2 {
+		return own
+	}
+
+	out := make([]copyRef, 0, len(own))
+
+	for _, o := range own {
+		if c.isSynced(o.node.name, shard) {
+			out = append(out, o)
+		}
+	}
+
+	for _, o := range own {
+		if !c.isSynced(o.node.name, shard) {
+			out = append(out, o)
+		}
+	}
+
+	return out
 }
 
 func newCluster(live func() []*node) *cluster {
@@ -124,7 +150,7 @@ func (c *cluster) get(ctx context.Context, id string) (*HazardEvent, []copyRef, 
 		answered bool
 	)
 
-	for _, o := range own {
+	for _, o := range c.syncedFirst(shardOf(id), own) {
 		cctx, cancel := context.WithTimeout(ctx, copyTimeout)
 		h, err := c.read(cctx, o.node, id)
 

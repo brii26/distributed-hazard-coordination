@@ -15,8 +15,11 @@ type membership struct {
 	nodeName func(ctx context.Context, ip string) (*node, error)
 	grace    time.Duration
 	now      func() time.Time
+	// Reads which shards a node holds in full. Nil: not tracked, every copy counts as synced.
+	syncState func(ctx context.Context, n *node) (map[int]bool, error)
 
 	mu       sync.Mutex
+	synced   map[string]map[int]bool
 	lastSeen map[string]time.Time
 	known    map[string]*node
 }
@@ -24,8 +27,20 @@ type membership struct {
 func newMembership(resolve func(context.Context) ([]string, error), nodeName func(context.Context, string) (*node, error), grace time.Duration) *membership {
 	return &membership{
 		resolve: resolve, nodeName: nodeName, grace: grace, now: time.Now,
-		lastSeen: map[string]time.Time{}, known: map[string]*node{},
+		lastSeen: map[string]time.Time{}, known: map[string]*node{}, synced: map[string]map[int]bool{},
 	}
+}
+
+// True when the node holds the shard in full. Without tracking, or before the first read of a node, an absent row means not synced only when tracking is on.
+func (m *membership) isSynced(name string, shard int) bool {
+	if m.syncState == nil {
+		return true
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return m.synced[name][shard]
 }
 
 // One refresh. A node that answers is live. One that went quiet stays live until grace has passed, so a fast pod restart moves no data.
@@ -45,8 +60,23 @@ func (m *membership) refresh(ctx context.Context) {
 		}
 	}
 
+	// Shard state of each answering node, also read outside the lock. A failed read keeps the old view.
+	state := map[string]map[int]bool{}
+
+	if m.syncState != nil {
+		for _, n := range found {
+			if s, serr := m.syncState(ctx, n); serr == nil {
+				state[n.name] = s
+			}
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	for name, s := range state {
+		m.synced[name] = s
+	}
 
 	for _, n := range found {
 		m.seen(n, now)
@@ -57,6 +87,7 @@ func (m *membership) refresh(ctx context.Context) {
 			closeNode(m.known[name])
 			delete(m.lastSeen, name)
 			delete(m.known, name)
+			delete(m.synced, name)
 		}
 	}
 }

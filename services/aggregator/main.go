@@ -134,6 +134,13 @@ func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardE
 	}
 
 	m := newMembership(dnsResolver(service), pgNodeName(tmpl), 30*time.Second)
+	m.syncState = func(ctx context.Context, n *node) (map[int]bool, error) {
+		ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+		defer cancel()
+
+		return syncedShards(ctx, n.db)
+	}
+
 	m.refresh(ctx)
 
 	go func() {
@@ -148,6 +155,7 @@ func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardE
 	}()
 
 	cl := newCluster(m.live)
+	cl.isSynced = m.isSynced
 
 	return cl.upsert, cl, nil
 }
@@ -279,6 +287,33 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		wg.Go(func() { p.run(ctx) })
 	}
 
+	var rb *rebalancer
+
+	var rbLease *elector
+
+	if cl != nil {
+		interval, err := envDuration("STORE_REBALANCE_INTERVAL", defaultRebalanceInterval)
+		if err != nil {
+			return err
+		}
+
+		pause, err := envDuration("REBALANCE_PAGE_PAUSE", defaultPagePause)
+		if err != nil {
+			return err
+		}
+
+		del, err := strconv.ParseBool(os.Getenv("REBALANCE_DELETE"))
+		if err != nil && os.Getenv("REBALANCE_DELETE") != "" {
+			return fmt.Errorf("invalid REBALANCE_DELETE value: %q", os.Getenv("REBALANCE_DELETE"))
+		}
+
+		rb = newRebalancer(cl, pause, del)
+		rbLease = newElector("rebalance", lc, pgLease{db: db.db})
+		electors = append(electors, rbLease)
+
+		wg.Go(func() { rbLease.run(ctx, func(wctx context.Context) { rb.run(wctx, interval) }) })
+	}
+
 	api, grpcSrv, grpcLis, err := startReadAPI(db, pub, breakers)
 	if err != nil {
 		return err
@@ -294,7 +329,15 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}()
 
 	mux := newMux(api)
-	mux.HandleFunc("GET /metrics", leaseMetricsHandler(electors))
+	leaseMetrics := leaseMetricsHandler(electors)
+
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		leaseMetrics(w, r)
+
+		if rb != nil {
+			rb.writeMetrics(w, rbLease.isLeader.Load() == 1)
+		}
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + port,
