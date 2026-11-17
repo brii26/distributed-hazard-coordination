@@ -83,13 +83,7 @@ func mergeLists(lists [][]HazardEvent, limit int) []HazardEvent {
 
 // One shard's rows from one node, newest first, strictly after the position. Asks for limit rows.
 func listShardOn(ctx context.Context, db *sql.DB, shard int, after *listPos, limit int) ([]HazardEvent, error) {
-	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
-	defer cancel()
-
-	var (
-		ts any
-		id string
-	)
+	var ts, id any
 
 	if after != nil {
 		ts, id = after.T, after.ID
@@ -100,7 +94,7 @@ SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
        latitude, longitude, occurred_at, ingested_at, attributes
 FROM hazard_events
 WHERE shard = $1
-  AND ($2::timestamptz IS NULL OR (ingested_at, hazard_id) < ($2::timestamptz, $3::text))
+  AND ($2::timestamptz IS NULL OR (ingested_at, hazard_id) < ($2::timestamptz, $3::uuid))
 ORDER BY ingested_at DESC, hazard_id DESC
 LIMIT $4`, shard, ts, id, limit)
 	if err != nil {

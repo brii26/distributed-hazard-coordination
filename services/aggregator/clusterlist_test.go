@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -254,5 +255,64 @@ func TestGetByIDNotFoundInvalidAndUnavailable(t *testing.T) {
 
 	if _, err := a.GetHazard(context.Background(), &aggregatorpb.GetHazardRequest{HazardId: "x"}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("all down: %v", err)
+	}
+}
+
+// Real SQL: equal ingested_at rows are ordered by hazard_id and a cursor resumes without repeat or skip. Skips without CANONICAL_DB_TEST_URL.
+func TestListShardOnPagesEqualTimestampsOnRealDB(t *testing.T) { //nolint:paralleltest // shared database, fixed far-future timestamp
+	s := testStore(t, 2)
+	ctx := context.Background()
+	at := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	var (
+		want  []string
+		shard int
+	)
+
+	for len(want) < 5 {
+		h := hazard(sourcePVMBG, ref(t, s))
+		h.IngestedAt = at
+
+		if len(want) == 0 {
+			shard = shardOf(h.HazardID)
+		} else if shardOf(h.HazardID) != shard {
+			continue
+		}
+
+		if _, err := s.upsert(ctx, h); err != nil {
+			t.Fatal(err)
+		}
+
+		want = append(want, h.HazardID)
+	}
+
+	sort.Sort(sort.Reverse(sort.StringSlice(want)))
+
+	first, err := listShardOn(ctx, s.db, shard, nil, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(first) != 3 {
+		t.Fatalf("first page has %d rows, want 3", len(first))
+	}
+
+	last := first[2]
+
+	rest, err := listShardOn(ctx, s.db, shard, &listPos{T: last.IngestedAt, ID: last.HazardID}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []string
+
+	for _, h := range append(first, rest...) {
+		if h.IngestedAt.Equal(at) {
+			got = append(got, h.HazardID)
+		}
+	}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
