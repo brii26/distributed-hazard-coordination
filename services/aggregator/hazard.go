@@ -11,8 +11,7 @@ const (
 	sourceBMKG  = "BMKG"
 	sourcePVMBG = "PVMBG"
 
-	sourceSatelit      = "SATELIT"
-	sourceSensorPantai = "SENSOR_PANTAI"
+	sourceSatelit = "SATELIT"
 
 	typeSeismic  = "SEISMIC"
 	typeVolcanic = "VOLCANIC"
