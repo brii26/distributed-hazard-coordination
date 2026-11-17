@@ -40,8 +40,14 @@ func writeAuditError(w http.ResponseWriter, status int, code, msg string) {
 
 // Checks the bearer token in constant time and that the cluster is there. Writes the error and returns false when either fails.
 func (a *readAPI) auditGate(w http.ResponseWriter, r *http.Request) bool {
+	if a.auditTok == "" {
+		writeAuditError(w, http.StatusServiceUnavailable, "unavailable", "audit not configured")
+
+		return false
+	}
+
 	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || a.auditTok == "" || subtle.ConstantTimeCompare([]byte(got), []byte(a.auditTok)) != 1 {
+	if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(a.auditTok)) != 1 {
 		writeAuditError(w, http.StatusUnauthorized, "unauthorized", "token tidak valid")
 
 		return false
@@ -58,7 +64,12 @@ func (a *readAPI) auditGate(w http.ResponseWriter, r *http.Request) bool {
 
 // A source we store. Unknown names are a bad request, a known source with no rows is just empty.
 func knownSource(s string) bool {
-	return s == sourceBMKG || s == sourcePVMBG
+	switch s {
+	case sourceBMKG, sourcePVMBG, sourceSatelit, sourceSensorPantai:
+		return true
+	}
+
+	return false
 }
 
 // A hazard with its attributes as raw JSON, so stored numbers come out byte for byte.

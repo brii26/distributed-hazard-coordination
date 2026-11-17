@@ -107,7 +107,7 @@ func TestAuditEmptyTokenRefusesEverything(t *testing.T) {
 
 	for _, tok := range []string{"-", "", "anything"} {
 		for _, p := range []string{"/internal/audit/events", "/internal/audit/checksum?source=BMKG"} {
-			if code, _ := auditGet(t, a, p, tok); code != http.StatusUnauthorized {
+			if code, body := auditGet(t, a, p, tok); code != http.StatusServiceUnavailable || !strings.Contains(body, "audit not configured") {
 				t.Fatalf("%s token %q: %d", p, tok, code)
 			}
 		}
@@ -251,7 +251,7 @@ func TestAuditEventsRejectsBadInput(t *testing.T) {
 
 	a := auditAPIOf(newFake().listCluster("a", "b", "c"))
 
-	for _, q := range []string{"limit=0", "limit=1001", "limit=abc", "source=SATELIT", "since=yesterday", "cursor=%25%25"} {
+	for _, q := range []string{"limit=0", "limit=1001", "limit=abc", "source=WILDFIRE", "since=yesterday", "cursor=%25%25"} {
 		code, body := auditGet(t, a, "/internal/audit/events?"+q, testAuditToken)
 		if code != http.StatusBadRequest || !strings.Contains(body, `"code":"bad_request"`) {
 			t.Fatalf("%s: %d %s", q, code, body)
@@ -322,10 +322,23 @@ func TestAuditChecksumMatchesIndependentHashAndCountsOnce(t *testing.T) {
 	if _, err := time.Parse(time.RFC3339, r.AsOf); err != nil || !strings.HasSuffix(r.AsOf, "Z") {
 		t.Fatalf("as_of %q", r.AsOf)
 	}
+}
 
-	empty := checksumOf(t, auditAPIOf(c), sourcePVMBG)
-	if empty.Count != 0 || empty.Checksum != sumOf(nil) {
-		t.Fatalf("known empty source: %+v", empty)
+func TestAuditKnownEmptySourcesAreEmptyNot400(t *testing.T) {
+	t.Parallel()
+
+	c := newFake().listCluster("a", "b", "c")
+	seed(t, c, 5)
+
+	for _, src := range []string{sourcePVMBG, sourceSatelit, sourceSensorPantai} {
+		empty := checksumOf(t, auditAPIOf(c), src)
+		if empty.Count != 0 || empty.Checksum != sumOf(nil) {
+			t.Fatalf("known empty source %s: %+v", src, empty)
+		}
+
+		if code, body := auditGet(t, auditAPIOf(c), "/internal/audit/events?source="+src, testAuditToken); code != http.StatusOK || !strings.Contains(body, `"items":[]`) {
+			t.Fatalf("events for empty source %s: %d %s", src, code, body)
+		}
 	}
 }
 
