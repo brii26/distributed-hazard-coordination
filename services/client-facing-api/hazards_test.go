@@ -188,7 +188,7 @@ func TestFieldsSelectsASubset(t *testing.T) {
 func TestBadQueriesAre400(t *testing.T) {
 	t.Parallel()
 
-	for _, q := range []string{"", "type=FLOOD", "type=seismic", "type=SEISMIC&fields=nope"} {
+	for _, q := range []string{"type=FLOOD", "type=seismic", "type=SEISMIC&fields=nope"} {
 		calls := 0
 
 		if rec, _ := getHazards(t, fakeHazards{resp: oneEvent(t), calls: &calls}, roleOperator, q); rec.Code != http.StatusBadRequest || calls != 0 {

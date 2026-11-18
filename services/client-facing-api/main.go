@@ -24,6 +24,7 @@ import (
 const (
 	defaultPort              = "8080"
 	defaultUpstreamTimeoutMS = 1000
+	defaultReadTimeoutMS     = 3000
 )
 
 var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
@@ -189,7 +190,14 @@ func main() {
 		}
 	}))
 
-	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
+	readMS, err := envPositiveInt("READ_TIMEOUT_MS", defaultReadTimeoutMS)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	hazards := hazardsAPI{agg: health.aggregator, timeout: health.timeout, readTimeout: time.Duration(readMS) * time.Millisecond}
+	mux.Handle("GET /hazards", auth.verifier.require(hazards))
+	mux.Handle("GET /hazards/{id}", auth.verifier.require(http.HandlerFunc(hazards.serveOne)))
 
 	if upstream := os.Getenv("DASHBOARD_UPDATER_URL"); upstream != "" {
 		mux.Handle("GET /hazards/stream", auth.verifier.require(newStreamAPI(upstream)))

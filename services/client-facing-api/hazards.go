@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,6 +38,17 @@ func fieldsFor(role string) []string {
 type hazardsAPI struct {
 	agg     aggregatorpb.AggregatorClient
 	timeout time.Duration // UPSTREAM_TIMEOUT_MS
+
+	// READ_TIMEOUT_MS for list and get. The Aggregator may try a primary and then a replica per shard, so this has to outlast both.
+	readTimeout time.Duration
+}
+
+func (h hazardsAPI) readDeadline() time.Duration {
+	if h.readTimeout > 0 {
+		return h.readTimeout
+	}
+
+	return h.timeout
 }
 
 // A raw field asked for by a role that may not see it.
@@ -74,6 +86,8 @@ const (
 	defaultLimit = 25
 	maxLimit     = 100
 	maxQueryLen  = 100
+
+	maxListLimit = 200 // what the Aggregator caps ListHazards at
 )
 
 // Reads and checks ?limit=, ?offset=, ?severity= and ?q=. Out of range is a 400, so the Aggregator only sees sane values.
@@ -111,7 +125,124 @@ func pageParams(v url.Values) (limit, offset int32, severity, search string, err
 	return limit, offset, severity, search, nil
 }
 
+// Query params only the old per-type call understands.
+var legacyParams = []string{"type", "offset", "severity", "q"}
+
+// Without any legacy param the page comes from ListHazards, otherwise from the old GetHazards path.
 func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if slices.ContainsFunc(legacyParams, q.Has) {
+		h.serveLegacy(w, r)
+
+		return
+	}
+
+	h.serveList(w, r)
+}
+
+// Cursor-paged list across every shard, with a partial marker when some shard has no reachable copy.
+func (h hazardsAPI) serveList(w http.ResponseWriter, r *http.Request) {
+	claims, _ := claimsFrom(r.Context())
+	v := r.URL.Query()
+
+	limit := int32(defaultLimit)
+
+	if s := v.Get("limit"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err != nil || n < 1 || n > maxListLimit {
+			writeJSON(w, http.StatusBadRequest, errBody(fmt.Sprintf("limit must be a whole number from 1 to %d", maxListLimit)))
+
+			return
+		}
+
+		limit = int32(n)
+	}
+
+	fields, err := requestedFields(v.Get("fields"), claims.Role)
+	if err != nil {
+		fieldsRefused(r, w, claims.Role, err)
+
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), h.readDeadline())
+	defer cancel()
+
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-client-role", claims.Role)
+
+	resp, err := h.agg.ListHazards(ctx, &aggregatorpb.ListHazardsRequest{Limit: limit, Cursor: v.Get("cursor")})
+	if err != nil {
+		hazardsFailed(r.Context(), w, err)
+
+		return
+	}
+
+	data := make([]map[string]any, 0, len(resp.GetData()))
+	for _, e := range resp.GetData() {
+		data = append(data, project(eventJSON(e), fields))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":              data,
+		"page":              map[string]any{"limit": limit, "next_cursor": resp.GetNextCursor(), "has_more": resp.GetHasMore()},
+		"partial":           resp.GetPartial(),
+		"unavailable_units": append([]string{}, resp.GetUnavailableUnits()...),
+	})
+}
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// GET /hazards/{id}: one record from the primary or the replica. An id that is not a uuid can never exist, so it is a 404 without asking the Aggregator.
+func (h hazardsAPI) serveOne(w http.ResponseWriter, r *http.Request) {
+	claims, _ := claimsFrom(r.Context())
+
+	id := r.PathValue("id")
+	if !uuidPattern.MatchString(id) {
+		writeJSON(w, http.StatusNotFound, errBody("hazard not found"))
+
+		return
+	}
+
+	fields, err := requestedFields(r.URL.Query().Get("fields"), claims.Role)
+	if err != nil {
+		fieldsRefused(r, w, claims.Role, err)
+
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), h.readDeadline())
+	defer cancel()
+
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-client-role", claims.Role)
+
+	resp, err := h.agg.GetHazard(ctx, &aggregatorpb.GetHazardRequest{HazardId: id})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			writeJSON(w, http.StatusNotFound, errBody("hazard not found"))
+
+			return
+		}
+
+		hazardsFailed(r.Context(), w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"data": project(eventJSON(resp.GetEvent()), fields)})
+}
+
+// Answers a bad ?fields= with 400, or 403 for a raw field the role may not see.
+func fieldsRefused(r *http.Request, w http.ResponseWriter, role string, err error) {
+	code := http.StatusBadRequest
+	if errors.Is(err, errFieldForbidden) {
+		code = http.StatusForbidden
+	}
+
+	logFor(r.Context()).Info("hazards request", "role", role, "fields", r.URL.Query().Get("fields"), "authorize", "denied", "reason", err.Error())
+	writeJSON(w, code, errBody(err.Error()))
+}
+
+func (h hazardsAPI) serveLegacy(w http.ResponseWriter, r *http.Request) {
 	claims, _ := claimsFrom(r.Context())
 	typ, rawFieldList := r.URL.Query().Get("type"), r.URL.Query().Get("fields")
 
@@ -172,7 +303,7 @@ func (h hazardsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Maps the Aggregator's status to the client.
 func hazardsFailed(ctx context.Context, w http.ResponseWriter, err error) {
 	switch status.Code(err) { //nolint:exhaustive // every other code is the default 502
-	case codes.Unavailable:
+	case codes.Unavailable, codes.Unimplemented:
 		writeJSON(w, http.StatusServiceUnavailable, errBody("no data available: "+status.Convert(err).Message()))
 	case codes.ResourceExhausted:
 		w.Header().Set("Retry-After", "1")
