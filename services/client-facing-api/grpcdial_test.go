@@ -108,3 +108,55 @@ func TestCallsReachAllReplicas(t *testing.T) {
 
 	t.Fatalf("calls per replica = %d %d %d, want all above 0", fakes[0].calls(), fakes[1].calls(), fakes[2].calls())
 }
+
+// A replica that closes its connections (a rolling update) must not fail calls while the other one is up, even before DNS drops its address.
+func TestCallsSurviveAReplicaStopping(t *testing.T) {
+	var (
+		srvs  []*grpc.Server
+		addrs []resolver.Address
+	)
+
+	for range 2 {
+		lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		srv := grpc.NewServer()
+		aggregatorpb.RegisterAggregatorServer(srv, &countingAggregator{})
+
+		go func() { _ = srv.Serve(lis) }()
+
+		t.Cleanup(srv.Stop)
+
+		srvs = append(srvs, srv)
+		addrs = append(addrs, resolver.Address{Addr: lis.Addr().String()})
+	}
+
+	r := manual.NewBuilderWithScheme("dns")
+	r.InitialState(resolver.State{Addresses: addrs})
+
+	conn, err := grpc.NewClient("dns:///aggregator-grpc:9091", append(aggregatorDialOptions("test"), grpc.WithResolvers(r))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = conn.Close() })
+
+	client := aggregatorpb.NewAggregatorClient(conn)
+
+	for i := range 300 {
+		if i == 50 {
+			srvs[0].Stop()
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := client.GetHealth(ctx, &emptypb.Empty{})
+
+		cancel()
+
+		if err != nil {
+			t.Fatalf("call %d failed after a replica stopped: %v", i, err)
+		}
+	}
+}

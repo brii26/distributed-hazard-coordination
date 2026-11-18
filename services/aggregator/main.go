@@ -243,8 +243,17 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		return errors.New("PVMBG_BASE_URL, PVMBG_OAUTH_CLIENT_ID, PVMBG_OAUTH_CLIENT_SECRET and PVMBG_TOKEN_VOLUME_PATH must be set")
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Background work outlives the signal until the servers have drained, then it is cancelled and the leases are released.
+	ctx, cancelWork := context.WithCancel(context.WithoutCancel(sigCtx))
+	defer cancelWork()
+
+	sc, err := loadShutdownConfig()
+	if err != nil {
+		return err
+	}
 
 	shutdownTracing, err := setupTracing(ctx)
 	if err != nil {
@@ -415,15 +424,17 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		IdleTimeout:       60 * time.Second,
 	}
 
+	drained := make(chan struct{})
+
 	go func() {
-		<-ctx.Done()
+		defer close(drained)
 
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		<-sigCtx.Done()
 
-		_ = srv.Shutdown(shutdown)
-
-		grpcSrv.GracefulStop()
+		gracefulShutdown(sc, api, srv, grpcSrv, func() {
+			cancelWork()
+			wg.Wait()
+		})
 	}()
 
 	log.Printf("aggregator listening on :%d", portNum)
@@ -432,7 +443,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		return err
 	}
 
-	wg.Wait()
+	<-drained
 	stopPub()
 	pubWG.Wait()
 	log.Print("aggregator stopped")

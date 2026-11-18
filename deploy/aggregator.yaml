@@ -47,6 +47,7 @@ spec:
       labels:
         role: aggregator
     spec:
+      terminationGracePeriodSeconds: 45
       # Soft rule: pods spread over the nodes, but still schedule on a single node.
       topologySpreadConstraints:
         - maxSkew: 1
