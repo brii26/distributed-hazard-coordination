@@ -11,6 +11,7 @@ import (
 const (
 	wantLegacy   = "legacy"
 	wantExtended = "extended"
+	wantBroken   = "incompatible"
 	bodyVersion2 = `{"version":2}`
 )
 
@@ -19,10 +20,10 @@ func resetSwitches(t *testing.T) {
 	t.Helper()
 
 	outageActive.Store(false)
-	schemaExtended.Store(false)
+	schemaState.Store(0)
 	t.Cleanup(func() {
 		outageActive.Store(false)
-		schemaExtended.Store(false)
+		schemaState.Store(0)
 	})
 }
 
@@ -137,9 +138,10 @@ func TestAdminOpenWithoutKey(t *testing.T) {
 	}{
 		{"empty toggles on", "", wantExtended, false},
 		{"empty toggles off", "", wantLegacy, true},
-		{"version 2 sets extended", bodyVersion2, wantExtended, false},
-		{"version 2 twice stays extended", bodyVersion2, wantExtended, true},
-		{"version 5 is extended", `{"version":5}`, wantExtended, false},
+		{"version 2 is incompatible", bodyVersion2, wantBroken, false},
+		{"version 2 from extended is incompatible", bodyVersion2, wantBroken, true},
+		{"version 3 is an alias", `{"version":3}`, wantBroken, false},
+		{"version 5 is incompatible", `{"version":5}`, wantBroken, false},
 		{"version 1 sets legacy", `{"version":1}`, wantLegacy, true},
 		{"version 0 toggles", `{"version":0}`, wantExtended, false},
 		{"negative toggles", `{"version":-3}`, wantLegacy, true},
@@ -151,7 +153,11 @@ func TestAdminOpenWithoutKey(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		schemaExtended.Store(tc.start)
+		schemaState.Store(uint32(modeLegacy))
+
+		if tc.start {
+			schemaState.Store(uint32(modeExtended))
+		}
 
 		rec := post("/admin/schema-version", tc.body, nil)
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"`+tc.want+`"`) {

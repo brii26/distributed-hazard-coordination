@@ -59,46 +59,57 @@ func withOutage(next http.Handler) http.Handler {
 	})
 }
 
-// Read by the /volcanic-reports generator and handler to decide whether reports carry confidence_level.
-var schemaExtended atomic.Bool
+// The schema the generator stamps on new reports. One atomic value, so a report never sees half a switch.
+var schemaState atomic.Uint32
 
-// Sets the schema when the body has an integer "version" (1 legacy, 2 or more extended), otherwise toggles it. Any body is accepted.
+func currentSchema() schemaMode { return schemaMode(schemaState.Load() & 0xff) }
+
+// Sets the schema from the body. Version 1 is legacy, 2 or more (so 3 too) incompatible, with all three changes unless "change" (rename, type or missing, trimmed, any case) picks one. A "change" we do not understand means all three and a warning. Without a version (empty body, or anything that is not a positive integer version) it toggles legacy and extended (confidence_level), and incompatible goes back to legacy. The mock never answers 4xx for an odd body.
 func schemaVersionHandler(w http.ResponseWriter, r *http.Request) {
 	raw, l := adminCall(r)
 
 	var req struct {
-		Version *int `json:"version"`
+		Version *int            `json:"version"`
+		Change  json.RawMessage `json:"change"`
 	}
 
 	if json.Unmarshal(raw, &req) != nil {
 		req.Version = nil // any body is fine, unknown means toggle
 	}
 
-	was := schemaExtended.Load()
-	extended := !was
+	was := currentSchema()
+	next := was.toggled()
 
 	if req.Version != nil && *req.Version >= 1 {
-		extended = *req.Version >= 2
+		next = modeLegacy
+
+		if *req.Version >= 2 {
+			var warn string
+
+			if next, warn = incompatibleMode(req.Change); warn != "" {
+				l.Warn("schema-version "+warn, "change", string(req.Change))
+			}
+		}
 	}
 
-	schemaExtended.Store(extended)
-	version := schemaVersion(extended)
+	if !next.incompatible() && req.Change != nil {
+		l.Info("schema-version change ignored", "change", string(req.Change))
+	}
 
-	l.Info("schema-version changed", "version", req.Version, "from", schemaVersion(was), "to", version)
+	schemaState.Store(uint32(next))
+
+	l.Info("schema-version changed", "version", req.Version, "from", was.name(), "to", next.name())
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if err := json.NewEncoder(w).Encode(map[string]string{"schema_version": version}); err != nil {
+	body := map[string]string{"schema_version": next.name()}
+	if next.incompatible() {
+		body["change"] = next.changeName()
+	}
+
+	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Printf("failed to write schema-version response: %v", err)
 	}
-}
-
-func schemaVersion(extended bool) string {
-	if extended {
-		return "extended"
-	}
-
-	return "legacy"
 }
 
 func newMux(store *tokenStore, reports *reportStore, minDelay, maxDelay time.Duration) http.Handler {
@@ -191,9 +202,9 @@ func main() {
 	}
 
 	interval := time.Duration(intervalS) * time.Second
-	store.seed(seedCount, interval, time.Now(), schemaExtended.Load())
+	store.seed(seedCount, interval, time.Now(), currentSchema())
 
-	go store.run(context.Background(), interval, schemaExtended.Load)
+	go store.run(context.Background(), interval, currentSchema)
 
 	srv := &http.Server{
 		Addr: ":" + port,

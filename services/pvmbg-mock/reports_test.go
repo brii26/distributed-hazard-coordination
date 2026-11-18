@@ -16,8 +16,8 @@ func TestSeedAndSchemaFlag(t *testing.T) {
 
 	now := time.Now()
 	legacy, extended := &reportStore{}, &reportStore{}
-	legacy.seed(25, time.Second, now, false)
-	extended.seed(25, time.Second, now, true)
+	legacy.seed(25, time.Second, now, modeLegacy)
+	extended.seed(25, time.Second, now, modeExtended)
 
 	got := legacy.since(time.Time{})
 	if len(got) != 25 {
@@ -50,7 +50,7 @@ func TestGeneratorAddsReportsAndHonoursSchemaFlag(t *testing.T) {
 	t.Parallel()
 
 	s := &reportStore{}
-	s.seed(20, time.Second, time.Now(), false)
+	s.seed(20, time.Second, time.Now(), modeLegacy)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -59,7 +59,7 @@ func TestGeneratorAddsReportsAndHonoursSchemaFlag(t *testing.T) {
 	go func() {
 		defer close(done)
 
-		s.run(ctx, 5*time.Millisecond, func() bool { return true })
+		s.run(ctx, 5*time.Millisecond, func() schemaMode { return modeExtended })
 	}()
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -89,7 +89,7 @@ func TestSinceFilters(t *testing.T) {
 
 	s := &reportStore{}
 	base := time.Now()
-	s.seed(10, time.Minute, base, false)
+	s.seed(10, time.Minute, base, modeLegacy)
 
 	if n := len(s.since(base.Add(-5*time.Minute - time.Second))); n != 5 {
 		t.Fatalf("expected the 5 newest reports, got %d", n)
@@ -148,7 +148,7 @@ func TestReportsSinceAndShape(t *testing.T) {
 
 	reports := &reportStore{}
 	base := time.Now().UTC()
-	reports.seed(10, time.Minute, base, true)
+	reports.seed(10, time.Minute, base, modeExtended)
 
 	since := url.QueryEscape(base.Add(-5*time.Minute - time.Second).Format(time.RFC3339Nano))
 
@@ -273,12 +273,12 @@ func TestIdsAreUniqueAcrossRestarts(t *testing.T) {
 
 	first, second := &reportStore{startID: "20261007T100000"}, &reportStore{startID: "20261007T100500"}
 
-	a, b := first.add(time.Now(), false), second.add(time.Now(), false)
+	a, b := first.add(time.Now(), modeLegacy), second.add(time.Now(), modeLegacy)
 	if a.ReportID == b.ReportID {
 		t.Fatalf("two runs issued the same id %q", a.ReportID)
 	}
 
-	if again := first.add(time.Now(), false); again.ReportID == a.ReportID {
+	if again := first.add(time.Now(), modeLegacy); again.ReportID == a.ReportID {
 		t.Fatalf("one run issued %q twice", a.ReportID)
 	}
 }
