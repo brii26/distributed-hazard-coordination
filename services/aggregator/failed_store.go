@@ -175,9 +175,9 @@ LIMIT $4`, status, afterID, after, limit+1)
 	return rows, next, nil
 }
 
-// Sets status to recovered. False if the id does not exist.
+// Sets a retrying row to recovered. False if the id does not exist or the row is no longer retrying.
 func (s *store) markRecovered(ctx context.Context, id string) (bool, error) {
-	return s.updateFailed(ctx, `UPDATE failed_messages SET status = 'recovered', next_attempt_at = NULL WHERE message_id = $1`, id)
+	return s.updateFailed(ctx, `UPDATE failed_messages SET status = 'recovered', next_attempt_at = NULL WHERE message_id = $1 AND status = 'retrying'`, id)
 }
 
 // Adds 1 to attempts and stamps last_error_at in SQL, so parallel callers never lose a count.

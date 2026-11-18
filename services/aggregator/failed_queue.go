@@ -7,7 +7,7 @@ import (
 
 // Recovered without a write: a newer write for the same record already exists.
 func (s *store) markSuperseded(ctx context.Context, id string) (bool, error) {
-	return s.updateFailed(ctx, `UPDATE failed_messages SET status = 'recovered', next_attempt_at = NULL, reason = 'superseded: ' || reason WHERE message_id = $1`, id)
+	return s.updateFailed(ctx, `UPDATE failed_messages SET status = 'recovered', next_attempt_at = NULL, reason = 'superseded: ' || reason WHERE message_id = $1 AND status = 'retrying'`, id)
 }
 
 // Takes up to limit due retrying rows for lease. SKIP LOCKED keeps two replicas off the same row, and the pushed next_attempt_at brings the row back if the worker dies.

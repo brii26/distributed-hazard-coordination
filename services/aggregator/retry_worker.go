@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -198,13 +197,5 @@ func (m *failedMetrics) write(ctx context.Context, out io.Writer) {
 
 	for res, c := range map[string]*atomic.Int64{"recovered": &m.w.recovered, "failed": &m.w.failed, "parked": &m.w.parked} {
 		_, _ = fmt.Fprintf(out, "aggregator_retry_total{result=%q} %d\n", res, c.Load())
-	}
-}
-
-// Lease metrics first, then the failed message series.
-func metricsHandler(lease http.HandlerFunc, fm *failedMetrics) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		lease(w, r)
-		fm.write(r.Context(), w)
 	}
 }

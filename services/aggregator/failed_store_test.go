@@ -114,6 +114,14 @@ func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest //
 		t.Fatalf("a re-poll must not duplicate or bump: rows=%d", len(rows))
 	}
 
+	if ok, _ := s.markRecovered(ctx, m.MessageID); ok {
+		t.Fatal("a parked row must not turn recovered")
+	}
+
+	if _, err := s.db.ExecContext(ctx, `UPDATE failed_messages SET status = 'retrying'`); err != nil {
+		t.Fatal(err)
+	}
+
 	if ok, err := s.markRecovered(ctx, m.MessageID); !ok || err != nil {
 		t.Fatalf("recover: %v %v", ok, err)
 	}
