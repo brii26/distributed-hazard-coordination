@@ -62,7 +62,8 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `MEDIA_MAX_INFLIGHT` | client-facing-api | 80% of global cap | Shared Media and anonymous concurrency budget. Must be positive and less than the global cap. Lapangan and Operator can use all global slots |
 | `RATE_LIMIT_RPS` | client-facing-api | 50 | Token bucket per client (account) |
 | `AUTH_RATE_LIMIT_RPS` | client-facing-api | 10 | Token bucket per client IP on `/auth/login` and `/auth/register` |
-| `UPSTREAM_TIMEOUT_MS` | client-facing-api | 1000 | Timeout of each call to the Aggregator and the Auth Service |
+| `UPSTREAM_TIMEOUT_MS` | client-facing-api | 1000 | Timeout of each call to the Aggregator and the Auth Service, except the `GET /hazards` list and `GET /hazards/{id}` reads (see `READ_TIMEOUT_MS`) |
+| `READ_TIMEOUT_MS` | client-facing-api | 3000 | Timeout in ms of `GET /hazards` (list) and `GET /hazards/{id}`; must outlast the primary try plus the replica try |
 | `COOKIE_SECURE` | client-facing-api | true | Mark the `jwt`/`refresh_token` cookies Secure (fine on `http://localhost`) |
 | `WEB_FRONTEND_PORT` | web-frontend | 3000 | Host port of the web frontend |
 | `CLIENT_FACING_API_BASE_URL` | web-frontend (build) | /api | API base the static app calls; `/api` goes through the frontend's own nginx |
