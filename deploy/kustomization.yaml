@@ -15,6 +15,7 @@ resources:
   - dashboard-updater.yaml
   - notifier.yaml
   - audit-logger.yaml
+  - networkpolicy.yaml
   - sensor-pantai
   - observability/observability.yaml
   - observability/grafana.yaml

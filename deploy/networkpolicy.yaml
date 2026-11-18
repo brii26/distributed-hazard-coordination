@@ -1,0 +1,46 @@
+# Ingress policies on the storage pods only. No egress rules, so DNS and kubelet probes (exec probes) are untouched.
+# user-db also has role=store, so the store policy excludes app=user-db and later shard pods stay covered.
+# The node CIDR rule lets the hostNetwork Tester Agent (and node-originated traffic) reach the stores; adjust it if the nodes use another range.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: store-from-aggregator
+spec:
+  podSelector:
+    matchLabels:
+      role: store
+    matchExpressions:
+      - {key: app, operator: NotIn, values: [user-db]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: aggregator
+        - ipBlock:
+            cidr: 10.77.0.0/24
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: user-db-from-auth
+spec:
+  podSelector:
+    matchLabels:
+      app: user-db
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+        - ipBlock:
+            cidr: 10.77.0.0/24
+      ports:
+        - protocol: TCP
+          port: 5432
