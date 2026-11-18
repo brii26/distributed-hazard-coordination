@@ -34,10 +34,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Aggregator_GetHazards_FullMethodName  = "/aggregator.v1.Aggregator/GetHazards"
-	Aggregator_ListHazards_FullMethodName = "/aggregator.v1.Aggregator/ListHazards"
-	Aggregator_GetHazard_FullMethodName   = "/aggregator.v1.Aggregator/GetHazard"
-	Aggregator_GetHealth_FullMethodName   = "/aggregator.v1.Aggregator/GetHealth"
+	Aggregator_GetHazards_FullMethodName         = "/aggregator.v1.Aggregator/GetHazards"
+	Aggregator_ListHazards_FullMethodName        = "/aggregator.v1.Aggregator/ListHazards"
+	Aggregator_GetHazard_FullMethodName          = "/aggregator.v1.Aggregator/GetHazard"
+	Aggregator_GetHealth_FullMethodName          = "/aggregator.v1.Aggregator/GetHealth"
+	Aggregator_ListFailedMessages_FullMethodName = "/aggregator.v1.Aggregator/ListFailedMessages"
 )
 
 // AggregatorClient is the client API for Aggregator service.
@@ -54,6 +55,10 @@ type AggregatorClient interface {
 	// it, UNAVAILABLE when no copy could be reached.
 	GetHazard(ctx context.Context, in *GetHazardRequest, opts ...grpc.CallOption) (*GetHazardResponse, error)
 	GetHealth(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthStatus, error)
+	// Rejected messages with their raw payload, oldest first, for the Operator.
+	// INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
+	// database does not answer.
+	ListFailedMessages(ctx context.Context, in *ListFailedMessagesRequest, opts ...grpc.CallOption) (*ListFailedMessagesResponse, error)
 }
 
 type aggregatorClient struct {
@@ -104,6 +109,16 @@ func (c *aggregatorClient) GetHealth(ctx context.Context, in *emptypb.Empty, opt
 	return out, nil
 }
 
+func (c *aggregatorClient) ListFailedMessages(ctx context.Context, in *ListFailedMessagesRequest, opts ...grpc.CallOption) (*ListFailedMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFailedMessagesResponse)
+	err := c.cc.Invoke(ctx, Aggregator_ListFailedMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AggregatorServer is the server API for Aggregator service.
 // All implementations must embed UnimplementedAggregatorServer
 // for forward compatibility.
@@ -118,6 +133,10 @@ type AggregatorServer interface {
 	// it, UNAVAILABLE when no copy could be reached.
 	GetHazard(context.Context, *GetHazardRequest) (*GetHazardResponse, error)
 	GetHealth(context.Context, *emptypb.Empty) (*HealthStatus, error)
+	// Rejected messages with their raw payload, oldest first, for the Operator.
+	// INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
+	// database does not answer.
+	ListFailedMessages(context.Context, *ListFailedMessagesRequest) (*ListFailedMessagesResponse, error)
 	mustEmbedUnimplementedAggregatorServer()
 }
 
@@ -139,6 +158,9 @@ func (UnimplementedAggregatorServer) GetHazard(context.Context, *GetHazardReques
 }
 func (UnimplementedAggregatorServer) GetHealth(context.Context, *emptypb.Empty) (*HealthStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetHealth not implemented")
+}
+func (UnimplementedAggregatorServer) ListFailedMessages(context.Context, *ListFailedMessagesRequest) (*ListFailedMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFailedMessages not implemented")
 }
 func (UnimplementedAggregatorServer) mustEmbedUnimplementedAggregatorServer() {}
 func (UnimplementedAggregatorServer) testEmbeddedByValue()                    {}
@@ -233,6 +255,24 @@ func _Aggregator_GetHealth_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Aggregator_ListFailedMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFailedMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServer).ListFailedMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Aggregator_ListFailedMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServer).ListFailedMessages(ctx, req.(*ListFailedMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Aggregator_ServiceDesc is the grpc.ServiceDesc for Aggregator service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -255,6 +295,10 @@ var Aggregator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetHealth",
 			Handler:    _Aggregator_GetHealth_Handler,
+		},
+		{
+			MethodName: "ListFailedMessages",
+			Handler:    _Aggregator_ListFailedMessages_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

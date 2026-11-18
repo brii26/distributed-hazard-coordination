@@ -32,6 +32,38 @@ service Aggregator {
   // it, UNAVAILABLE when no copy could be reached.
   rpc GetHazard(GetHazardRequest) returns (GetHazardResponse);
   rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
+  // Rejected messages with their raw payload, oldest first, for the Operator.
+  // INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
+  // database does not answer.
+  rpc ListFailedMessages(ListFailedMessagesRequest) returns (ListFailedMessagesResponse);
+}
+
+message ListFailedMessagesRequest {
+  string status = 1; // optional: retrying | parked | recovered; empty means all three
+  int32 limit = 2;   // 0 means the default (50), capped at 100
+  string cursor = 3; // opaque, from the previous page's next_cursor
+}
+
+message ListFailedMessagesResponse {
+  repeated FailedMessage data = 1;
+  string next_cursor = 2; // empty on the last page
+}
+
+// One failed_messages row. payload is the whole body, or its first 64 KiB when oversize.
+message FailedMessage {
+  string message_id = 1;
+  string source = 2;
+  google.protobuf.Timestamp received_at = 3;
+  string reason = 4;
+  bool retryable = 5;
+  int32 attempts = 6;
+  string status = 7;
+  google.protobuf.Timestamp last_error_at = 8;
+  string source_ref_id = 9; // empty when the source gave none
+  bytes payload = 10;
+  bytes payload_sha256 = 11;
+  int32 payload_size = 12; // size of the original body
+  bool oversize = 13;
 }
 
 message GetHazardsRequest {

@@ -34,6 +34,7 @@ func newMux(api *readAPI) *http.ServeMux {
 	mux.HandleFunc("GET /internal/audit/events", api.auditEvents)
 	mux.HandleFunc("GET /internal/audit/checksum", api.auditChecksum)
 	mux.HandleFunc("POST /internal/admin/replay", api.adminReplay)
+	mux.HandleFunc("GET /internal/audit/unprocessed", api.auditUnprocessed)
 
 	return mux
 }

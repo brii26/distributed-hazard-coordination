@@ -50,6 +50,7 @@ type readAPI struct {
 	auditTok string              // bearer token for the audit routes
 	adminTok string              // bearer token for the admin routes
 	replay   *replayer
+	failed   func(ctx context.Context, f failedFilter, cursor string, limit int) ([]failedMessage, string, error)
 
 	sem      chan struct{}
 	draining atomic.Bool    // set on SIGTERM, readiness is off from then on
@@ -60,6 +61,7 @@ func newReadAPI(db *store, rabbitUp func(context.Context) error, breakers map[st
 	return &readAPI{
 		list:     db.listByType,
 		ping:     db.ping,
+		failed:   db.listFailed,
 		rabbitUp: rabbitUp,
 		breakers: breakers,
 		sem:      make(chan struct{}, maxInflight),

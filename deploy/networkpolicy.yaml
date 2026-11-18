@@ -65,3 +65,33 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+---
+# The gRPC API (:9091) serves raw failed-message payloads to the Operator route, so only its two callers may reach it: the
+# Client-Facing API (AGGREGATOR_GRPC_ADDR) and the field-report-processor (SaveFieldReport, PR #390). The HTTP port (:8091: /health, /metrics, /internal/audit/*) stays open
+# to every pod in the namespace as before (Prometheus, auditors, probes); the audit routes have their own token.
+# The Tester Agent, the load scripts and the other services never call :9091 (they use port-forward to :8091).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: aggregator-grpc-from-callers
+spec:
+  podSelector:
+    matchLabels:
+      role: aggregator
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: client-facing-api
+        # PR #390 (#306): calls SaveFieldReport on :9091; no pod matches until that Deployment exists.
+        - podSelector:
+            matchLabels:
+              app: field-report-processor
+      ports:
+        - protocol: TCP
+          port: 9091
+    - ports:
+        - protocol: TCP
+          port: 8091

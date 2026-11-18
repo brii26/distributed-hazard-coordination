@@ -123,8 +123,14 @@ func decodeFailedCursor(c string) (time.Time, string, error) {
 	return t, id, err
 }
 
-// One page of rows with the given status in (received_at, message_id) order, after cursor ("" for the first page). next is "" on the last page.
-func (s *store) listFailed(ctx context.Context, status, cursor string, limit int) (rows []failedMessage, next string, err error) {
+// Which rows listFailed returns: any of Statuses, and only Source when it is set.
+type failedFilter struct {
+	Statuses []string
+	Source   string
+}
+
+// One page of rows matching f in (received_at, message_id) order, after cursor ("" for the first page). next is "" on the last page.
+func (s *store) listFailed(ctx context.Context, f failedFilter, cursor string, limit int) (rows []failedMessage, next string, err error) {
 	if limit <= 0 {
 		return nil, "", errors.New("listFailed: limit must be positive")
 	}
@@ -144,9 +150,9 @@ func (s *store) listFailed(ctx context.Context, status, cursor string, limit int
 SELECT message_id, source, received_at, payload, payload_sha256, payload_size, oversize,
        reason, retryable, attempts, status, COALESCE(source_ref_id, ''), last_error_at
 FROM failed_messages
-WHERE status = $1 AND ($2 = '' OR (received_at, message_id) > ($3, $2))
+WHERE status = ANY($1) AND ($5 = '' OR source = $5) AND ($2 = '' OR (received_at, message_id) > ($3, $2))
 ORDER BY received_at, message_id
-LIMIT $4`, status, afterID, after, limit+1)
+LIMIT $4`, f.Statuses, afterID, after, limit+1, f.Source)
 	if err != nil {
 		return nil, "", err
 	}

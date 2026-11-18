@@ -40,6 +40,21 @@ func writeAuditError(w http.ResponseWriter, status int, code, msg string) {
 
 // Checks the bearer token in constant time and that the cluster is there. Writes the error and returns false when either fails.
 func (a *readAPI) auditGate(w http.ResponseWriter, r *http.Request) bool {
+	if !a.auditToken(w, r) {
+		return false
+	}
+
+	if a.cl == nil {
+		writeAuditError(w, http.StatusServiceUnavailable, "unavailable", "audit needs STORE_SERVICE")
+
+		return false
+	}
+
+	return true
+}
+
+// Checks only the bearer token, for routes that read the canonical database and not the shards.
+func (a *readAPI) auditToken(w http.ResponseWriter, r *http.Request) bool {
 	if a.auditTok == "" {
 		writeAuditError(w, http.StatusServiceUnavailable, "unavailable", "audit not configured")
 
@@ -49,12 +64,6 @@ func (a *readAPI) auditGate(w http.ResponseWriter, r *http.Request) bool {
 	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(a.auditTok)) != 1 {
 		writeAuditError(w, http.StatusUnauthorized, "unauthorized", "token tidak valid")
-
-		return false
-	}
-
-	if a.cl == nil {
-		writeAuditError(w, http.StatusServiceUnavailable, "unavailable", "audit needs STORE_SERVICE")
 
 		return false
 	}

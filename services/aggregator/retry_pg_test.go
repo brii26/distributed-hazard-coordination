@@ -44,7 +44,7 @@ func TestRetryRowKeepsRawPayloadAndMappedEventAndInsertsOnce(t *testing.T) { //n
 		}
 	}
 
-	rows, _, err := s.listFailed(ctx, failedRetrying, "", 10)
+	rows, _, err := s.listFailed(ctx, only(failedRetrying), "", 10)
 	if err != nil || len(rows) != 1 || rows[0].Attempts != 1 || string(rows[0].Payload) != `{"report_id":"c1"}` {
 		t.Fatalf("one row with the raw bytes: %+v %v", rows, err)
 	}
