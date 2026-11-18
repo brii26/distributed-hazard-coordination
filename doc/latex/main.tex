@@ -13,6 +13,8 @@
 \usepackage{fancyhdr}
 \usepackage{fvextra}
 \usepackage{float}
+\usepackage[table]{xcolor}
+\usepackage{seqsplit}
 \usepackage{xurl}
 \usepackage[hidelinks]{hyperref}
 
@@ -74,6 +76,23 @@
 \BeforeBeginEnvironment{codebox}{\begin{minipage}{\linewidth}}
 \AfterEndEnvironment{codebox}{\end{minipage}\par}
 
+
+% Placeholder bukti. Kalau figures/bukti/<file> ada, gambar dipasang. Kalau belum, tampil kotak merah berisi apa yang harus dilampirkan.
+% Makro bersama untuk semua bab Milestone 2 (Problem 1, 2, 5). Hanya didefinisikan di sini.
+\providecommand{\ph}[1]{\textcolor{red}{[#1]}}
+\providecommand{\env}[1]{\texttt{\expandafter\seqsplit\expandafter{\detokenize{#1}}}}
+\providecommand{\buktiph}[4]{%
+  \begin{figure}[H]
+  \centering
+  \IfFileExists{figures/bukti/#1}{%
+    \includegraphics[width=\linewidth,height=0.7\textheight,keepaspectratio]{figures/bukti/#1}}{%
+    \fcolorbox{red}{white}{\parbox{0.94\linewidth}{\color{red}\singlespacing\small
+      BUKTI BELUM ADA, file figures/bukti/\detokenize{#1}.\\
+      Lampirkan: #3\\
+      Sumber: #4}}}
+  \caption{#2}
+  \end{figure}}
+
 \begin{document}
 
 \pagenumbering{roman}
@@ -99,6 +118,8 @@
 \input{chapters/BabVIII}
 \input{chapters/BabIX}
 \input{chapters/BabX}
+\input{chapters/BabXI}
+\input{chapters/BabXII}
 \input{backmatter/deklarasi_llm}
 \input{backmatter/lampiran_form_ai}
 \input{backmatter/referensi}

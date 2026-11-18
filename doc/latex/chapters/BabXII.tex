@@ -1,0 +1,215 @@
+% sumber: doc/P2_LEASE_DESIGN.md, docs/DEPLOY.md, doc/IF4031 - Tugas Besar - M2.pdf, services/aggregator (lease.go, fence.go, ingest.go, poller.go, token.go, store.go, source_cursor.go, cluster.go, main.go, migrations 004 sampai 012), deploy/aggregator.yaml, deploy/coordination-db.yaml, deploy/configmap.yaml, tests/load
+\chapter[MILESTONE 2: PROBLEM 2]{Milestone 2: Problem 2, Lease, Waktu, dan Fencing}
+
+Bab ini menjawab Problem 2 Milestone 2 (``Dua Nakhoda, Satu Kapal''). Urutan subbab mengikuti butir ``Di laporan'' pada spesifikasi, lalu keterbatasan dan tempat bukti per kriteria. Klaim diambil dari kode pada \textit{commit} \texttt{5933d41}, \texttt{docs/DEPLOY.md}, dan \texttt{doc/P2\_LEASE\_DESIGN.md}. Bila dokumen rancangan berbeda dari kode, yang ditulis di sini adalah kode. Salah satunya, batas waktu pembaruan \textit{lease} pada kode adalah dua kali interval pembaruan, bukan nilai terpisah seperti pada dokumen rancangan.
+
+\section{Topologi Aggregator}
+
+Pada Milestone 2 Canonical Store berarti \textit{store} yang terbagi menjadi 16 \textit{shard} di atas \textit{pod} store pada tiap \textit{node}, dengan \textit{replication factor} 2, dan bukan satu basis data. Aggregator berjalan sebagai \textit{Deployment} dengan 3 replika (\texttt{deploy/aggregator.yaml}). \textit{Topology spread constraint} pada \texttt{kubernetes.io/hostname} dengan \texttt{maxSkew: 1} menyebar \textit{pod} ke \textit{node} berbeda. Aturan ini lunak (\texttt{ScheduleAnyway}) agar \textit{pod} tetap terjadwal bila hanya satu \textit{node} tersedia, sehingga penyebaran harus dibuktikan dengan \texttt{kubectl get pods -o wide}. Titik masuk bagi klien adalah \textit{headless Service} \texttt{aggregator-grpc}. Client-Facing API membuka \texttt{dns:///aggregator-grpc:9091} dengan \texttt{round\_robin} dan \textit{health check} gRPC, jadi hanya \textit{pod} yang Canonical Store-nya menjawab yang menerima permintaan. \textit{Readiness probe} memanggil \texttt{/health} yang hanya mengembalikan 503 bila \textit{ping} ke Canonical Store gagal, dan \textit{liveness probe} hanya memeriksa TCP agar gangguan Canonical Store tidak me-\textit{restart} \textit{pod}. Aggregator menutup koneksi gRPC setiap 30 detik supaya klien me-resolve DNS lagi dan menemukan replika baru.
+
+Semua replika melayani baca. Hanya pemegang \textit{lease} sebuah sumber yang melakukan \textit{polling} sumber itu.
+
+\section{Identifikasi Persoalan}
+
+Subbab ini menjawab butir 1 ``Di laporan'' untuk kriteria 2, 4, dan 5.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.25\linewidth}|>{\raggedright\arraybackslash}p{0.28\linewidth}|>{\raggedright\arraybackslash}p{0.27\linewidth}|}
+\hline
+\textbf{Kriteria} & \textbf{Persoalan} & \textbf{Konsep dalam literatur} & \textbf{Wujud pada soal} \\
+\hline
+\endhead
+2 & Tiga replika sama-sama \textit{polling} sehingga setiap kejadian tercatat tiga kali & \textit{Mutual exclusion} dan \textit{leader election} dengan \textit{lease}, ditambah penulisan idempoten atas pengiriman \textit{at-least-once} & Hanya satu yang boleh bertanya ke BMKG dan PVMBG \\
+\hline
+4 & Jam satu \textit{node} terlambat setengah menit atau bergeser +45 detik lalu -30 detik & \textit{Clock skew} dan \textit{clock drift}. Jam fisik antar mesin tidak dapat dipercaya untuk memutuskan siapa yang berhak & Kedua \textit{instance} merasa \textit{lease}-nya masih berlaku, dua pemimpin berhasil menyimpan hasil pada periode yang sama \\
+\hline
+5 & \textit{Node} yang sedang bertugas dibekukan lalu bangun dan melanjutkan pekerjaan tanpa tahu sudah digantikan & \textit{Process pause}, \textit{zombie leader} atau \textit{stale leader}, dan \textit{fencing token} & Pemimpin lama menulis setelah \textit{lease}-nya diambil alih, menyebabkan \textit{split brain} \\
+\hline
+\end{longtable}
+
+Ketiganya saling terkait. \textit{Lease} memberi \textit{mutual exclusion} hanya selama penilaian waktunya benar (kriteria 4), dan tidak cukup bila pemegangnya berhenti berjalan tanpa mengetahui bahwa waktunya habis (kriteria 5). Karena itu \textit{lease} dipasangkan dengan \textit{fencing token} pada tempat data ditulis.
+
+\section{Mekanisme dan Sumber Kebenaran Waktu}
+
+Subbab ini menjawab butir 2 ``Di laporan''.
+
+\subsection{Lease di Basis Data Koordinasi}
+
+Tabel \texttt{source\_lease} (migrasi \texttt{004}, \texttt{005}, \texttt{011}) menyimpan satu baris per sumber yang di-\textit{poll} (\texttt{BMKG}, \texttt{PVMBG}, dan \texttt{SENSOR\_PANTAI}) dan satu baris bernama \texttt{rebalance} untuk \textit{rebalancer} Problem 1. Kolomnya \texttt{holder} berupa UUID acak yang dibuat baru untuk setiap proses dan bukan nama \textit{pod}, \texttt{epoch} (bilangan bulat yang hanya naik), dan \texttt{expires\_at}. Tiga operasi di \texttt{lease.go} masing-masing satu pernyataan SQL:
+
+\begin{itemize}
+\item \texttt{acquire}: \texttt{UPDATE} yang mengisi \texttt{holder}, menaikkan \texttt{epoch} satu, dan menetapkan \texttt{expires\_at = clock\_timestamp() + TTL}, hanya bila \texttt{holder IS NULL} atau \texttt{expires\_at <= clock\_timestamp()}. Baris yang masih berlaku tidak diubah, sehingga satu pemenang per sumber.
+\item \texttt{renew}: memperpanjang \texttt{expires\_at} hanya bila \texttt{holder} dan \texttt{epoch} sama persis dan \texttt{expires\_at > clock\_timestamp()}. \textit{Lease} yang sudah kedaluwarsa tidak dapat dihidupkan lagi dan harus di-\textit{acquire} dengan \textit{epoch} baru.
+\item \texttt{release}: mengosongkan \texttt{holder} dan \texttt{expires\_at} bersyarat pada \texttt{holder} dan \texttt{epoch}. \textit{Epoch} tidak diturunkan.
+\end{itemize}
+
+Setiap \textit{instance} menjalankan \texttt{elector} per sumber (\texttt{elector.run}). Sebagai pengikut ia mencoba \textit{acquire} setiap \texttt{LEASE\_RENEW\_INTERVAL}. Setelah berhasil, pekerjaan \textit{polling} dijalankan di \textit{goroutine} dengan \textit{context} yang membawa \textit{epoch} (\texttt{withLeaseEpoch}), dan \textit{epoch} ini ikut pada setiap hasil \textit{poll} (\texttt{pollResult.epoch}). Sebagai pemimpin ia memperbarui \textit{lease}. Bila pembaruan ditolak, atau gagal terus sampai \textit{deadline}, \textit{context} pekerjaan dibatalkan dan pemimpin kembali menjadi pengikut. Saat proses diberhentikan secara wajar, \textit{lease} dilepas.
+
+\subsection{Sumber Kebenaran Waktu}
+
+Sumber kebenaran waktu adalah jam server Postgres \texttt{coordination-db}, melalui \texttt{clock\_timestamp()} yang dievaluasi di dalam pernyataan \texttt{UPDATE}, sesudah \textit{lock} baris diperoleh. Jam \textit{pod} tidak pernah dibandingkan dengan \texttt{expires\_at} dan tidak pernah dikirim sebagai waktu kedaluwarsa. Satu-satunya penggunaan jam lokal pada \textit{elector} adalah selisih antara dua pembacaan \texttt{time.Now} pada proses yang sama, untuk mengetahui sudah berapa lama pembaruan terakhir berhasil. Urutan peristiwa antar \textit{instance} tidak ditentukan oleh jam sama sekali, tetapi oleh \textit{epoch}: bilangan yang dibangkitkan serial oleh baris yang dikunci.
+
+\subsection{Mengapa Aman pada Kriteria 4 (Jam Bergeser)}
+
+Jam pada \textit{node} aplikasi yang bergeser +45 detik lalu -30 detik tidak masuk ke keputusan manapun. Penilaian kedaluwarsa dilakukan Postgres dengan jamnya sendiri, dan pengurutan pemimpin dilakukan oleh \texttt{epoch}. Dua \textit{instance} tidak dapat sama-sama memegang \textit{lease} yang sama karena \texttt{acquire} dan \texttt{renew} saling mengunci pada baris yang sama dan hanya satu yang cocok dengan syarat \texttt{holder} dan \texttt{epoch}. Bila ada pemimpin lama yang tertinggal, tulisannya ditolak oleh pemeriksaan \textit{epoch} pada penyimpanan (subbab fencing di bawah).
+
+Pengecualiannya adalah jam \textit{node} yang menjalankan \texttt{coordination-db}. Sumber waktu tunggal bukan berarti jam yang kebal. Bila jam \textit{node} itu digeser maju, \textit{lease} tampak kedaluwarsa lebih cepat dan terjadi pergantian pemimpin yang tidak perlu. Bila digeser mundur, pengambilalihan tertunda dan batas 60 detik pada kriteria 3 dapat terlampaui. Dua kejadian ini mengganggu \textit{liveness}, bukan \textit{safety}, karena \textit{fencing} bergantung pada \textit{epoch} dan bukan pada waktu. Bukti untuk kasus ini belum diambil, dan skenarionya harus diuji terpisah dengan Tester Agent pada \textit{node} yang menjalankan \texttt{coordination-db}.
+
+\subsection{Mengapa Aman pada Kriteria 5 (Node Dibekukan)}
+
+Urutan kejadiannya begini. Instance A memegang \textit{epoch} 41, memulai \textit{fetch}, lalu \textit{node}-nya dibekukan lebih lama dari TTL. Postgres menilai \textit{lease} A kedaluwarsa. Instance B melakukan \texttt{acquire} dan mendapat \textit{epoch} 42, lalu melanjutkan \textit{polling}. Ketika A bangun, ia membawa hasil \textit{fetch} dengan \textit{epoch} 41. Dua lapis menahannya:
+
+\begin{itemize}
+\item Lapis \textit{lease}: pembaruan berikutnya oleh A ditolak karena \texttt{expires\_at <= clock\_timestamp()} dan \textit{epoch} di baris sudah 42, sehingga \textit{elector} membatalkan pekerjaan A dan menjadikannya pengikut. Ini terjadi pada tick \texttt{elector} berikutnya, jadi tidak seketika.
+\item Lapis \textit{fencing}: setiap penulisan ke Canonical Store dijalankan di satu transaksi yang diawali \texttt{fenceTx} (\texttt{fence.go}). Transaksi memasukkan \textit{epoch} ke tabel \texttt{write\_fence} dan ditolak bila \texttt{max\_token} yang tersimpan lebih besar dari \textit{epoch} penulis. Penulisan dengan \textit{epoch} 41 setelah Canonical Store melihat 42 ditolak dengan \texttt{errFenced}, dan \textit{ingest} memanggil \texttt{elector.fence} yang menghitung \texttt{fenced\_writes\_total} dan memaksa A melepas \textit{lease}.
+\end{itemize}
+
+Lapis kedua adalah yang membuat A tidak berhasil menyimpan apa pun setelah bangun, terlepas dari seberapa cepat \textit{tick} berikutnya datang. Batasannya dijelaskan pada subbab batasan: \texttt{write\_fence} ada per \textit{node} penyimpanan.
+
+\subsection{Kriteria 2 dan Batas Jaminannya}
+
+\textit{Lease} mencegah \textit{polling} rutin berlipat sesuai jumlah replika, dan penulisan dibuat idempoten oleh \texttt{hazard\_id} UUID versi 5 dan kunci unik \texttt{(source, source\_ref\_id)}, jadi pengambilan ulang tidak menciptakan baris ganda. Ini tidak sama dengan satu permintaan HTTP persis satu kali pada setiap \textit{crash}. Bila pemimpin mati setelah upstream menerima permintaan tetapi sebelum hasil dicatat, pemimpin baru tidak tahu apakah permintaan itu sampai, dan kontrak \textit{mock} tidak menyediakan \textit{idempotency key}. Pemimpin baru mulai dari \texttt{max(occurred\_at)} dari Canonical Store (\texttt{loadSince}) dan dapat mengulang permintaan di sekitar pergantian. Bukti upstream pada kriteria 2 karena itu harus membedakan \textit{polling} rutin dari pengulangan saat \textit{failover}. Penafsiran kriteria ini belum dikonfirmasi ke asisten.
+
+\section{Batas Waktu dan Trade-off}
+
+Subbab ini menjawab butir 3 ``Di laporan''. Nilai berikut berasal dari \texttt{lease.go}, \texttt{poller.go}, \texttt{store.go}, dan \texttt{deploy/configmap.yaml}.
+
+\begin{table}[H]
+\centering
+\caption{Batas waktu \textit{lease} dan \textit{polling}}
+\begin{tabular}{|l|c|p{0.5\linewidth}|}
+\hline
+\rowcolor{gray!25}
+\textbf{Parameter} & \textbf{Nilai} & \textbf{Fungsi} \\
+\hline
+\texttt{LEASE\_TTL} & 15 detik & Masa berlaku \textit{lease} sejak \textit{acquire} atau \textit{renew} terakhir, dihitung jam Postgres \\
+\hline
+\texttt{LEASE\_RENEW\_INTERVAL} & 3 detik & Selang percobaan \textit{acquire} oleh pengikut dan \textit{renew} oleh pemimpin \\
+\hline
+\textit{Renew deadline} & 6 detik & Dua kali interval \textit{renew}. Pemimpin yang tidak dapat memastikan pembaruan selama itu berhenti sendiri \\
+\hline
+\texttt{dbQueryTimeout} & 2 detik & Batas setiap operasi \textit{lease} dan kueri Canonical Store, nilai tetap pada kode \\
+\hline
+\texttt{POLL\_INTERVAL\_MS} & 3000 & Selang minimum antar siklus \textit{polling} \\
+\hline
+\texttt{POLL\_TIMEOUT\_MS} & 4000 & Batas satu panggilan ke sumber \\
+\hline
+\end{tabular}
+\vspace{-12pt}
+\end{table}
+
+Kode menolak konfigurasi yang melanggar urutan \texttt{dbQueryTimeout} $<$ interval \textit{renew} dan dua kali interval \textit{renew} $<$ TTL (\texttt{loadLeaseConfig}). Urutan ini yang menjaga agar pemimpin yang basis datanya terputus berhenti bekerja sebelum \textit{lease}-nya benar-benar kedaluwarsa.
+
+Instance dianggap hilang bila pembaruannya tidak muncul selama TTL, yaitu 15 detik pada jam Postgres. Dalam kondisi sehat, perkiraan lama pengambilalihan dari kematian pemimpin adalah paling lama 15 detik sampai \textit{lease} kedaluwarsa, ditambah sampai 3 detik sampai pengikut mencoba, ditambah sampai 2 detik untuk \texttt{acquire}. Totalnya sekitar 20 detik sebelum \textit{poll} pertama pemimpin baru, di bawah batas 60 detik kriteria 3. Angka ini perhitungan dari konfigurasi, bukan hasil pengukuran. Basis data koordinasi yang lambat atau mati, jam Postgres yang mundur, dan pemulihan token OAuth dapat melampauinya.
+
+Trade-off nilai ini:
+
+\begin{itemize}
+\item TTL yang pendek mempercepat pengambilalihan dan memperkecil celah data. Harganya, jeda sesaat pada basis data atau penjadwal membuat pemimpin kehilangan \textit{lease} tanpa alasan sungguh, dan setiap pergantian menaikkan \textit{epoch} serta memicu \textit{polling} dari kursor penyimpanan.
+\item TTL yang panjang menenangkan pergantian palsu, tetapi sumber tidak di-\textit{poll} lebih lama saat pemimpin benar-benar mati, dan celah data memanjang.
+\item \textit{Renew deadline} 6 detik membuat pemimpin yang tidak dapat menghubungi basis data berhenti 9 detik sebelum TTL habis, memberi ruang bagi selisih laju jam. Konsekuensinya, gangguan basis data lebih dari 6 detik menghentikan \textit{polling} walau \textit{lease} secara nominal masih berlaku.
+\item \textit{Deadline} tidak melindungi dari pembekuan seluruh proses, karena proses yang dibekukan tidak menjalankan pemeriksaan apa pun. Perlindungan untuk kasus itu adalah \textit{fencing}.
+\end{itemize}
+
+\section{Basis Data Koordinasi}
+
+\texttt{coordination-db} adalah satu \textit{StatefulSet} Postgres 16 dengan satu replika (\texttt{deploy/coordination-db.yaml}), volume 1 GiB pada \textit{local-path} di \textit{node} tempat \textit{pod} berjalan, dan memori 512 MiB sampai 1 GiB. \textit{Pod} berlabel \texttt{role=store} hanya untuk kelas memori pada Lampiran B. \textit{Service} \texttt{store} dan keanggotaan \textit{shard} Aggregator mengabaikannya karena tidak punya pengaturan \texttt{bnpb.node\_name}, dan \textit{NetworkPolicy} \texttt{coordination-db-from-aggregator} hanya mengizinkan \texttt{role=aggregator} dan jaringan \textit{node} ke port 5432.
+
+Basis data ini menjadi satu otoritas untuk tiga hal, yaitu \textit{lease} (\texttt{source\_\allowbreak lease}), kursor sumber (\texttt{source\_\allowbreak cursors}, dipakai Sensor Pantai lewat \texttt{getCursor} dan \texttt{set\allowbreak Cursor}), dan pasangan token PVMBG (\texttt{source\_\allowbreak token}). Alasannya tertulis pada \texttt{docs/DEPLOY.md}. Canonical Store berupa \textit{DaemonSet} di balik \textit{Service} \texttt{store}, sehingga tiap koneksi dapat mendarat di \textit{pod} lain. Kalau ketiga tabel ditaruh di sana, tiap \textit{pod} punya \textit{epoch} dan pasangan token berbeda, dan replika tidak sepakat siapa pemimpin. Aggregator membuka kolam koneksi kedua (5 koneksi) dari \texttt{COORDINATION\_\allowbreak DATABASE\_\allowbreak URL} untuk tabel ini. Penulisan hasil, \texttt{write\_fence}, dan status \textit{shard} tetap pada Canonical Store.
+
+Harganya adalah satu titik kegagalan tunggal tanpa \textit{failover}. Selama \texttt{coordination-db} mati, tidak ada \textit{lease} baru, dan pemimpin yang tidak dapat memperbarui berhenti \textit{polling} pada \textit{renew deadline}. Ingest dari sumber berhenti sampai basis data kembali, sedangkan baca dan Canonical Store tidak terpengaruh. Data selamat dari \textit{restart} \textit{pod} karena volume ada pada disk \textit{node}, tetapi hilang bila \textit{node} itu dihapus oleh Tester Agent. Kehilangan itu membuat \textit{epoch} kembali ke 0, sementara \texttt{write\_fence} pada Canonical Store masih menyimpan \textit{epoch} yang lebih tinggi, sehingga penulisan ditolak sampai \textit{write\_fence} direset, seperti tertulis pada bagian \texttt{Known gaps} di \texttt{docs/DEPLOY.md}. Replika Postgres untuk basis data ini tidak dibuat karena menambah memori dan prosedur \textit{failover}, dan satu otoritas lebih mudah dibuktikan benar daripada dua.
+
+\section{Fencing dan Serah Terima Token PVMBG}
+
+\subsection{write\_fence per Penyimpanan dan Epoch sebagai Fencing Token}
+
+\textit{Epoch} dari \texttt{source\_lease} adalah \textit{fencing token}. \texttt{fenceTx} dijalankan di dalam transaksi tulis yang sama dengan \textit{upsert} \texttt{hazard\_events} (\texttt{upsertOn}), dengan satu pernyataan:
+
+\begin{codebox}
+INSERT INTO write_fence (source, max_token) VALUES ($1, $2)
+ON CONFLICT (source) DO UPDATE SET max_token = EXCLUDED.max_token
+WHERE write_fence.max_token <= EXCLUDED.max_token
+RETURNING max_token
+\end{codebox}
+
+Bila \textit{max\_token} yang tersimpan lebih tinggi dari token penulis, tidak ada baris yang dikembalikan dan penulisan ditolak dengan \texttt{fencedError}. Jalur \textit{conflict} mengunci baris, jadi penulis satu sumber bergiliran dan pemeriksaan berlaku sampai \textit{commit}. Konteks tanpa \textit{epoch}, yaitu mode pengembangan dan tes, tidak diperiksa.
+
+Tabel \texttt{write\_fence} ada pada setiap \textit{node} penyimpanan. \texttt{cluster.upsert} menulis ke dua pemilik \textit{shard}, dan masing-masing menjalankan pemeriksaan sendiri. Bila satu salinan sudah ter-\textit{commit} tetapi salinan lain menolak karena \textit{fenced}, galatnya tetap dikembalikan agar penulis lama berhenti.
+
+\subsection{Serah Terima Token PVMBG}
+
+Akses PVMBG memakai OAuth dengan rotasi \textit{refresh token}, dan kode satu kali hanya berlaku sekali. Pasangan token karena itu tidak boleh hilang saat pemimpin berganti. Hanya pemegang \textit{lease} PVMBG yang menghubungi \textit{endpoint} token (\texttt{tokenManager.lead}). Saat memegang \textit{lease}, ia memuat pasangan dari tabel \texttt{source\_token} dengan urutan Canonical Store bersama, berkas pada \textit{emptyDir}, lalu kode satu kali bila keduanya tidak ada. Setiap pasangan hasil rotasi ditulis ke tabel dengan \textit{epoch} pemimpin sebelum dipakai, dan pernyataan SQL-nya menolak penulisan bila baris sudah milik \textit{epoch} lebih tinggi (\texttt{WHERE source\_token.epoch <= EXCLUDED.epoch}). Pemimpin baru melanjutkan dengan pasangan yang ditinggalkan pendahulunya, dan pemimpin lama tidak dapat menimpanya. Bila Canonical Store bersama tidak terbaca, \textit{manager} tidak mencoba berkas maupun kode satu kali, karena berkas bisa lebih tua daripada pasangan di tabel. Bila refresh ditolak dengan \texttt{invalid\_grant}, \textit{manager} memuat ulang tabel dan mencoba sekali dengan \textit{refresh token} yang tersimpan sebelum menyentuh kode satu kali. Bila penulisan tabel gagal setelah PVMBG menerbitkan pasangan, pasangan disimpan di memori dan berkas, dan penulisan diulang sampai berhasil.
+
+\section{Alternatif yang Dibandingkan}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.38\linewidth}|>{\raggedright\arraybackslash}p{0.32\linewidth}|}
+\hline
+\textbf{Pilihan} & \textbf{Waktu dan serialisasi} & \textbf{Trade-off} \\
+\hline
+\endhead
+\textit{Lease} Kubernetes lewat \textit{Lease API} & \texttt{renewTime} ditulis klien, pembaruan objek dikendalikan \textit{concurrency control} API. Pustaka \textit{client-go} menilai kedaluwarsa dengan waktu lokal pengamat & Infrastruktur sudah ada, tetapi \textit{lease} terpisah dari transaksi tulis, jadi \textit{fencing} pada Canonical Store dan kursor tetap harus dibuat sendiri \\
+\hline
+Baris \textit{lease} Postgres (dipilih) & Waktu server basis data dan \textit{row lock}. \textit{Epoch} berupa bilangan bulat & Memakai teknologi yang sudah ada. Otoritas menjadi titik kegagalan tunggal, dan \textit{fencing} lintas \textit{shard} tidak atomik \\
+\hline
+\textit{etcd} terpisah & Transaksi \textit{linearizable}, TTL di server, \textit{revision} sebagai \textit{epoch} & Tambahan kuorum, memori, dan operasi \textit{cluster}. Penyimpanan tetap harus memeriksa token, dan penulisan ke Postgres tidak atomik dengan transaksi \textit{etcd} \\
+\hline
+\end{longtable}
+
+Pilihan kedua dipakai karena Postgres sudah menjadi teknologi inti sistem dan menyatukan \textit{lease}, kursor, dan token pada satu otoritas yang dapat diuji. \textit{Etcd} adalah pilihan yang lebih tahan, tetapi menambah komponen berkuorum pada \textit{cluster} yang memori totalnya sudah ketat. Ketiga opsi tetap membutuhkan pemeriksaan token di tempat data ditulis, karena tidak ada yang dapat menghentikan proses yang sudah dibekukan.
+
+\section{Konfigurasi Load Testing dan Tooling}
+
+Subbab ini menjawab butir 4 ``Di laporan''. Alat yang dipakai di repositori adalah k6, dijalankan dari \textit{image} Docker \texttt{grafana/k6} (variabel \texttt{K6\_IMAGE} dapat mengganti versinya) lewat \texttt{tests/load/run.sh}, dengan skrip uji \texttt{tests/load/p2.js}. Skrip Milestone 1 itu menjalankan tiga skenario terhadap \texttt{/hazards}: \texttt{bmkg\_only} (20 permintaan per detik selama 30 detik pada tipe seismik dengan ambang p95 di bawah 300 ms sementara PVMBG menjawab setelah 3 detik), \texttt{volcanic\_bg} (10 permintaan per detik latar belakang), dan \texttt{mixed} (50 koneksi selama 60 detik, ambang tingkat gagal di bawah 1\%, dengan 429 sebagai penolakan terkontrol yang tidak dihitung gagal). Ringkasan disimpan di \texttt{tests/load/results/} dan ambang yang gagal membuat skrip keluar dengan status tidak nol.
+
+Konfigurasi Milestone 2 menurut spesifikasi adalah paling sedikit 10.000 \textit{virtual user} selama paling sedikit 120 detik, dengan jumlah replika diubah 3, 5, lalu 2 selama uji, dan tingkat galat di luar penolakan terkontrol di bawah 1\%. Skrip uji yang memenuhi konfigurasi itu, jalur perubahan jumlah replika, dan target alamat pada \textit{cluster} belum ada di repositori pada \textit{commit} ini karena \texttt{p2.js} memakai 50 koneksi pada \texttt{docker compose} lokal. Bagian ini harus diisi setelah skrip M2 dibuat.
+
+\ph{Isi dengan konfigurasi M2 yang sebenarnya: nama berkas skrip, executor dan jumlah VU, durasi, ambang, URL target pada \textit{cluster}, perintah mengubah replika (\texttt{kubectl scale deployment/aggregator -{}-replicas=N}) beserta waktunya, versi k6, dan mesin penghasil beban. Jangan menulis angka sebelum skrip ada.}
+
+\section{Batasan yang Disadari}
+
+\begin{itemize}
+\item \texttt{write\_fence} bersifat per \textit{node} penyimpanan. Penulisan dengan \textit{epoch} lama hanya ditolak pada \textit{node} yang sudah menerima \textit{epoch} baru. Bila pemimpin baru belum menulis apa pun ke \textit{node} tertentu misalnya karena \textit{poll}-nya belum menghasilkan rekaman untuk \textit{shard} di sana, penulisan pemimpin lama ke \textit{node} itu masih lolos. Dampaknya terbatas karena penulisan idempoten dan \textit{hazard\_id} deterministik, tetapi tidak sama dengan jaminan bahwa pemimpin lama tidak menyimpan apa pun. Kriteria 5 harus diuji secara langsung pada demo, dan hasilnya ditulis apa adanya.
+\item Pemimpin yang dibekukan lebih lama dari \textit{deadline} masih dapat menyelesaikan \textit{refresh} token ke PVMBG dan merotasi pasangan sebelum penulisannya ke tabel ditolak. Pemimpin baru lalu pulih lewat pasangan yang tersimpan, atau, bila pasangan itu juga sudah dirotasi, hanya lewat kode satu kali baru (\texttt{docs/DEPLOY.md}).
+\item \texttt{coordination-db} tidak punya \textit{failover}. Kehilangan datanya membuat \textit{epoch} mulai dari 0 dan perlu mereset \texttt{write\_fence} di tiap penyimpanan. Jam \textit{node} yang menjalankannya adalah satu-satunya jam yang menentukan kedaluwarsa.
+\item Pada k3s, status koordinasi berada di \texttt{coordination-db} dengan satu replika pada volume lokal \textit{local-path}. Menurut catatan Tester Agent (\texttt{doc/TESTER\_AGENT\_NOTES.md}), \textit{wipe-node} pada \textit{node} tempat \textit{pod} itu berjalan menghapus volumenya. Selama \textit{node} mati tidak ada \textit{lease} yang dapat diambil atau diperbarui dan \textit{polling} berhenti. Setelah \textit{node} kembali, Postgres gagal start dengan direktori data rusak sehingga PVC harus dihapus dan dibuat ulang. Baris \textit{lease} terbentuk lagi dengan sendirinya, tetapi pasangan token PVMBG hilang dan kode sekali pakainya sudah terpakai, sehingga \textit{polling} PVMBG baru jalan setelah mock di-\textit{restart}. \textit{Wipe-node} tidak menyentuh \textit{hostPath} Canonical Store, jadi data \textit{shard} selamat sedangkan status koordinasi tidak.
+\item Acquire yang jawabannya hilang tidak diverifikasi dengan \textit{renew}. \textit{Instance} itu tetap pengikut dan baru dapat memegang \textit{lease} setelah TTL habis. Ini penundaan yang diterima.
+\item Kursor BMKG dan PVMBG adalah \texttt{max(occurred\_at)} pada Canonical Store, dan bergantung pada asumsi bahwa timestamp sumber tidak mundur. Sensor Pantai memakai kursor di \texttt{source\_cursors}. Satu permintaan dapat terulang di sekitar \textit{failover}.
+\item Hasil penyebaran \textit{pod} ke \textit{node} berbeda tidak dijamin, karena aturannya lunak.
+\item \textit{Rolling update} diatur \texttt{maxUnavailable: 0}, \texttt{maxSurge: 1}, dan \texttt{preStop} \textit{sleep} 5 detik. Pelepasan \textit{lease} saat SIGTERM sudah ada pada kode, tetapi kriteria 8 (ganti versi tanpa permintaan gagal saat uji beban) belum dibuktikan.
+\item Dokumen rancangan menyebut \textit{deadline} pembaruan, TTL, dan \textit{timeout} basis data sebagai variabel terpisah. Pada kode hanya \texttt{LEASE\_TTL} dan \texttt{LEASE\_RENEW\_INTERVAL} yang dapat diubah, sedangkan \textit{deadline} sama dengan dua kali interval dan \textit{timeout} basis data tetap 2 detik.
+\end{itemize}
+
+\section{Bukti}
+
+Bukti belum diambil. Setiap kotak merah menyebut apa yang harus dilampirkan dan sumbernya, dan akan terganti gambar sungguhan begitu \textit{file} bernama sama ditaruh di \texttt{doc/latex/figures/bukti/}. Tidak ada angka atau keluaran yang ditulis sebelum bukti ada. Seluruh \textit{kubectl} dijalankan pada \textit{cluster} demo oleh anggota kelompok, bukan oleh penulis laporan ini.
+
+\subsection{Kriteria 1: Tiga Instance di Node Berbeda}
+
+\buktiph{p2-k1-instance.png}{Tiga replika Aggregator tersebar dan titik masuk hanya mengarahkan ke \textit{instance} sehat}{\texttt{kubectl get pods -o wide -n sistem-informasi-kebencanaan-bnpb -l role=aggregator} (kolom NODE berbeda), \texttt{kubectl get endpoints aggregator-grpc} sebelum dan sesudah satu \textit{pod} dibuat tidak sehat.}{perintah \texttt{kubectl} pada \textit{cluster} demo.}
+
+\subsection{Kriteria 2: Setiap Sumber Diambil Tepat Sekali}
+
+\buktiph{p2-k2-sekali.png}{Satu pemimpin per sumber dan permintaan upstream tidak berlipat}{\texttt{lease\_is\_leader\{source\}} dan \texttt{lease\_token\{source\}} dari \texttt{/metrics} ketiga replika (hanya satu bernilai 1 per sumber), penghitungan baris unik di Canonical Store per \texttt{source\_ref\_id}, dan log \textit{mock} BMKG dan PVMBG (\texttt{kubectl logs}) yang menunjukkan jumlah permintaan per interval sama dengan satu \textit{poller}.}{\texttt{/metrics} Aggregator, \texttt{psql} pada Canonical Store, \texttt{kubectl logs deployment/bmkg-mock} dan \texttt{deployment/pvmbg-mock}, serta \texttt{tests/scenarios/audit-checksum.sh}.}
+
+\subsection{Kriteria 3: Pengambilalihan dalam 60 Detik}
+
+\buktiph{p2-k3-failover.png}{Pemimpin dimatikan dan pengambilalihan terjadi dalam 60 detik tanpa celah dan duplikat}{log \texttt{lease acquired} dengan \texttt{takeover=true} dan \texttt{epoch} baru, waktu dari aksi Tester Agent sampai \textit{poll} pertama pemimpin baru, \texttt{lease\_takeovers\_total}, serta perbandingan \texttt{count} dan checksum Audit API sebelum dan sesudah.}{log Tester Agent (\texttt{kubectl logs -n tester-agent daemonset/tester-agent}), \texttt{kubectl logs} Aggregator (filter \texttt{"lease"}), \texttt{kubectl exec -n tester-agent daemonset/tester-agent -{}- /app run practice <nama>}.}
+
+\subsection{Kriteria 4: Jam Bergeser}
+
+\buktiph{p2-k4-clock.png}{Jam \textit{node} digeser +45 detik lalu -30 detik tanpa dua pemimpin yang menyimpan pada periode yang sama}{log Tester Agent yang mencatat pergeseran jam, \texttt{lease\_token} yang hanya naik dan satu pemimpin, \texttt{fenced\_writes\_total} bila ada penulisan ditolak, dan pemeriksaan bahwa tidak ada \textit{source\_ref\_id} ganda pada Canonical Store. Ulangi dengan jam digeser pada \textit{node} \texttt{coordination-db} dan catat dampaknya pada waktu pengambilalihan.}{Tester Agent, \texttt{/metrics}, dan \texttt{psql}.}
+
+\subsection{Kriteria 5: Node Dibekukan}
+
+\buktiph{p2-k5-freeze.png}{Pemimpin dibekukan lebih lama dari batas lalu bangun, tidak ada penyimpanan sesudah bangun}{log \texttt{lease lost} atau \texttt{fenced} dari \textit{instance} yang bangun, \texttt{fenced\_writes\_total} naik, \texttt{write\_fence.max\_token} pada tiap Canonical Store, dan jumlah baris yang disimpan oleh \textit{epoch} lama sesudah waktu bangun (harus 0, atau dicatat apa adanya bila bukan).}{VM dibekukan langsung oleh anggota kelompok sesuai ketentuan spesifikasi, \texttt{kubectl logs}, dan \texttt{psql} pada tiap \textit{pod} \textit{store}.}
+
+\subsection{Kriteria 6: Load Test dengan Perubahan Replika}
+
+\buktiph{p2-k6-load.png}{Load test 10.000 VU selama 120 detik dengan replika 3, 5, lalu 2}{ringkasan akhir k6 (tingkat galat di luar penolakan terkontrol, hitungan per kode status), grafik jumlah replika terhadap waktu, dan bukti kriteria 2 tetap terpenuhi (tidak ada baris ganda).}{skrip k6 M2 (belum ada, lihat subbab konfigurasi), \texttt{kubectl scale deployment/aggregator -{}-replicas=N}, dan panel Grafana.}
+
+\subsection{Kriteria 7: Throughput 3 Instance Dibanding 1}
+
+\buktiph{p2-k7-throughput.png}{Throughput 3 \textit{instance} paling sedikit 2,0 kali 1 \textit{instance}}{dua ringkasan k6 dengan konfigurasi yang sama (replika 1 dan replika 3) dan perhitungan rasionya.}{skrip k6 M2 dan \texttt{kubectl scale}.}
+
+\subsection{Kriteria 8: Ganti Versi saat Load Test}
+
+\buktiph{p2-k8-rolling.png}{\textit{Rolling update} Aggregator saat uji beban tanpa permintaan gagal}{\texttt{kubectl rollout status deployment/aggregator}, ringkasan k6 selama \textit{rollout} dengan 0 permintaan gagal, dan log pelepasan \textit{lease} dari \textit{pod} yang diganti.}{\texttt{kubectl set image} atau \texttt{kubectl rollout restart deployment/aggregator}, k6, dan \texttt{kubectl logs}.}
