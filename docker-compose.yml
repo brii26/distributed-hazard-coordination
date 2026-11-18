@@ -32,6 +32,8 @@ services:
         target: /etc/prometheus/prometheus.yml
       - source: prometheus_rules
         target: /etc/prometheus/rules.yml
+      - source: prometheus_slo_rules
+        target: /etc/prometheus/slo-rules.yml
 
   bmkg-mock:
     restart: unless-stopped
@@ -380,7 +382,7 @@ configs:
     content: |
       global:
         scrape_interval: 15s
-      rule_files: [/etc/prometheus/rules.yml]
+      rule_files: [/etc/prometheus/rules.yml, /etc/prometheus/slo-rules.yml]
       scrape_configs:
         - job_name: aggregated-trace-metrics
           static_configs:
@@ -388,6 +390,15 @@ configs:
         - job_name: client-api-admission
           static_configs:
             - targets: ['client-facing-api:8080']
+        - job_name: notifier
+          static_configs:
+            - targets: ['notifier:8094']
+        - job_name: aggregator
+          static_configs:
+            - targets: ['aggregator:8091']
+  # SLO rules (#323, doc/P5_SLO.md) are one file shared with the Kubernetes stack, so they are read from deploy/ instead of inlined.
+  prometheus_slo_rules:
+    file: ./deploy/observability/prometheus/slo-rules.yml
   prometheus_rules:
     content: |
       groups:

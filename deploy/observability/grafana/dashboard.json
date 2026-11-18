@@ -81,6 +81,80 @@
     {"id": 8, "type": "row", "title": "Lag", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 30}, "panels": []},
     {"id": 9, "type": "row", "title": "Breaker", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31}, "panels": []},
     {"id": 10, "type": "row", "title": "Shards", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}, "panels": []},
-    {"id": 11, "type": "row", "title": "Replicas", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}, "panels": []}
+    {"id": 11, "type": "row", "title": "Replicas", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}, "panels": []},
+    {"id": 20, "type": "row", "title": "SLO and error budget (doc/P5_SLO.md)", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 34}, "panels": []},
+    {
+      "id": 21, "type": "stat", "title": "Critical alert SLI: delivered within 5 s (target 99.9%, last 5m)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 35},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 3,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.999}]}}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "slo:critical_alert_sli:ratio_rate5m"}]
+    },
+    {
+      "id": 22, "type": "stat", "title": "Read availability SLI: Tim Lapangan (target 99.5%, last 5m)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 35},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "decimals": 3,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.995}]}}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "slo:read_sli:ratio_rate5m"}]
+    },
+    {
+      "id": 23, "type": "stat", "title": "Critical alert error budget remaining over the selected time range (below 0 = exhausted)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 35},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0}, {"color": "green", "value": 0.25}]}}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "(1 - (1 - sum(increase(critical_alert_latency_seconds_bucket{le=\"5\"}[$__range])) / sum(increase(critical_alert_latency_seconds_count[$__range]))) / 0.001) or on() vector(1)"}]
+    },
+    {
+      "id": 24, "type": "stat", "title": "Read availability error budget remaining over the selected time range (below 0 = exhausted)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 35},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 1,
+        "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 0}, {"color": "green", "value": 0.25}]}}, "overrides": []},
+      "targets": [{"refId": "A", "expr": "(1 - (((sum(increase(traces_span_metrics_calls_total{service_name=\"client-facing-api\", span_kind=\"SPAN_KIND_SERVER\", status_code=\"STATUS_CODE_ERROR\"}[$__range])) or on() vector(0)) + (sum(increase(client_api_inflight_rejected_requests_total{role=\"Lapangan\"}[$__range])) or on() vector(0))) / clamp_min(sum(increase(traces_span_metrics_calls_total{service_name=\"client-facing-api\", span_kind=\"SPAN_KIND_SERVER\"}[$__range])) - (sum(increase(client_api_inflight_rejected_requests_total{role!=\"Lapangan\"}[$__range])) or on() vector(0)), 0)) / 0.005) or on() vector(1)"}]
+    },
+    {
+      "id": 25, "type": "timeseries", "title": "Burn rate (1 = spending the budget exactly over the SLO window; lines at 6 and 14.4 are the alert thresholds)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "fieldConfig": {"defaults": {"unit": "none", "min": 0, "custom": {"thresholdsStyle": {"mode": "line"}},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 6}, {"color": "red", "value": 14.4}]}}, "overrides": []},
+      "targets": [
+        {"refId": "A", "legendFormat": "critical alert 5m", "expr": "slo:critical_alert_burn_rate:rate5m"},
+        {"refId": "B", "legendFormat": "critical alert 1h", "expr": "slo:critical_alert_burn_rate:rate1h"},
+        {"refId": "C", "legendFormat": "read 5m", "expr": "slo:read_burn_rate:rate5m"},
+        {"refId": "D", "legendFormat": "read 1h", "expr": "slo:read_burn_rate:rate1h"}
+      ]
+    },
+    {
+      "id": 26, "type": "timeseries", "title": "Error budget remaining (trailing 2h, below 0 = exhausted)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "custom": {"thresholdsStyle": {"mode": "line"}},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0}]}}, "overrides": []},
+      "targets": [
+        {"refId": "A", "legendFormat": "critical alert", "expr": "slo:critical_alert_error_budget_remaining:ratio2h"},
+        {"refId": "B", "legendFormat": "read availability", "expr": "slo:read_error_budget_remaining:ratio2h"}
+      ]
+    },
+    {
+      "id": 27, "type": "stat", "title": "Critical alerts in the selected time range: delivered, late (over 5 s), staged but undelivered (last 10m)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 48},
+      "options": {"colorMode": "value", "textMode": "value_and_name", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0}, "overrides": []},
+      "targets": [
+        {"refId": "A", "legendFormat": "delivered", "expr": "sum(increase(critical_alerts_delivered_total[$__range])) or on() vector(0)"},
+        {"refId": "B", "legendFormat": "late", "expr": "(sum(increase(critical_alert_latency_seconds_count[$__range])) - sum(increase(critical_alert_latency_seconds_bucket{le=\"5\"}[$__range]))) or on() vector(0)"},
+        {"refId": "C", "legendFormat": "undelivered", "expr": "slo:critical_alert_undelivered:count10m"}
+      ]
+    }
+
   ]
 }

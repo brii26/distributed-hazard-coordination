@@ -30,6 +30,9 @@ configMapGenerator:
   - name: grafana-dashboards
     namespace: sistem-informasi-kebencanaan-bnpb
     files: [observability/grafana/dashboard.json]
+  - name: prometheus-slo-rules
+    namespace: sistem-informasi-kebencanaan-bnpb
+    files: [observability/prometheus/slo-rules.yml]
 generatorOptions:
   disableNameSuffixHash: true
 images:

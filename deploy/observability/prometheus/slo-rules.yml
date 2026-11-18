@@ -1,0 +1,98 @@
+# SLO recording and alert rules for the alert path (#323). The definitions, targets and the
+# reasoning are in doc/P5_SLO.md. Loaded by Prometheus in both stacks (docker-compose.yml and
+# deploy/observability/observability.yaml) next to rules.yml, and read by the dashboard panel group "SLO and error budget".
+#
+# Error budgets: critical alert timeliness 0.001 (target 99.9 percent), Tim Lapangan read availability 0.005 (target 99.5 percent).
+# Every error ratio falls back to 0 when there was no traffic, so an idle window spends no budget. The denominator is filtered with `> 0` first, because a quiet window with existing series gives 0/0 (NaN), which `or on() vector(0)` would not replace. A scrape that is down
+# is caught by NotifierMetricsDown instead of hiding behind that fallback.
+groups:
+  - name: slo-critical-alert-timeliness
+    rules:
+      - record: slo:critical_alert_error_ratio:rate5m
+        expr: (1 - sum(rate(critical_alert_latency_seconds_bucket{le="5"}[5m])) / (sum(rate(critical_alert_latency_seconds_count[5m])) > 0)) or on() vector(0)
+      - record: slo:critical_alert_burn_rate:rate5m
+        expr: slo:critical_alert_error_ratio:rate5m / 0.001
+      - record: slo:critical_alert_error_ratio:rate30m
+        expr: (1 - sum(rate(critical_alert_latency_seconds_bucket{le="5"}[30m])) / (sum(rate(critical_alert_latency_seconds_count[30m])) > 0)) or on() vector(0)
+      - record: slo:critical_alert_burn_rate:rate30m
+        expr: slo:critical_alert_error_ratio:rate30m / 0.001
+      - record: slo:critical_alert_error_ratio:rate1h
+        expr: (1 - sum(rate(critical_alert_latency_seconds_bucket{le="5"}[1h])) / (sum(rate(critical_alert_latency_seconds_count[1h])) > 0)) or on() vector(0)
+      - record: slo:critical_alert_burn_rate:rate1h
+        expr: slo:critical_alert_error_ratio:rate1h / 0.001
+      - record: slo:critical_alert_error_ratio:rate2h
+        expr: (1 - sum(rate(critical_alert_latency_seconds_bucket{le="5"}[2h])) / (sum(rate(critical_alert_latency_seconds_count[2h])) > 0)) or on() vector(0)
+      - record: slo:critical_alert_burn_rate:rate2h
+        expr: slo:critical_alert_error_ratio:rate2h / 0.001
+      - record: slo:critical_alert_sli:ratio_rate5m
+        expr: 1 - slo:critical_alert_error_ratio:rate5m
+      - record: slo:critical_alert_error_budget_remaining:ratio2h
+        expr: 1 - slo:critical_alert_error_ratio:rate2h / 0.001
+      - record: slo:critical_alert_undelivered:count10m
+        expr: clamp_min(sum(increase(aggregator_critical_staged_total[10m])) - sum(increase(critical_alerts_delivered_total[10m])), 0) or on() vector(0)
+  - name: slo-read-availability
+    rules:
+      - record: slo:read_requests:rate5m
+        expr: clamp_min(sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER"}[5m])) - (sum(rate(client_api_inflight_rejected_requests_total{role!="Lapangan"}[5m])) or on() vector(0)), 0)
+      - record: slo:read_bad_requests:rate5m
+        expr: (sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[5m])) or on() vector(0)) + (sum(rate(client_api_inflight_rejected_requests_total{role="Lapangan"}[5m])) or on() vector(0))
+      - record: slo:read_error_ratio:rate5m
+        expr: clamp_max(slo:read_bad_requests:rate5m / (slo:read_requests:rate5m > 0), 1) or on() vector(0)
+      - record: slo:read_burn_rate:rate5m
+        expr: slo:read_error_ratio:rate5m / 0.005
+      - record: slo:read_requests:rate30m
+        expr: clamp_min(sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER"}[30m])) - (sum(rate(client_api_inflight_rejected_requests_total{role!="Lapangan"}[30m])) or on() vector(0)), 0)
+      - record: slo:read_bad_requests:rate30m
+        expr: (sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[30m])) or on() vector(0)) + (sum(rate(client_api_inflight_rejected_requests_total{role="Lapangan"}[30m])) or on() vector(0))
+      - record: slo:read_error_ratio:rate30m
+        expr: clamp_max(slo:read_bad_requests:rate30m / (slo:read_requests:rate30m > 0), 1) or on() vector(0)
+      - record: slo:read_burn_rate:rate30m
+        expr: slo:read_error_ratio:rate30m / 0.005
+      - record: slo:read_requests:rate1h
+        expr: clamp_min(sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER"}[1h])) - (sum(rate(client_api_inflight_rejected_requests_total{role!="Lapangan"}[1h])) or on() vector(0)), 0)
+      - record: slo:read_bad_requests:rate1h
+        expr: (sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[1h])) or on() vector(0)) + (sum(rate(client_api_inflight_rejected_requests_total{role="Lapangan"}[1h])) or on() vector(0))
+      - record: slo:read_error_ratio:rate1h
+        expr: clamp_max(slo:read_bad_requests:rate1h / (slo:read_requests:rate1h > 0), 1) or on() vector(0)
+      - record: slo:read_burn_rate:rate1h
+        expr: slo:read_error_ratio:rate1h / 0.005
+      - record: slo:read_requests:rate2h
+        expr: clamp_min(sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER"}[2h])) - (sum(rate(client_api_inflight_rejected_requests_total{role!="Lapangan"}[2h])) or on() vector(0)), 0)
+      - record: slo:read_bad_requests:rate2h
+        expr: (sum(rate(traces_span_metrics_calls_total{service_name="client-facing-api", span_kind="SPAN_KIND_SERVER", status_code="STATUS_CODE_ERROR"}[2h])) or on() vector(0)) + (sum(rate(client_api_inflight_rejected_requests_total{role="Lapangan"}[2h])) or on() vector(0))
+      - record: slo:read_error_ratio:rate2h
+        expr: clamp_max(slo:read_bad_requests:rate2h / (slo:read_requests:rate2h > 0), 1) or on() vector(0)
+      - record: slo:read_burn_rate:rate2h
+        expr: slo:read_error_ratio:rate2h / 0.005
+      - record: slo:read_sli:ratio_rate5m
+        expr: 1 - slo:read_error_ratio:rate5m
+      - record: slo:read_error_budget_remaining:ratio2h
+        expr: 1 - slo:read_error_ratio:rate2h / 0.005
+  - name: slo-burn-alerts
+    rules:
+      - alert: CriticalAlertFastBurn
+        expr: slo:critical_alert_burn_rate:rate5m > 14.4 and slo:critical_alert_burn_rate:rate1h > 14.4
+        labels: {severity: page, slo: critical_alert}
+        annotations: {summary: "Fast burn of the critical alert timeliness error budget (over 14.4x on both 5m and 1h)"}
+      - alert: CriticalAlertSlowBurn
+        expr: slo:critical_alert_burn_rate:rate30m > 6 and slo:critical_alert_burn_rate:rate2h > 6
+        labels: {severity: ticket, slo: critical_alert}
+        annotations: {summary: "Slow burn of the critical alert timeliness error budget (over 6x on both 30m and 2h)"}
+      - alert: ReadAvailabilityFastBurn
+        expr: slo:read_burn_rate:rate5m > 14.4 and slo:read_burn_rate:rate1h > 14.4
+        labels: {severity: page, slo: read}
+        annotations: {summary: "Fast burn of the Tim Lapangan read availability error budget (over 14.4x on both 5m and 1h)"}
+      - alert: ReadAvailabilitySlowBurn
+        expr: slo:read_burn_rate:rate30m > 6 and slo:read_burn_rate:rate2h > 6
+        labels: {severity: ticket, slo: read}
+        annotations: {summary: "Slow burn of the Tim Lapangan read availability error budget (over 6x on both 30m and 2h)"}
+      - alert: CriticalAlertsUndelivered
+        expr: slo:critical_alert_undelivered:count10m > 0
+        for: 10m
+        labels: {severity: page, slo: critical_alert}
+        annotations: {summary: "Critical events staged by the Aggregator in 10m exceed the alerts delivered (possible loss)"}
+      - alert: NotifierMetricsDown
+        expr: up{job="notifier"} == 0
+        for: 2m
+        labels: {severity: warning, slo: critical_alert}
+        annotations: {summary: "Notifier /metrics is not scraped, so the critical alert SLI has no data"}
