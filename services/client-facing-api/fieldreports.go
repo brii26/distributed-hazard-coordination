@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // see uuidV5
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -96,6 +97,23 @@ func newReportID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
+// Fixed namespace for report ids. Changing it changes every keyed report id.
+var reportNamespace = [16]byte{0x3a, 0x91, 0x5c, 0x0d, 0x7e, 0x42, 0x4b, 0x16, 0x9f, 0x28, 0xc4, 0x6d, 0x10, 0xe7, 0x5b, 0xa3}
+
+// RFC 4122 UUID v5 of the name, so a retry with the same key gets the same id on every pod. Same code as the aggregator's hazard ids, the modules are separate.
+func uuidV5(ns [16]byte, name string) string {
+	h := sha1.New() //nolint:gosec // UUID v5 is defined with SHA-1, it is an id and not a security hash
+
+	_, _ = h.Write(ns[:])
+	_, _ = h.Write([]byte(name))
+
+	b := h.Sum(nil)[:16]
+	b[6] = b[6]&0x0f | 0x50
+	b[8] = b[8]&0x3f | 0x80
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
 // Decodes and checks the body, nothing is touched before it is valid.
 func parseReport(r *http.Request, w http.ResponseWriter) (reportEnvelope, []byte, string) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxReportBody))
@@ -144,22 +162,26 @@ func (a *fieldReportsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := r.Header.Get("Idempotency-Key")
-	if id == "" {
-		id = newReportID()
-	} else if !validKey.MatchString(id) {
-		writeJSON(w, http.StatusBadRequest, errBody("Idempotency-Key must be 1 to 64 characters of A-Z a-z 0-9 . _ -"))
+	id, scope := newReportID(), ""
 
-		return
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		if !validKey.MatchString(key) {
+			writeJSON(w, http.StatusBadRequest, errBody("Idempotency-Key must be 1 to 64 characters of A-Z a-z 0-9 . _ -"))
+
+			return
+		}
+
+		scope = claims.Email + "|" + key
+		id = uuidV5(reportNamespace, scope)
 	}
 
 	sum := sha256.Sum256(raw)
 
-	if dup, conflict := a.lookup(id, sum); conflict {
+	if dup, conflict := a.lookup(scope, sum); scope != "" && conflict {
 		writeJSON(w, http.StatusConflict, errBody("Idempotency-Key was used with a different body"))
 
 		return
-	} else if dup {
+	} else if scope != "" && dup {
 		a.deduped.Add(1)
 		writeJSON(w, http.StatusAccepted, map[string]string{"report_id": id})
 
@@ -193,7 +215,10 @@ func (a *fieldReportsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.observe(a.now().Sub(start))
-	a.remember(id, sum)
+	if scope != "" {
+		a.remember(scope, sum)
+	}
+
 	a.accepted.Add(1)
 	writeJSON(w, http.StatusAccepted, map[string]string{"report_id": id})
 }

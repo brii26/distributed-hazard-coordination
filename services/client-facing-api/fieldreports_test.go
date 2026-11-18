@@ -52,13 +52,17 @@ func (f *fakeBroker) count() int {
 }
 
 func postReport(a *fieldReportsAPI, role, key, body string) *httptest.ResponseRecorder {
+	return postReportAs(a, "f@x.example", role, key, body)
+}
+
+func postReportAs(a *fieldReportsAPI, email, role, key, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/field-reports", strings.NewReader(body))
 	if key != "" {
 		req.Header.Set("Idempotency-Key", key)
 	}
 
 	if role != "" {
-		req = req.WithContext(context.WithValue(req.Context(), claimsKey{}, jwtClaims{Email: "f@x.example", Role: role}))
+		req = req.WithContext(context.WithValue(req.Context(), claimsKey{}, jwtClaims{Email: email, Role: role}))
 	}
 
 	rec := httptest.NewRecorder()
@@ -190,7 +194,7 @@ func TestIdempotency(t *testing.T) {
 	a := newFieldReportsAPI(fb)
 	first, again := postReport(a, roleLapangan, "k-1", okBody), postReport(a, roleLapangan, "k-1", okBody)
 
-	if first.Code != 202 || again.Code != 202 || reportID(t, first) != "k-1" || reportID(t, again) != "k-1" || fb.count() != 1 {
+	if first.Code != 202 || again.Code != 202 || reportID(t, first) != reportID(t, again) || len(reportID(t, first)) != 36 || fb.count() != 1 {
 		t.Fatalf("same key twice: %d %d, publishes %d", first.Code, again.Code, fb.count())
 	}
 
@@ -201,6 +205,26 @@ func TestIdempotency(t *testing.T) {
 	x, y := reportID(t, postReport(a, roleLapangan, "", okBody)), reportID(t, postReport(a, roleLapangan, "", okBody))
 	if x == y || len(x) != 36 {
 		t.Fatalf("generated ids %q %q", x, y)
+	}
+}
+
+func TestIdempotencyIsPerReporter(t *testing.T) {
+	t.Parallel()
+
+	fb := &fakeBroker{}
+	a := newFieldReportsAPI(fb)
+	one, two := postReportAs(a, "a@x.example", roleLapangan, "k-1", okBody), postReportAs(a, "b@x.example", roleLapangan, "k-1", okBody)
+
+	if one.Code != 202 || two.Code != 202 || reportID(t, one) == reportID(t, two) || fb.count() != 2 {
+		t.Fatalf("two users, same key: %d %d, publishes %d", one.Code, two.Code, fb.count())
+	}
+
+	if strings.Contains(one.Body.String(), "a@x.example") || strings.Contains(string(fb.got[0].id), "@") {
+		t.Fatal("e-mail leaked into the report id")
+	}
+
+	if rec := postReportAs(a, "b@x.example", roleLapangan, "k-1", `{"description":"other"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("same user, other body: code %d, want 409", rec.Code)
 	}
 }
 
@@ -221,7 +245,7 @@ func TestEnvelope(t *testing.T) { //nolint:gocyclo // one flat list of field che
 		t.Fatal(err)
 	}
 
-	if m.id != "abc" || e.ReportID != "abc" || e.ReporterID != "f@x.example" || e.ReporterRole != roleOperator || e.Description != "flooded road" || e.Kind != "flood" || *e.Latitude != -6.2 || e.ReceivedAt == "" || m.correlationID == "" {
+	if len(m.id) != 36 || e.ReportID != m.id || e.ReporterID != "f@x.example" || e.ReporterRole != roleOperator || e.Description != "flooded road" || e.Kind != "flood" || *e.Latitude != -6.2 || e.ReceivedAt == "" || m.correlationID == "" {
 		t.Fatalf("envelope %+v msg %+v", e, m)
 	}
 
