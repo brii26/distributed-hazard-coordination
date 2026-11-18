@@ -52,6 +52,7 @@ secret rabbitmq-credentials user=RABBITMQ_USER password=RABBITMQ_PASSWORD
 secret auth-secrets jwt_signing_secret=JWT_SIGNING_SECRET secret_salt=SECRET_SALT seed_operator_password=SEED_OPERATOR_PASSWORD
 
 secret audit-token token=AUDIT_TOKEN
+secret admin-token token=ADMIN_TOKEN
 secret pantai-token token=PANTAI_AUTH_TOKEN
 secret satellite-token token=SATELLITE_GROUP_TOKEN
 

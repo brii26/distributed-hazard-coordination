@@ -31,7 +31,7 @@ Postgres builds the tables from `store-schema` only on an empty data directory. 
 | `user-db-credentials` | Secret | `make-secrets.sh` | `user`, `password` |
 | `rabbitmq-credentials` | Secret | `make-secrets.sh` | `user`, `password` |
 | `auth-secrets` | Secret | `make-secrets.sh` | `jwt_signing_secret`, `secret_salt`, `seed_operator_password` |
-| `audit-token`, `pantai-token`, `satellite-token` | Secret | `make-secrets.sh` | `token` |
+| `audit-token`, `admin-token`, `pantai-token`, `satellite-token` | Secret | `make-secrets.sh` | `token` |
 | `grafana-admin` | Secret | `make-secrets.sh` (random, created once) | `password` for the Grafana user `admin` |
 | `pantai-key` | Secret | `make-secrets.sh` | `key`, the file from `PANTAI_KEY_FILE` |
 
@@ -59,7 +59,9 @@ for p in $(kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l role=store -
 done
 ```
 
-Until it is applied the rebalancer cannot read the shard state of that node: its scan fails, nothing is copied to or from it, and reads keep their normal owner order without preferring synced copies. The error shows in the Aggregator log as a failed scan. The rebalancer starts working on its next round after the table exists.
+The same holds for `014_source_received_at.sql` (the column `source_received_at` of `hazard_events`, which the Aggregator now writes on every upsert): apply it the same way on every store pod, before the new Aggregator image rolls out, or every write fails. It is safe to apply twice and sets existing rows to their last write time.
+
+Until `011_shard_state.sql` is applied the rebalancer cannot read the shard state of that node: its scan fails, nothing is copied to or from it, and reads keep their normal owner order without preferring synced copies. The error shows in the Aggregator log as a failed scan. The rebalancer starts working on its next round after the table exists.
 
 The rebalancer is set with `STORE_REBALANCE_INTERVAL`, `REBALANCE_PAGE_PAUSE` and `REBALANCE_DELETE`, see [CONFIGURATION.md](CONFIGURATION.md). The rebalance lease lives in the coordination database too, so only one replica runs a round at a time and `REBALANCE_DELETE` no longer needs the extra care that several simultaneous rounds would have asked for.
 
