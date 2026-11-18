@@ -1,48 +1,99 @@
-% DONE[Bab II] sumber: doc/TRD_M1.md (§0, §13), docker-compose.yml
+% sumber: doc/ARCHITECTURE.md, doc/TOPOLOGY.md, doc/P1_STORAGE_DESIGN.md, doc/P2_LEASE_DESIGN.md, deploy/*.yaml, deploy/cluster/topology.sh
 \chapter{Diagram Arsitektur Sistem}
 
 \section{Diagram Arsitektur}
 
 \subsection{Diagram Keseluruhan}
 
-Gambar \ref{fig:arsitektur} menunjukkan seluruh \textit{service} pada sistem, protokol di setiap sambungan, pemilik tiap penyimpanan, alur \textit{event}, dan batas \textit{container}. Setiap kotak adalah satu \textit{container} dengan Dockerfile sendiri. Silinder adalah penyimpanan. Garis tegas menunjukkan alur pada sistem sebagaimana mestinya, sedangkan garis titik-titik menunjukkan alur yang hanya ada pada simulasi, yaitu pengiriman \textit{trace} dari BMKG \textit{mock} dan PVMBG \textit{mock} ke Jaeger.
+Gambar \ref{fig:arsitektur} menunjukkan komponen logis sistem pada Milestone 2, protokol di setiap sambungan, dan alur \textit{event}. Setiap kotak adalah satu \textit{workload} Kubernetes di \textit{namespace} \texttt{sistem-informasi-kebencanaan-bnpb} (\texttt{deploy/namespace.yaml}). Silinder adalah penyimpanan. Garis putus-putus adalah jalur baca atau jalur yang hanya dicoba, dan garis titik-titik adalah jalur uji dari Tester Agent. Penempatan komponen pada node ada di Gambar \ref{fig:deployment}.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth,height=0.58\textheight,keepaspectratio]{figures/arsitektur.pdf}
-\caption{Diagram arsitektur sistem}
+\caption{Diagram arsitektur sistem Milestone 2}
 \label{fig:arsitektur}
 \end{figure}
 
 \subsection{Keterangan Komponen}
 
 \begin{itemize}
-\item \textit{Aggregator}: satu-satunya \textit{service} yang berhubungan langsung dengan BMKG dan PVMBG. Komponen ini melakukan \textit{polling}, memetakan data ke \texttt{HazardEvent}, menyimpannya ke \textit{Canonical Store}, dan mempublikasikan \textit{event} ke \textit{broker}.
-\item \textit{Canonical Store}: PostgreSQL yang menyimpan \texttt{HazardEvent}, dimiliki \textit{Aggregator} saja.
-\item \textit{Client-Facing API}: pintu masuk REST untuk \textit{client} downstream. Komponen ini memverifikasi JWT, membaca data lewat gRPC ke \textit{Aggregator}, dan meneruskan login atau \textit{refresh} ke \textit{Auth/Token Service}.
-\item \textit{Auth/Token Service} dan \textit{User DB}: penerbit token untuk Media, Tim Lapangan, dan Operator, dengan PostgreSQL terpisah yang dimiliki \textit{Auth/Token Service} saja.
-\item \textit{Web Server}: nginx yang menyajikan aplikasi SvelteKit ke \textit{browser} dan meneruskan path \texttt{/api} ke \textit{Client-Facing API}.
-\item RabbitMQ: \textit{broker} dengan satu \textit{fanout exchange} bernama \texttt{hazard.events}.
-\item \textit{Dashboard Updater}, \textit{Notifier}, dan \textit{Audit Logger}: tiga \textit{consumer} yang masing-masing memiliki \textit{queue} sendiri pada \textit{exchange} tersebut.
-\item BMKG \textit{mock} dan PVMBG \textit{mock}: simulasi kedua instansi sesuai kontrak spesifikasi.
-\item Jaeger dan Prometheus: alat bantu pemantauan di sisi BNPB. Jaeger menerima \textit{trace} dari semua \textit{service} Go, dan Prometheus menyimpan metrik yang diturunkan Jaeger dari \textit{span}. Kedua \textit{mock} ikut mengirim \textit{trace} agar satu siklus \textit{polling} terlihat utuh sampai ke sumber. Pada sistem sebenarnya, BMKG dan PVMBG tidak akan mengirim \textit{trace} ke Jaeger milik BNPB, sehingga garis dari kedua \textit{mock} digambar titik-titik.
+\item \textit{Aggregator}: tiga replika menurut \texttt{deploy/aggregator.yaml}, dengan batas bawah \textit{autoscaler} 3 dan batas atas 5 di \texttt{deploy/aggregator-hpa.yaml}. Semua replika melayani baca lewat gRPC. Hanya pemegang \textit{lease} sumber yang melakukan \textit{polling}, memetakan data ke \texttt{HazardEvent}, menulis ke \textit{store}, dan menerbitkan \textit{event}. Rancangan \textit{lease} ada di \texttt{doc/P2\_LEASE\_DESIGN.md} dan dibahas di Bab XII.
+\item \textit{store}: PostgreSQL 16 satu pod per node lewat DaemonSet (\texttt{deploy/store.yaml}). Data dibagi menjadi 16 shard dan tiap shard disimpan pada 2 node, atau \textit{replication factor} 2. \textit{Aggregator} yang menentukan pemilik shard. Rancangannya ada di \texttt{doc/P1\_STORAGE\_DESIGN.md} (isu \#289) dan dibahas di Bab XI.
+\item \textit{coordination-db}: satu PostgreSQL terpisah (StatefulSet, \texttt{deploy/coordination-db.yaml}) berisi \textit{lease}, kursor \textit{polling}, dan pasangan token PVMBG. Pod ini tidak ikut sebagai anggota shard.
+\item \textit{Client-Facing API}, Auth Service, dan \textit{user-db}: fungsinya sama seperti Milestone 1. Client-Facing API kini juga membatasi beban dengan prioritas, yaitu Tim Lapangan didahulukan daripada Media (\texttt{MEDIA\_MAX\_INFLIGHT} di \texttt{deploy/configmap.yaml}).
+\item \textit{Web Frontend}: nginx yang menyajikan aplikasi SvelteKit dan meneruskan \texttt{/api} (\texttt{deploy/web-frontend.yaml}).
+\item RabbitMQ (StatefulSet) dengan \textit{fanout exchange} \texttt{hazard.events}, dan tiga \textit{consumer}: Dashboard Updater, Notifier, Audit Logger. Tiap \textit{consumer} punya \textit{queue} durable sendiri.
+\item BMKG \textit{mock}, PVMBG \textit{mock}, dan Sensor Pantai: tiga sumber yang di-\textit{poll}. Sensor Pantai memakai \textit{image} dari asisten (\texttt{deploy/sensor-pantai/sensor-pantai.yaml}). Sumber satelit untuk kebakaran hutan dibahas di Bab XIV dan belum ada manifest-nya di \texttt{deploy/}, sehingga belum tergambar. \ph{Tambahkan komponen satelit ke gambar setelah manifest Problem 4 masuk}
+\item Jaeger, Prometheus, Grafana, dan kube-state-metrics (\texttt{deploy/observability/}). Prometheus mengambil metrik tiap replika \textit{Aggregator} lewat DNS headless Service \texttt{aggregator}.
+\item Tester Agent dari asisten, di \textit{namespace} \texttt{tester-agent}, dipasang tanpa mengubah manifest-nya. Catatan pemasangannya ada di \texttt{doc/TESTER\_AGENT\_NOTES.md}.
 \end{itemize}
 
 \section{Penjelasan Naratif Diagram}
 
 \subsection{Alur Data dan Event}
 
-\textit{Aggregator} melakukan \textit{polling} berkala ke BMKG \textit{mock} dengan header \texttt{X-BMKG-Key} dan ke PVMBG \textit{mock} dengan header \texttt{Authorization: Bearer} berisi token OAuth. Kedua \textit{mock} hanya menjawab permintaan dan tidak mengirim data sendiri. Setiap rekaman yang diterima dipetakan ke \texttt{HazardEvent}, disimpan ke \textit{Canonical Store}, lalu dipublikasikan ke \textit{exchange} \texttt{hazard.events}.
+Pemegang \textit{lease} melakukan \textit{polling} ke BMKG, PVMBG, dan Sensor Pantai. Tiap rekaman mendapat \texttt{hazard\_id} berupa UUID v5 dari sumber dan ID rekaman sumber, di-\textit{hash} ke salah satu dari 16 shard, lalu ditulis ke dua node pemilik shard itu. Tulisan dianggap berhasil bila minimal satu salinan tersimpan, dan shard yang kekurangan salinan diperbaiki oleh \textit{repair loop} (\texttt{doc/P1\_STORAGE\_DESIGN.md}, bagian Writes dan Repair loop). Rekaman baru atau yang berubah diterbitkan sekali ke \textit{exchange} \texttt{hazard.events}, yang menyalin pesan ke \textit{queue} tiap \textit{consumer}.
 
-\textit{Exchange} tersebut mengirim salinan setiap pesan ke \textit{queue} milik \textit{Dashboard Updater}, \textit{Notifier}, dan \textit{Audit Logger}. \textit{Aggregator} tidak mengetahui jumlah atau identitas \textit{consumer}, sehingga \textit{consumer} baru cukup mendeklarasikan \textit{queue} dan mengikatnya ke \textit{exchange}.
+Jalur \textit{client} dimulai dari \textit{browser} ke \textit{Web Frontend} atau langsung ke Client-Facing API. Client-Facing API memeriksa JWT lewat Auth Service dan membaca data dari semua replika \textit{Aggregator} lewat gRPC dengan \textit{round robin} dan \textit{health check} gRPC. Pembacaan menggabungkan hasil dari semua shard. Bila kedua pemilik sebuah shard tidak terjangkau, jawaban tetap HTTP 200 dengan penanda \texttt{partial} (\texttt{doc/P1\_STORAGE\_DESIGN.md}, bagian Reads).
 
-Jalur \textit{client} terpisah dari jalur \textit{ingest}. \textit{Client} dapat mengakses \textit{Client-Facing API} lewat \textit{browser} dan \textit{Web Server}, yang meneruskan path \texttt{/api}, atau langsung ke \textit{Client-Facing API} dengan REST. \textit{Client-Facing API} meminta data ke \textit{Aggregator} lewat gRPC, sedangkan login dan \textit{refresh} diteruskan ke \textit{Auth/Token Service} lewat gRPC. Peran \textit{client} dan \textit{correlation ID} dibawa sebagai gRPC \textit{metadata} pada panggilan internal.
+\subsection{Kepemilikan Storage dan Batas Isolasi}
 
-\subsection{Kepemilikan Storage dan Batas Container}
+Ketentuan Milestone 2 meminta kepemilikan \textit{storage} oleh satu \textit{service} ditegakkan oleh platform. Di Milestone 1 ini dilakukan dengan \textit{network} Compose yang bersifat \textit{internal}. Di Kubernetes, \texttt{deploy/networkpolicy.yaml} memuat tiga NetworkPolicy ingress: pod \textit{store} hanya menerima koneksi dari pod berlabel \texttt{role=aggregator} (ditambah rentang alamat node 10.77.0.0/24 agar Tester Agent yang memakai \texttt{hostNetwork} tetap dapat menjangkaunya), \textit{user-db} hanya dari \textit{auth-service}, dan \textit{coordination-db} hanya dari \textit{Aggregator}. Policy tidak memuat aturan egress, sehingga DNS dan \textit{probe} \textit{kubelet} tidak terganggu. \ph{Tambahkan bukti uji koneksi yang ditolak dari pod lain setelah run akhir}
 
-Setiap penyimpanan dimiliki tepat satu \textit{service}. \textit{Canonical Store} hanya dapat dijangkau \textit{Aggregator} karena berada pada \textit{network} \texttt{canonical-net} yang bersifat \textit{internal} dan hanya diikuti \textit{Aggregator}. \textit{User DB} berada pada \texttt{userdb-net} dengan aturan yang sama dan hanya diikuti \textit{Auth/Token Service}. \textit{Service} lain yang membutuhkan data tersebut harus melewati API milik pemiliknya.
+\section{Diagram Deployment}
 
-Setiap \textit{service} berjalan sebagai \textit{container} sendiri dan seluruh sistem dinyalakan dengan satu perintah \texttt{docker compose up}. Port yang dipublikasikan ke \textit{host} adalah \textit{Client-Facing API} (8080), \textit{Web Server} (3000), BMKG \textit{mock} (8081), PVMBG \textit{mock} (8082), Jaeger UI, dan port manajemen RabbitMQ. Dalam konfigurasi \textit{compose}, kedua \textit{mock} berada pada \textit{network} yang sama dengan \textit{service} BNPB, tetapi diperlakukan sebagai pihak luar karena hanya dijangkau lewat REST dengan kredensial masing-masing.
+Gambar \ref{fig:deployment} menunjukkan penempatan pod pada tiga node dan jalur data antar node. Node dibuat oleh \texttt{deploy/cluster/up.sh} dan \texttt{deploy/cluster/k3s.sh} sebagai VM VirtualBox dengan kernel masing-masing (\texttt{doc/TOPOLOGY.md}).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.62\textheight,keepaspectratio]{figures/deployment.pdf}
+\caption{Diagram deployment: pod per node dan jalur data antar node}
+\label{fig:deployment}
+\end{figure}
+
+Penempatan yang pasti dari manifest hanya untuk tiga hal. Pod \textit{store} berjalan satu per node karena berupa DaemonSet, Tester Agent juga DaemonSet, dan \textit{registry} \textit{image} (\texttt{registry:2}, port 5000) berada di node-a lewat \texttt{deploy/cluster/registry.yaml}. Replika \textit{Aggregator} memakai \textit{topology spread constraint} pada \texttt{kubernetes.io/hostname} dengan \texttt{maxSkew} 1 dan \texttt{ScheduleAnyway}, sehingga penjadwal berusaha menyebar tiga replika ke tiga node tetapi tidak menjamin. Pod lain tidak dipin ke node tertentu di manifest, jadi letaknya ditentukan penjadwal k3s dan harus dibaca dari cluster. \ph{Ganti kotak tanpa pin pada Gambar \ref{fig:deployment} dengan letak sebenarnya dari kubectl get pods -o wide pada run akhir, dan lampirkan keluarannya}
+
+Jalur data antar node yang tampil pada gambar:
+
+\begin{itemize}
+\item \textit{Aggregator} ke \textit{store}: koneksi PostgreSQL (port 5432) dari tiap replika ke dua node pemilik tiap shard. Karena tiap shard punya dua pemilik, hampir semua tulisan melintasi dua node, dan pembacaan lintas shard menghubungi semua node. Jalur ini yang hilang bagian-bagiannya saat satu node dimatikan.
+\item \textit{Aggregator} ke \textit{coordination-db}: PostgreSQL untuk \textit{lease}, kursor, dan token. Waktu \textit{lease} memakai jam server basis data ini, bukan jam node \textit{Aggregator}. Tester Agent pada skenario \texttt{clock-skew} mencatat tidak ada sumber yang punya dua pemegang pada satu waktu (\texttt{doc/TESTER\_AGENT\_NOTES.md}).
+\item \textit{Aggregator} ke RabbitMQ: AMQP (port 5672) untuk menerbitkan \textit{event}. RabbitMQ memakai satu replika sehingga jalur ini bergantung pada node tempat pod-nya berjalan.
+\item Client-Facing API ke \textit{Aggregator}: gRPC port 9091 lewat Service headless \texttt{aggregator-grpc}.
+\item Antar node: lalu lintas pod ke pod di jaringan \textit{overlay} k3s di atas NAT Network VirtualBox \texttt{k3s-net} (10.77.0.0/24, \texttt{doc/TOPOLOGY.md}). Semua node berada pada satu host fisik, sehingga pemutusan jaringan antar node hanya disimulasikan, bukan pemutusan antar mesin.
+\end{itemize}
+
+Komponen berstatus satu replika menjadi titik kegagalan tunggal bila node tempatnya mati. Contohnya RabbitMQ, \textit{coordination-db}, \textit{user-db}, dan Client-Facing API, dan jumlah replika tiap komponen tertulis pada \texttt{replicas} di berkas \texttt{deploy/}. Kubernetes menjadwalkan ulang pod itu, tetapi data StatefulSet memakai PVC \texttt{local-path} yang terikat ke node asal. Batas ini dicatat di Bab IV.
+
+\section{Deklarasi Topologi}
+
+Ketentuan Milestone 2 meminta deklarasi jumlah node, jenis tiap node, yaitu VM atau \textit{native}, host fisik tempat tiap node berjalan, dan spesifikasi CPU dan RAM tiap host. Nilai ini tidak ditulis tangan. Skrip \texttt{deploy/cluster/topology.sh} membacanya dari cluster dan host yang menjalankannya, lalu mencetak tabel yang ditempel ke sini. Skrip hanya membaca dan tidak mengubah cluster.
+
+Konfigurasi bawaan skrip pembuat cluster (\texttt{doc/TOPOLOGY.md}, nilai bawaan \texttt{deploy/cluster/env.sh}): 3 node, yaitu node-a (control plane dan worker, 10.77.0.11), node-b (worker, 10.77.0.12), dan node-c (worker, 10.77.0.13), masing-masing VM VirtualBox dengan Ubuntu 24.04 LTS, 2 vCPU, 2 GiB RAM, dan disk 30 GB, dengan k3s kanal \textit{stable}. Ini sesuai pola ketentuan: node-a sebagai control plane sekaligus worker dan node lain sebagai worker.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.12\linewidth}|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.14\linewidth}|>{\raggedright\arraybackslash}p{0.15\linewidth}|>{\raggedright\arraybackslash}p{0.07\linewidth}|>{\raggedright\arraybackslash}p{0.1\linewidth}|}
+\hline
+\textbf{Node} & \textbf{Peran} & \textbf{Jenis} & \textbf{Host fisik} & \textbf{vCPU} & \textbf{RAM} \\
+\hline
+\endhead
+node-a & control plane dan worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+\hline
+node-b & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+\hline
+node-c & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+\hline
+\end{longtable}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.12\linewidth}|}
+\hline
+\textbf{Host} & \textbf{CPU} & \textbf{Thread} & \textbf{RAM} & \textbf{OS} & \textbf{Hypervisor} \\
+\hline
+\endhead
+host 1 & \ph{dari run} & \ph{dari run} & \ph{dari run} & \ph{dari run} & VirtualBox \ph{versi} \\
+\hline
+\end{longtable}
+
+Tabel di atas adalah bentuk keluaran \texttt{topology.sh} dengan nilai yang belum diketahui ditandai. \ph{Jalankan deploy/cluster/topology.sh pada run akhir, tempel keluarannya (tanggal deklarasi, tabel node, tabel host, versi k3s) menggantikan kedua tabel ini, dan salin teks yang sama ke deklarasi topologi di README} Bila ada node di mesin lain (bonus host fisik, isu \#325), baris mesin itu ditambahkan manual sesuai catatan di akhir keluaran skrip.
 
 \section{Antarmuka dan Model Data}
 
@@ -88,7 +139,7 @@ Setiap \textit{service} Go memakai tiga dasar yang sama.
   \textit{Health check} pada \texttt{GET /health} dengan status \texttt{ok}, \texttt{degraded}, atau \texttt{down}. Layanan yang masih dapat melayani sebagian fungsi saat dependensinya tidak terjangkau melaporkan \texttt{degraded}, dan satu sumber yang mati tidak membuat Aggregator \texttt{down}.
 \end{itemize}
 
-Di atasnya, setiap \textit{service} Go mengekspor \textit{span} OpenTelemetry lewat OTLP gRPC ke Jaeger. Konteks \textit{trace} dibawa lewat header W3C \texttt{traceparent} (W3C, 2021) pada HTTP, otelgrpc pada gRPC, dan header pesan AMQP dari Aggregator ke \textit{consumer}, sehingga satu siklus polling atau satu permintaan \textit{client} menjadi satu \textit{trace} lintas \textit{service}. Bila \textit{tracing} menyala, ID \textit{trace} dipakai sebagai \texttt{correlation\_id} di \textit{log}, jadi satu ID menghubungkan \textit{log} dan Jaeger. Kegagalan ekspor tidak memengaruhi permintaan maupun \textit{health check}, dan \texttt{TRACING\_ENABLED=false} mematikannya sepenuhnya. Pengumpulan \textit{log} terpusat dan \textit{dashboard} Grafana tidak dibangun, karena \texttt{docker compose logs} masih cukup untuk satu \textit{instance} per \textit{service}.
+Di atasnya, setiap \textit{service} Go mengekspor \textit{span} OpenTelemetry lewat OTLP gRPC ke Jaeger. Konteks \textit{trace} dibawa lewat header W3C \texttt{traceparent} (W3C, 2021) pada HTTP, otelgrpc pada gRPC, dan header pesan AMQP dari Aggregator ke \textit{consumer}, sehingga satu siklus polling atau satu permintaan \textit{client} menjadi satu \textit{trace} lintas \textit{service}. Bila \textit{tracing} menyala, ID \textit{trace} dipakai sebagai \texttt{correlation\_id} di \textit{log}, jadi satu ID menghubungkan \textit{log} dan Jaeger. Kegagalan ekspor tidak memengaruhi permintaan maupun \textit{health check}, dan \texttt{TRACING\_ENABLED=false} mematikannya sepenuhnya. Pengumpulan \textit{log} terpusat dan \textit{dashboard} Grafana tidak dibangun, karena \texttt{kubectl logs} per pod masih cukup untuk saat ini. Metrik per \textit{service} kini ada di Prometheus dan satu \textit{dashboard} Grafana (\texttt{deploy/observability/}).
 
 \section{Web Frontend}
 
@@ -96,6 +147,8 @@ Web Frontend berupa aplikasi \textit{client-side rendering}: nginx hanya menyaji
 
 Pembaruan data masuk lewat SSE. Frontend membuka \texttt{EventSource} ke \texttt{GET /hazards/stream}. Client-Facing API meneruskan aliran dari Dashboard Updater, menyaring per \texttt{type}, dan memproyeksikan field menurut role seperti pada \texttt{GET /hazards}. Aliran ditutup server saat token kedaluwarsa, dan \textit{browser} menyambung ulang sehingga sesi disegarkan secara transparan atau dijawab 401. \textit{Event} yang terlewat saat putus tidak diputar ulang. Saat aliran terbuka atau tersambung ulang, frontend memuat ulang \texttt{GET /hazards} yang bersumber dari Canonical Store, dan polling berkala pada \texttt{FRONTEND\_POLL\_INTERVAL\_MS} tetap berjalan sebagai cadangan bila aliran putus. SSE dipilih dibandingkan WebSocket karena komunikasinya satu arah, berjalan di atas HTTP biasa melalui nginx dan cookie \textit{HttpOnly}, dan penyambungan ulang sudah ada di \textit{browser}. Jumlah aliran dibatasi 500 secara total dan 5 per akun, di luar batas konkurensi global.
 
+Endpoint yang ditambahkan Milestone 2, yaitu Audit API, \texttt{POST /field-reports}, dan pemeriksaan pesan gagal, dibahas pada bab problem masing-masing. \ph{Tambahkan baris endpoint tersebut ke tabel di atas setelah isu \#296, \#304, dan \#305 selesai dan tercatat di README}
+
 \section{Konfigurasi}
 
-Seluruh rahasia dan nilai yang dapat diubah dibaca dari \textit{environment variable}. Berkas \texttt{.env.example} di akar repositori mendaftarkan setiap variabel beserta nilai contohnya, dengan awalan per \textit{service} bila perlu (misalnya \texttt{PVMBG\_ADMIN\_KEY}). Sambungan internal antar-\textit{container} seperti URL, port, dan path diisi di \texttt{docker-compose.yml}. Berkas \texttt{.env} yang berisi nilai sebenarnya tidak ikut di-\textit{commit}.
+Nilai yang tidak rahasia ada di ConfigMap \texttt{bnpb-config} (\texttt{deploy/configmap.yaml}), misalnya \texttt{LEASE\_TTL} 15 detik, \texttt{LEASE\_RENEW\_INTERVAL} 3 detik, dan \texttt{ACCESS\_TOKEN\_TTL\_S} 60. Kredensial disimpan sebagai Secret yang dibuat \texttt{deploy/make-secrets.sh} dari berkas \texttt{.env} (daftar Secret ada di \texttt{docs/DEPLOY.md}). Berkas \texttt{.env.example} tetap ada untuk pengembangan lokal sesuai ketentuan, dan \texttt{.env} yang berisi nilai sebenarnya tidak di-\textit{commit}. Image diambil dari \textit{registry} di node-a (\texttt{10.77.0.11:5000}), dengan nama dan tag diatur satu kali pada blok \texttt{images} di \texttt{deploy/kustomization.yaml}.

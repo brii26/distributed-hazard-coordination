@@ -1,11 +1,55 @@
-% sumber: README.md
+% sumber: README.md, docs/DEPLOY.md, doc/TOPOLOGY.md, deploy/deploy.sh, deploy/cluster/, tests/scenarios/
 \chapter{Petunjuk Menjalankan Sistem}
 
 \section{Ringkasan}
 
-Bab ini memuat langkah yang cukup bagi penilai untuk menjalankan sistem dari \textit{clone} baru, membuka antarmuka yang tersedia, dan memicu skenario pengujian Problem 1 sampai Problem 5. Seluruh perintah dijalankan dari direktori utama repositori. Daftar lengkap variabel konfigurasi ada pada bagian \textit{Configuration reference} di \texttt{README.md}.
+Langkah lengkap dan terbaru ada di \texttt{README.md} di akar repositori, dan langkah Kubernetes terperinci di \texttt{docs/DEPLOY.md} serta \texttt{doc/TOPOLOGY.md}. Bab ini meringkas urutannya. Seluruh perintah dijalankan dari direktori utama repositori. \ph{Ganti ringkasan ini dengan rujukan ke bagian deploy di README setelah README memuat satu perintah deploy Kubernetes (saat ini Quick start README masih Compose, isu \#329)}
 
-\section{Menjalankan dari \textit{Clone} Baru}
+\section{Menjalankan di Kubernetes}
+
+\subsection{Membuat Cluster}
+
+Prasyarat: VirtualBox, \texttt{kubectl}, \texttt{ssh}, \texttt{curl}, \texttt{mkfs.vfat} dan \texttt{mcopy}, sekitar 30 GB disk kosong, dan sekitar 7 GiB RAM kosong untuk tiga VM bawaan (\texttt{doc/TOPOLOGY.md}). Tiga VM dibuat dan k3s dipasang dengan dua skrip, lalu \texttt{kubectl} diarahkan ke cluster:
+
+\begin{codebox}
+deploy/cluster/up.sh
+deploy/cluster/k3s.sh
+export KUBECONFIG=$HOME/vms/k3s/kubeconfig
+kubectl get nodes
+\end{codebox}
+
+Kedua skrip aman dijalankan ulang. Cluster dihapus dengan \texttt{deploy/cluster/down.sh destroy}. Skrip \texttt{k3s.sh} juga menyalakan \textit{registry} \textit{image} di node-a (\texttt{10.77.0.11:5000}).
+
+\subsection{Membangun Image dan Deploy}
+
+Tiap \textit{service} Go dibangun dari foldernya di \texttt{services/} dan di-\textit{push} ke \textit{registry} dari host, misalnya untuk \textit{Aggregator}:
+
+\begin{codebox}
+docker build -t 127.0.0.1:5000/aggregator:0.1.0 services/aggregator
+docker push 127.0.0.1:5000/aggregator:0.1.0
+\end{codebox}
+
+Nama dan tag \textit{image} ditetapkan pada blok \texttt{images} di \texttt{deploy/kustomization.yaml}. Setelah semua \textit{image} ada, seluruh sistem di-\textit{deploy} dengan satu perintah:
+
+\begin{codebox}
+cp .env.example .env
+deploy/deploy.sh
+\end{codebox}
+
+Nilai \texttt{change-me} di \texttt{.env} diganti dulu. \texttt{deploy.sh} membuat \textit{namespace}, Secret dari \texttt{.env}, ConfigMap skema dan \textit{broker}, menerapkan manifest dengan Kustomize, menunggu tiap \textit{rollout}, lalu menjalankan pemeriksaan label dan sumber daya (\texttt{deploy/check.sh}). Skrip berhenti dengan galat dan daftar pod yang belum Running bila ada yang tidak siap dalam waktu \texttt{TIMEOUT} (bawaan 300 detik per workload). \ph{Tambahkan langkah membangun semua image sekaligus bila README sudah menyediakannya}
+
+\subsection{Membuka Antarmuka}
+
+Web Frontend dibuka pada NodePort 30080 dan Client-Facing API pada NodePort 30081 di alamat node, misalnya \texttt{http://10.77.0.11:30080} (\texttt{deploy/web-frontend.yaml}, \texttt{deploy/client-facing-api.yaml}). Antarmuka lain tidak dibuka dan dijangkau lewat \texttt{kubectl port-forward}, misalnya \texttt{kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/grafana 3000} untuk Grafana (kata sandi pengguna \texttt{admin} dibuat sekali oleh \texttt{make-secrets.sh}, \texttt{docs/OBSERVABILITY.md}). \ph{Verifikasi alamat dan port pada run akhir dari fresh clone}
+
+\subsection{Skenario dan Pengujian}
+
+Skrip skenario ada di \texttt{tests/scenarios/}: \texttt{problem1.sh} sampai \texttt{problem5.sh} dan \texttt{all.sh} dari Milestone 1, ditambah \texttt{rolling-update.sh}, \texttt{autoscale.sh}, \texttt{audit-checksum.sh}, \texttt{critical-alerts.sh}, \texttt{trace-check.sh}, dan \texttt{gameday.sh}. Tester Agent dipasang dari manifest asisten dan dijalankan dengan \texttt{/app run practice <nama>} (\texttt{doc/TESTER\_AGENT\_NOTES.md}). Hasil dan bukti tiap skenario ada pada bab problem masing-masing. \ph{Tambahkan skrip end-to-end semua skenario latihan setelah isu \#328 selesai}
+
+\section{Pengembangan Lokal dengan Docker Compose}
+
+Bagian ini sampai akhir bab berasal dari Milestone 1 dan berlaku untuk pengembangan di satu mesin dengan \texttt{docker-compose.yml}. Demo Milestone 2 berjalan di Kubernetes, dan Compose tidak menjalankan fitur replika, shard, maupun \textit{lease}. \ph{Selaraskan bagian Compose ini dengan README setelah isu \#329 (fresh clone verification and README sync) selesai}
+
 
 Prasyarat yang dibutuhkan adalah Go 1.26 atau lebih baru, Docker beserta Docker Compose, \texttt{git}, serta \texttt{curl} dan \texttt{jq} untuk perintah skenario. Dari \textit{clone} baru, sistem dijalankan dengan perintah berikut:
 
@@ -19,7 +63,7 @@ docker compose ps
 
 Nilai contoh pada \texttt{.env} sudah cukup untuk menjalankan sistem secara lokal. Perintah \texttt{docker compose up} membangun seluruh \textit{image} dan baru selesai setelah semua \textit{health check} lolos, sehingga ketika perintah itu kembali sistem sudah siap. \textit{Build} pertama memerlukan beberapa menit. Pada \texttt{docker compose ps}, semua \textit{service} harus berstatus \textit{running}, dan yang memiliki \textit{health check} berstatus \textit{healthy}. Sistem dihentikan dengan \texttt{docker compose down}, dan opsi \texttt{-v} menghapus basis data, token PVMBG, dan berkas deduplikasi \textit{consumer} untuk memulai dari nol.
 
-\section{Antarmuka yang Tersedia}
+\section{Antarmuka Compose}
 
 Setelah sistem berjalan, antarmuka berikut dapat dibuka dari \textit{host}. Bila sebuah \textit{port} sudah terpakai, nilainya diubah di \texttt{.env} (\texttt{CLIENT\_FACING\_API\_PORT}, \texttt{WEB\_FRONTEND\_PORT}, \texttt{BMKG\_PORT}, \texttt{PVMBG\_PORT}, \texttt{RABBITMQ\_MANAGEMENT\_PORT}, atau \texttt{JAEGER\_UI\_PORT}).
 
@@ -48,7 +92,7 @@ Setelah sistem berjalan, antarmuka berikut dapat dibuka dari \textit{host}. Bila
 
 Jaeger menampilkan jejak permintaan lintas \textit{service}. Buka \texttt{http://localhost:16686}, pilih \textit{service} pada kolom \textit{Service}, misalnya Client-Facing API, lalu tekan \textit{Find Traces}. Satu jejak menunjukkan rangkaian panggilan dari Client-Facing API ke \textit{Aggregator}. ID jejak sama dengan \texttt{correlation\_id} pada log, sehingga sebuah permintaan dapat dilacak dari log ke jejaknya. Tab \textit{Monitor} menampilkan laju permintaan, galat, dan latensi per \textit{service}. Jejak hanya muncul bila \texttt{TRACING\_ENABLED} bernilai \texttt{true}, yang merupakan nilai bawaan. Jejak dan metrik berada di memori sehingga hilang saat Jaeger dijalankan ulang, dan Jaeger yang mati tidak memengaruhi \textit{service} lain.
 
-\section{Skenario Problem 1 sampai Problem 5}
+\section{Skenario Milestone 1 di Compose}
 
 Setiap problem punya satu skrip di \texttt{tests/scenarios/} yang dijalankan terhadap sistem yang sudah berjalan. Skrip membaca \texttt{.env}, menjalankan langkah pemicu, mencetak perintah dan keluarannya apa adanya, lalu menilai tiap pemeriksaan dengan baris \texttt{PASS} atau \texttt{FAIL}. Baris terakhir adalah \texttt{RESULT: PASS} atau \texttt{RESULT: FAIL}, dan kode keluar skrip tidak nol bila ada yang gagal. Keluaran yang sama dipakai sebagai bukti pada subbab Bukti Penyelesaian di Bab VI sampai X.
 
@@ -82,7 +126,7 @@ Perintah \texttt{all.sh} menjalankan kelimanya berurutan dan menutup dengan satu
 
 Dua opsi tersedia pada \texttt{problem2.sh}. Opsi \texttt{--load} menambahkan uji beban k6 di bawah. Opsi \texttt{--destructive} menghapus laporan vulkanik yang tersimpan untuk memperlihatkan jawaban \texttt{503} saat tidak ada data sama sekali, sehingga dijalankan setelah \texttt{problem1.sh}. Mengubah latensi PVMBG membuat ulang \textit{container}-nya, dan skrip memulihkannya setelah selesai.
 
-\subsection{Mengambil Bukti untuk Laporan}
+\subsection{Mengambil Bukti Milestone 1}
 
 Untuk bukti pada Bab VI sampai X, tangkap layar terminal pada bagian berikut, atau simpan keluarannya dengan \texttt{tests/scenarios/problemN.sh | tee bukti-problemN.txt}.
 
@@ -94,7 +138,7 @@ Untuk bukti pada Bab VI sampai X, tangkap layar terminal pada bagian berikut, at
 \item Problem 5: kedua keluaran \texttt{list\_queues} serta jumlah baris log audit sebelum dan sesudah. Antrean juga terlihat di antarmuka RabbitMQ.
 \end{itemize}
 
-\section{Tes Otomatis}
+\section{Tes Otomatis di Compose}
 
 Selain perintah manual, repositori menyediakan skrip yang menjalankan sistem dalam proyek Compose terpisah dan menghapusnya setelah selesai. Semuanya memakai \texttt{.env.example}, sehingga \texttt{.env} tidak diperlukan dan \textit{port}-nya tidak bentrok dengan sistem yang sedang berjalan.
 
