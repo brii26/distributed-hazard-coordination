@@ -34,7 +34,6 @@ metadata:
   namespace: sistem-informasi-kebencanaan-bnpb
   name: aggregator
 spec:
-  replicas: 3
   strategy:
     rollingUpdate:
       maxUnavailable: 0
@@ -176,6 +175,7 @@ spec:
                 seconds: 5
           resources:
             requests:
+              cpu: 200m
               memory: 256Mi
             limits:
               memory: 512Mi
