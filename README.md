@@ -1,5 +1,5 @@
 <div align="center">
-   <img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=260&color=00ADD8&text=Distributed%20Hazard%20Platform&fontColor=ffffff&fontSize=52&desc=IF4031%20Distributed%20Application%20Architecture%20%7C%20Milestone%201&descAlignY=76&descSize=17&descColor=ffffff" />
+   <img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=260&color=00ADD8&text=Distributed%20Hazard%20Platform&fontColor=ffffff&fontSize=52&desc=IF4031%20Distributed%20Application%20Architecture%20%7C%20Milestones%201%20and%202&descAlignY=76&descSize=17&descColor=ffffff" />
 </div>
 
 <div align="center">
@@ -11,6 +11,7 @@
 <img src="https://img.shields.io/badge/SvelteKit-3-FF3E00?style=for-the-badge&logo=svelte&logoColor=white" />
 <img src="https://img.shields.io/badge/nginx-1.27-009639?style=for-the-badge&logo=nginx&logoColor=white" />
 <img src="https://img.shields.io/badge/Docker%20Compose-5.6-2496ED?style=for-the-badge&logo=docker&logoColor=white" />
+<img src="https://img.shields.io/badge/k3s-Kubernetes-FFC61E?style=for-the-badge&logo=k3s&logoColor=black" />
 <img src="https://img.shields.io/badge/OpenTelemetry-1.47-425CC7?style=for-the-badge&logo=opentelemetry&logoColor=white" />
 <img src="https://img.shields.io/badge/Jaeger-2.22-66CFE3?style=for-the-badge&logo=jaegertracing&logoColor=black" />
 <img src="https://img.shields.io/badge/Prometheus-3.6-E6522C?style=for-the-badge&logo=prometheus&logoColor=white" />
@@ -23,6 +24,8 @@
 ## About
 
 Distributed Hazard Platform is the BNPB side of a disaster-information exchange. Two independent sources publish hazard data in different formats and with different authentication: **BMKG** (earthquakes and tsunami warnings, static API key) and **PVMBG** (volcanic reports, OAuth with a one-time code and rotating tokens). Both are mocks in this repository. BNPB polls them, maps everything into one canonical `HazardEvent`, serves it to Media, Tim Lapangan and Operator clients with per-role field access, and fans every new event out to independent consumers through RabbitMQ.
+
+There are two ways to run it. Milestone 1 runs the whole stack with Docker Compose on one machine ([Quick start](#quick-start)). Milestone 2 runs it on a three node k3s cluster, with a sharded and replicated store, three Aggregator replicas that share polling through leases kept in `coordination-db`, a HorizontalPodAutoscaler, a third source (Sensor Pantai), an Audit API and the assistants' Tester Agent ([Kubernetes](#kubernetes-milestone-2)). The M2 picture is in [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md). The diagrams and per-problem sections below describe the Compose stack.
 
 ## Architecture
 
@@ -89,8 +92,8 @@ Every box except the client is its own container. The nginx container serves the
 | Live updates | Server-Sent Events from the Dashboard Updater through the Client-Facing API |
 | Frontend | SvelteKit (`adapter-static`) served by nginx |
 | Observability | OpenTelemetry, Jaeger, Prometheus, structured JSON logs with a correlation ID |
-| Orchestration | Docker Compose |
-| Tests | Go tests, shell scenario scripts, k6 load test |
+| Orchestration | Docker Compose (M1), k3s on three VirtualBox VMs (M2) |
+| Tests | Go tests, shell scenario scripts, k6 load test, Tester Agent scenarios (M2) |
 
 ## What it solves
 
@@ -281,9 +284,74 @@ Latency, errors and request rate, read from Prometheus.
 
 </div>
 
+## Kubernetes (Milestone 2)
+
+Follow these steps from a fresh clone. The cluster scripts need VirtualBox, `kubectl`, `ssh`, `curl`, `mkfs.vfat` and `mcopy` on the machine that hosts the VMs, and Docker to build the images. About 30 GB of disk and 7 GiB of free RAM are needed with the default sizes. Details are in [doc/TOPOLOGY.md](doc/TOPOLOGY.md) and [docs/DEPLOY.md](docs/DEPLOY.md).
+
+```bash
+git clone https://github.com/brii26/distributed-hazard-coordination.git
+cd distributed-hazard-coordination
+
+# 1. Cluster: 3 VMs (node-a control plane, node-b and node-c workers) and k3s
+deploy/cluster/up.sh
+deploy/cluster/k3s.sh
+export KUBECONFIG=$HOME/vms/k3s/kubeconfig
+kubectl get nodes
+
+# 2. Images: build the nine service images and push them to the registry on node-a
+for s in aggregator bmkg-mock pvmbg-mock auth-service client-facing-api web-frontend dashboard-updater notifier audit-logger; do
+  docker build -t 127.0.0.1:5000/$s:0.1.0 services/$s
+  docker push 127.0.0.1:5000/$s:0.1.0
+done
+
+# 3. Configuration: copy the example and replace every change-me value
+cp .env.example .env
+
+# 4. Tester Agent, installed once from the commit pinned by the spec (namespace tester-agent)
+kubectl apply -f https://raw.githubusercontent.com/susTuna/if4031-tester-agent/ebb55261711123a9a211739ffbf140a275caa6da/manifest.yaml
+
+# 5. One command deploy: Secrets, ConfigMaps, manifests, waits for every rollout, then runs the check
+deploy/deploy.sh
+```
+
+`deploy/deploy.sh` ends with `deploy/check.sh`, which lists every pod with its `role` label and memory request and limit and exits 1 when one is wrong. `deploy/check.sh -k` does the same on the rendered manifests without a cluster.
+
+**Topology declaration.** The number of nodes, their kind, the physical host of each and the CPU and RAM of each host depend on the machine that runs the cluster. Generate them on that machine, they are read only:
+
+```bash
+deploy/cluster/topology.sh
+```
+
+The defaults are 3 VirtualBox VMs with 2 vCPU and 2 GiB each on one host, node names `node-a`, `node-b` and `node-c`, addresses `10.77.0.11` to `10.77.0.13`.
+
+**Configuration variables.** Every variable is in `.env.example` and described in [docs/CONFIGURATION.md](docs/CONFIGURATION.md). `deploy/make-secrets.sh` turns the secret ones into Kubernetes Secrets and `kubectl apply -k deploy/` creates the ConfigMap `bnpb-config` with the rest. The Secrets and ConfigMaps are listed in [docs/DEPLOY.md](docs/DEPLOY.md).
+
+| Port | What |
+|---|---|
+| NodePort 30080 on any node, for example <http://10.77.0.11:30080> | Web frontend (it proxies `/api`). `COOKIE_SECURE` is `true`, so over plain HTTP on a node address use `kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/web-frontend 3000:80` and open <http://localhost:3000> |
+| NodePort 30081 on any node | Client-Facing API |
+| `svc/grafana` 3000, `svc/jaeger` 16686 | Reach them with `kubectl -n sistem-informasi-kebencanaan-bnpb port-forward`, see [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+
+### Triggering the Kubernetes scenarios
+
+Run them from the host with `KUBECONFIG` set. Which variables each script needs is in its header comment.
+
+| Scenario | Command | Needs |
+|---|---|---|
+| Tester Agent, one failure | `kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice <name>`, with `<name>` one of `kill-leader`, `kill-store`, `wipe-node`, `partition`, `clock-skew`, `schema` (`/app list` prints them) | The result is in `kubectl logs -n tester-agent -l app=tester-agent`, see [doc/TESTER_AGENT_NOTES.md](doc/TESTER_AGENT_NOTES.md) |
+| Game day, a mix of the above, a PVMBG outage and a load spike | `tests/scenarios/gameday.sh` (`DRY_RUN=1` prints the plan only) | Three accounts, see the script header |
+| Rolling update under load | `EMAIL=... PASSWORD=... tests/scenarios/rolling-update.sh` | k6 or Docker |
+| Autoscaling | `API_URL=http://10.77.0.11:30081 AUDIT_TOKEN=... tests/scenarios/autoscale.sh` | k6 or Docker, a Tim Lapangan account |
+| Audit checksum | `AUDIT_URL=... AUDIT_TOKEN=... tests/scenarios/audit-checksum.sh [BMKG\|PVMBG]` | The Audit API on an Aggregator |
+| Trace and log correlation | `TARGET=k8s tests/scenarios/trace-check.sh` | Port-forwards for the API (8080) and Jaeger (16686) |
+| Problem 2 load test, 10k VUs | `tests/load/p2-k8s.sh`, `tests/load/p2-ratio.sh` | See [tests/load/README.md](tests/load/README.md) |
+| Priority load shedding | `tests/load/priority.sh` | Go, Docker and Python 3, see [docs/TESTING.md](docs/TESTING.md) |
+
+Several of these scripts have been checked offline only. The status of each is stated in [docs/DEPLOY.md](docs/DEPLOY.md) and [tests/load/README.md](tests/load/README.md).
+
 ## Quick start
 
-Needs Docker Compose. Full prerequisites and details are in [docs/RUNNING.md](docs/RUNNING.md).
+This is the Milestone 1 stack on one machine with Docker Compose, no Kubernetes. It needs Docker Compose. Full prerequisites and details are in [docs/RUNNING.md](docs/RUNNING.md).
 
 ```bash
 git clone https://github.com/brii26/distributed-hazard-coordination.git
@@ -307,7 +375,11 @@ Stop it with `docker compose down` (add `-v` to wipe the data).
 | Document | Contents |
 |---|---|
 | [docs/RUNNING.md](docs/RUNNING.md) | Prerequisites, running from a clean clone, repository layout, database isolation check, single service, web frontend |
-| [docs/DEPLOY.md](docs/DEPLOY.md) | Kubernetes: the namespace, ConfigMaps, Secrets and the order to apply them |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Kubernetes: the namespace, ConfigMaps, Secrets, the order to apply them, autoscaling, rolling update, the one command deploy and `check.sh` |
+| [doc/TOPOLOGY.md](doc/TOPOLOGY.md) | The k3s cluster: nodes, ports, registry, how to build and destroy it |
+| [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | The M2 architecture on k3s and where each part is defined |
+| [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Metrics, traces, the Grafana dashboard and the SLO rules |
+| [doc/TESTER_AGENT_NOTES.md](doc/TESTER_AGENT_NOTES.md) | What each Tester Agent scenario did on our cluster |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | The `.env` file and every variable |
 | [docs/TEST_SCENARIOS.md](docs/TEST_SCENARIOS.md) | Copy-paste walkthroughs for Problems 1 to 5 |
 | [docs/TESTING.md](docs/TESTING.md) | Integration, smoke, load and storage tests, pre-push checks |

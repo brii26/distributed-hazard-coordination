@@ -6,6 +6,9 @@ Everything lives in one namespace, `sistem-informasi-kebencanaan-bnpb`. Point `k
 
 ## Steps
 
+The short way is `deploy/deploy.sh` after the images are pushed, see [One command deploy and the check](#one-command-deploy-and-the-check). The manual order is:
+
+0. Build the cluster ([TOPOLOGY.md](../doc/TOPOLOGY.md)) and build and push every image to the registry (see [Build and push all images](#build-and-push-all-images)). `deploy/deploy.sh` and `kubectl apply -k` do not build images, so pods stay in `ImagePullBackOff` until they are in the registry.
 1. `cp .env.example .env` and replace the `change-me` values. The tokens from the assistants can stay as placeholders until you get them.
 2. `kubectl apply -k deploy/` creates the namespace, the ConfigMap `bnpb-config`, the sharded store, the Aggregator and the observability stack.
 3. `deploy/make-secrets.sh` creates the Secrets from `.env`. Run it again after a change, it updates in place.
@@ -64,7 +67,7 @@ The credentials sit inside the DSN, and the template goes through `Sprintf`. `ma
 
 Only the replica that holds the PVMBG lease talks to the token endpoint. On acquiring the lease it loads the token pair from the table `source_token` (migration `012_source_token.sql`, in the coordination database next to the lease), then from the file on its `emptyDir`, and uses the one-time code only if neither exists. Every rotated pair is written to the table with the lease epoch before it is used, and a write from a lower epoch is refused, so a replica that took over continues with the pair its predecessor left and a replica that lost the lease cannot overwrite it. The file on the `emptyDir` is only a local cache. The one-time code is spent once, so wiping the table and the pods together needs a fresh code (or a restart of the PVMBG mock). If the write to the table fails after PVMBG issued a pair, the holder keeps that pair in memory and on the file and retries the write until it succeeds, so one database blip does not lose it. If a refresh is rejected with `invalid_grant`, the holder reloads the table and retries once with the stored refresh token before it touches the one-time code.
 
-The BMKG and PVMBG mocks and RabbitMQ come in their own manifests. Until they exist the Aggregator logs `no such host` for them and its circuit breakers open, which is expected.
+The BMKG and PVMBG mocks and RabbitMQ come in their own manifests, applied by the same `kubectl apply -k deploy/`. If the Aggregator starts before they answer, it logs `no such host` for them and its circuit breakers open until they are up, which is expected.
 
 ## Rolling update
 
@@ -143,6 +146,17 @@ Build and push the three images from the host, then bump the tags in the `images
 
 ```bash
 for s in auth-service client-facing-api web-frontend; do
+  docker build -t 127.0.0.1:5000/$s:0.1.0 services/$s
+  docker push 127.0.0.1:5000/$s:0.1.0
+done
+```
+
+## Build and push all images
+
+`deploy/kustomization.yaml` names nine images, each built from `services/<name>` and tagged `0.1.0`: `aggregator`, `bmkg-mock`, `pvmbg-mock`, `auth-service`, `client-facing-api`, `web-frontend`, `dashboard-updater`, `notifier` and `audit-logger`. Push them all from the host in one loop (the registry runs on node-a, port 5000, started by `deploy/cluster/k3s.sh`):
+
+```bash
+for s in aggregator bmkg-mock pvmbg-mock auth-service client-facing-api web-frontend dashboard-updater notifier audit-logger; do
   docker build -t 127.0.0.1:5000/$s:0.1.0 services/$s
   docker push 127.0.0.1:5000/$s:0.1.0
 done

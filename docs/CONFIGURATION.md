@@ -49,10 +49,10 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `RETRY_BASE` / `RETRY_CAP` | aggregator | 10s / 10m | First wait before a failed record is retried, and the longest wait. The wait doubles per failure, with jitter |
 | `RETRY_MAX_ATTEMPTS` | aggregator | 8 | The failure that reaches this number parks the record (no more automatic retries) |
 | `RETRY_POLL` | aggregator | 5s | How often the retry worker looks for due records |
-| `LEASE_TTL` / `LEASE_RENEW_INTERVAL` | aggregator (Kubernetes) | 15s / 3s | How long the polling lease lasts and how often the holder renews it. Read once the lease code lands |
+| `LEASE_TTL` / `LEASE_RENEW_INTERVAL` | aggregator (Kubernetes) | 15s / 3s | How long the polling lease lasts and how often the holder renews it. Read by the Aggregator on Kubernetes, the lease rows live in `coordination-db` |
 | `STORE_REBALANCE_INTERVAL` | aggregator (Kubernetes) | 30s | Time between rebalance rounds, which copy missing rows to the shard owners |
 | `REBALANCE_PAGE_PAUSE` | aggregator (Kubernetes) | 100ms | Pause between copy pages, so a round does not starve live traffic |
-| `REBALANCE_DELETE` | aggregator (Kubernetes) | false | Also delete shards from nodes that no longer own them. Keep it false until the coordination database exists |
+| `REBALANCE_DELETE` | aggregator (Kubernetes) | false | Also delete shards from nodes that no longer own them. The rebalance lease lives in `coordination-db`, so one replica runs a round at a time |
 | `JWT_SIGNING_SECRET` | auth-service, client-facing-api | none | Shared HMAC secret for JWTs |
 | `SECRET_SALT` | user-db, auth-service | none | Salt in `sha256(password + salt)`; the User DB seed uses it too |
 | `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Access token lifetime for every role (seconds) |
@@ -85,5 +85,5 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `PANTAI_SPEED` | Sensor Pantai (ConfigMap) | 60 | Simulation speed, 1 to 100000 |
 | `PANTAI_KEY_FILE` | `deploy/make-secrets.sh` | empty | Path of the exam key file given by the assistants. Empty uses a placeholder for Secret `pantai-key` |
 
-Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8095), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default).
+Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8095), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default). On Kubernetes the same wiring sits in the manifests of `deploy/`, where the Aggregator also gets `COORDINATION_DATABASE_URL` (the lease database, `coordination-db`), `STORE_SERVICE` (`store`) and `STORE_DSN_TEMPLATE` (one DSN per store node), see [DEPLOY.md](DEPLOY.md).
 
