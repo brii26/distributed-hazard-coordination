@@ -2,6 +2,15 @@
 package main
 
 // Field report inbox against a real RabbitMQ. Needs RABBITMQ_URL (amqp url reachable from here) and IT_COMPOSE (the docker compose command prefix that controls the broker, e.g. "docker compose -p x"), otherwise every test skips. Each test starts the real client-facing-api binary.
+//
+// How to run (repo root, .env filled in; docker-compose.it.yml publishes the AMQP port 5672):
+//
+//	export IT_COMPOSE="docker compose -p cfa-it -f $PWD/docker-compose.yml -f $PWD/docker-compose.it.yml"
+//	$IT_COMPOSE up -d --wait rabbitmq
+//	set -a; . ./.env; set +a
+//	export RABBITMQ_URL=amqp://$RABBITMQ_USER:$RABBITMQ_PASSWORD@127.0.0.1:5672/
+//	(cd services/client-facing-api && go test -run TestIT -count=1 -v .)
+//	$IT_COMPOSE down -v
 
 import (
 	"bytes"
