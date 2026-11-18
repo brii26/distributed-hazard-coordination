@@ -66,6 +66,26 @@ Only the replica that holds the PVMBG lease talks to the token endpoint. On acqu
 
 The BMKG and PVMBG mocks and RabbitMQ come in their own manifests. Until they exist the Aggregator logs `no such host` for them and its circuit breakers open, which is expected.
 
+## Rolling update
+
+The Aggregator Deployment uses `RollingUpdate` with `maxUnavailable: 0` and `maxSurge: 1`, so a new pod must be ready before an old one is stopped. A stopping pod goes through these steps, in this order:
+
+1. The `preStop` sleep (5 s) runs first, so the pod leaves the Service endpoints while it still serves.
+2. On SIGTERM `/health` answers 503 and the gRPC health check reports NOT_SERVING for good, then the pod waits `SHUTDOWN_DRAIN_DELAY` (default 2 s) with both listeners still open.
+3. The HTTP and gRPC servers stop taking new connections and finish in-flight calls. `SHUTDOWN_TIMEOUT` (default 20 s) bounds this wait, after which the remaining connections are closed.
+4. The pollers and the rebalancer stop and each lease is released, so another instance acquires it at its next try (at most `LEASE_RENEW_INTERVAL`, 3 s) and does not wait for `LEASE_TTL`. The epoch grows by one per hand-over.
+
+`terminationGracePeriodSeconds` is 45, which covers 5 + 2 + 20 s and the lease release. The Client-Facing API balances over the pods with `round_robin` and retries `UNAVAILABLE` up to 3 times, so a call that meets a closing connection goes to another pod.
+
+`tests/scenarios/rolling-update.sh` checks this on a running cluster. It runs k6 for 60 s, restarts the Aggregator after 10 s and prints PASS or FAIL. Failed means any status other than 200 and 429, and the 429 are counted apart. It also needs each lease epoch to go up, no lease gap above `GAP_MAX` (5 s, the renew interval of 3 s plus sampling, so a lease that is not released on SIGTERM and waits for the 15 s `LEASE_TTL` fails) and no repeated `source_ref_id` for BMKG, PVMBG and SENSOR_PANTAI in the Audit API. At least `MIN_OK_PCT` (90) percent of the requests must be 200, so a run that is mostly 429 fails.
+
+For the run the script sets `ACCESS_TOKEN_TTL_S` to 3600 and `RATE_LIMIT_RPS` to 1000 in `bnpb-config` and restarts auth-service and client-facing-api, because k6 logs in once and a 60 s token would expire mid-run (the refresh token rotates, so the VUs cannot share it) and all VUs share one account rate bucket. On exit, also on Ctrl-C, it restores the old values and restarts them again. The Audit API token is read from the Secret `audit-token`, so only the Operator login is needed.
+
+```bash
+export KUBECONFIG=$HOME/vms/k3s/kubeconfig
+EMAIL=<operator email> PASSWORD=<password> tests/scenarios/rolling-update.sh
+```
+
 ## The BMKG and PVMBG mocks
 
 `deploy/bmkg-mock.yaml` (port 8081) and `deploy/pvmbg-mock.yaml` (port 8082) each hold a ClusterIP Service and a one-replica Deployment. Both pods carry `role: mock` and 64Mi/128Mi memory, with a readiness probe on `/health`. Only the Service `pvmbg-mock` is labelled `role: mock`, because the Tester Agent lists Services with that label and must find exactly one. Keys and credentials come from `bmkg-credentials` and `pvmbg-credentials`, the other settings from `bnpb-config`. The images are `10.77.0.11:5000/bmkg-mock:0.1.0` and `10.77.0.11:5000/pvmbg-mock:0.1.0`, set in the `images` block. Build and push from the host:

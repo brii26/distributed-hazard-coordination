@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -48,8 +49,9 @@ type readAPI struct {
 	cl       *cluster            // nil without STORE_SERVICE; ListHazards, GetHazard and the audit routes need it
 	auditTok string              // bearer token for the audit routes
 
-	sem chan struct{}
-	hs  *health.Server // standard gRPC health, SERVING only while the store answers
+	sem      chan struct{}
+	draining atomic.Bool    // set on SIGTERM, readiness is off from then on
+	hs       *health.Server // standard gRPC health, SERVING only while the store answers
 }
 
 func newReadAPI(db *store, rabbitUp func(context.Context) error, breakers map[string]*breaker, maxInflight int) *readAPI {
@@ -324,7 +326,7 @@ func (a *readAPI) healthHandler(w http.ResponseWriter, r *http.Request) {
 	rep := a.health(r.Context())
 
 	code := http.StatusOK
-	if rep.Status == "down" {
+	if rep.Status == "down" || a.draining.Load() {
 		code = http.StatusServiceUnavailable
 	}
 
