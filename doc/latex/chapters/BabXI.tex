@@ -1,0 +1,196 @@
+% sumber: doc/P1_STORAGE_DESIGN.md, doc/TOPOLOGY.md, docs/DEPLOY.md, doc/IF4031 - Tugas Besar - M2.pdf, services/aggregator (shard.go, cluster.go, clusterlist.go, membership.go, rebalance.go, audit.go, readapi.go, fence.go), deploy/store.yaml
+\chapter[MILESTONE 2: PROBLEM 1]{Milestone 2: Problem 1, Penyimpanan Terdistribusi}
+
+Bab ini menjawab Problem 1 Milestone 2 (``Yang Pulang Membawa Laptopnya''). Isinya mengikuti urutan butir ``Di laporan'' pada spesifikasi, ditambah subbab keterbatasan dan tempat bukti per kriteria. Seluruh klaim diambil dari kode pada \textit{commit} \texttt{5933d41} dan dokumen \texttt{doc/P1\_STORAGE\_DESIGN.md}. Bagian yang belum ada di kode ditandai terang sebagai belum ada, dan bukti pengujian yang belum diambil diberi kotak merah yang menyebut apa yang harus dilampirkan.
+
+\section{Topologi dan Asumsi}
+
+Sistem berjalan di k3s dengan tiga \textit{node} berupa VM VirtualBox. \texttt{node-a} berperan sebagai \textit{control plane} sekaligus \textit{worker}, sedangkan \texttt{node-b} dan \texttt{node-c} berperan sebagai \textit{worker}. Tiga \textit{node} dipilih karena dua alasan yang tertulis pada \texttt{doc/TOPOLOGY.md}. Pertama, dengan dua \textit{node} dan dua salinan setiap \textit{shard}, kedua \textit{node} menyimpan seluruh data sehingga kriteria 1 tidak terpenuhi. Kedua, dengan tiga \textit{node} setiap \textit{node} menyimpan sekitar dua pertiga data, dan kehilangan satu \textit{node} tidak menghilangkan data. Rancangan tetap dapat berjalan di dua \textit{node} tetapi tidak didemokan. Spesifikasi hardware tiap \textit{host} dan \textit{node} diambil dengan \texttt{deploy/cluster/topology.sh} dan ditempel pada bagian bukti di bawah.
+
+Penyimpanan berupa satu Postgres 16 per \textit{node} yang dijalankan sebagai \textit{DaemonSet} berlabel \texttt{role=store}, dengan data pada \textit{hostPath} \texttt{/var/lib/bnpb-store} (\texttt{deploy/store.yaml}). \textit{DaemonSet} membuat \textit{node} baru yang bergabung ke k3s langsung mendapat satu \textit{pod} penyimpanan. Tidak dipakai produk basis data terdistribusi dan tidak dipakai \textit{streaming replication} Postgres. Penempatan data, replikasi, dan pemulihan dikerjakan oleh Aggregator.
+
+\section{Identifikasi Persoalan}
+
+Subbab ini menjawab butir 1 ``Di laporan''.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.27\linewidth}|>{\raggedright\arraybackslash}p{0.43\linewidth}|}
+\hline
+\textbf{Persoalan} & \textbf{Konsep dalam literatur} & \textbf{Wujud pada soal} \\
+\hline
+\endhead
+Satu penyimpanan tidak muat menampung semua data & \textit{Partitioning} atau \textit{sharding} horizontal & Kriteria 1: tidak ada \textit{node} yang menyimpan seluruh data, beban simpan dan tulis tersebar \\
+\hline
+Gempa tidak tersebar merata & \textit{Data skew} dan \textit{hot spot} & Kriteria 2: satu mesin bekerja keras, mesin lain menganggur, terutama saat lonjakan gempa di satu wilayah \\
+\hline
+Data yang hanya punya satu rumah ikut hilang & \textit{Replication} dengan \textit{replication factor} lebih dari 1, melawan \textit{single point of failure} & Kriteria 4 dan 6: \textit{node} dihapus datanya dan tidak ada \textit{HazardEvent} yang hilang, lalu sistem tahan kehilangan satu \textit{node} lagi \\
+\hline
+\textit{Node} datang dan pergi tanpa mematikan sistem & \textit{Rebalancing} dan \textit{membership change}, dengan \textit{anti-entropy repair} untuk menyalin data yang kurang & Kriteria 4, 5, dan 6 \\
+\hline
+Satu permintaan harus membaca lintas semua lokasi penyimpanan & \textit{Scatter-gather} dengan \textit{merge} terurut dan \textit{keyset pagination} & Kriteria 3 dan 7 \\
+\hline
+Jawaban tetap harus ada saat sebagian data tidak terjangkau & \textit{Graceful degradation}, \textit{partial result}, dan pilihan \textit{availability} atas \textit{consistency} pada \textit{partition} menurut teorema CAP & Kriteria 4 dan 7: lengkap bila ada, sebagian dengan penanda eksplisit bila tidak, bukan 500 dan bukan menggantung \\
+\hline
+\end{longtable}
+
+\section{Mekanisme yang Dipilih}
+
+Subbab ini menjawab butir 2 ``Di laporan''.
+
+\subsection{Kunci dan Shard}
+
+Setiap rekaman memiliki \texttt{hazard\_id} berupa UUID versi 5 dari teks \texttt{source|source\_ref\_id} (\texttt{hazardID} pada \texttt{shard.go}). Rekaman yang sama menghasilkan \texttt{hazard\_id} yang sama pada semua replika Aggregator dan setiap \textit{restart}, sehingga salinan di dua \textit{node} saling cocok dan duplikat terdeteksi oleh kunci unik \texttt{(source, source\_ref\_id)}. Dari \texttt{hazard\_id} dihitung \textit{shard} dengan \texttt{fnv32a(hazard\_id) mod 16} (\texttt{shardOf}). Jumlah \textit{shard} tetap 16 (\texttt{numShards}) dan \textit{shard} sebuah rekaman tidak pernah berubah. Yang berubah ketika \textit{node} datang dan pergi hanyalah \textit{node} yang memiliki sebuah \textit{shard}.
+
+Kunci \textit{shard} tidak memuat lokasi atau waktu. Hanya identitas rekaman yang masuk ke \textit{hash}, jadi gempa di jalur yang sama tidak otomatis jatuh ke \textit{shard} yang sama. Konsekuensinya dibahas pada subbab alternatif.
+
+\subsection{Penempatan dengan Rendezvous Hashing}
+
+Pemilik sebuah \textit{shard} ditentukan fungsi \texttt{owners}. Untuk setiap \textit{node} yang hidup dihitung \texttt{fnv32a(``shard|nama-node'')}. Dua \textit{node} dengan skor tertinggi memiliki \textit{shard} itu. Yang pertama menjadi primer (unit \texttt{shard-N}) dan yang kedua menjadi replika (unit \texttt{shard-N-r1}). Jika hanya satu \textit{node} hidup, \textit{shard} punya satu pemilik dan berstatus kurang tereplikasi.
+
+Himpunan \textit{node} yang hidup berasal dari \texttt{membership.go}. Setiap 2 detik Aggregator me-resolve \textit{headless Service} \texttt{store}, lalu bertanya ke setiap alamat \textit{pod} nilai \texttt{SHOW bnpb.node\_name}. \textit{Node} yang diam dibiarkan tetap dianggap hidup selama 30 detik sebagai masa \textit{grace}, jadi \textit{pod} yang di-\textit{restart} cepat tidak memindahkan data. Setelah melewati \textit{grace}, \textit{node} dikeluarkan dari himpunan dan pemilik semua \textit{shard} dihitung ulang.
+
+\subsection{Penempatan Berubah Saat Node Datang dan Pergi}
+
+Sifat rendezvous \textit{hashing} adalah bahwa hanya \textit{shard} yang melibatkan \textit{node} yang berubah yang berpindah. Tabel berikut adalah hasil menjalankan fungsi \texttt{owners} dari kode (disalin apa adanya ke program terpisah) dengan nama \textit{node} bawaan \texttt{node-a}, \texttt{node-b}, \texttt{node-c}, dan \texttt{node-d} untuk \textit{node} tambahan. Ini perhitungan dari rancangan, bukan hasil pengukuran pada klaster.
+
+\begin{table}[H]
+\centering
+\caption{Jumlah salinan \textit{shard} per \textit{node} dari total 32 salinan, dan salinan baru yang harus dibuat}
+\begin{tabular}{|l|c|c|c|c|c|}
+\hline
+\rowcolor{gray!25}
+\textbf{Kondisi} & \textbf{node-a} & \textbf{node-b} & \textbf{node-c} & \textbf{node-d} & \textbf{Salinan baru} \\
+\hline
+Tiga \textit{node} sehat & 8 & 13 & 11 & - & - \\
+\hline
+node-c hilang & 16 & 16 & - & - & 11 \\
+\hline
+node-b hilang & 16 & - & 16 & - & 13 \\
+\hline
+node-d bergabung & 8 & 8 & 7 & 9 & 9 \\
+\hline
+\end{tabular}
+\vspace{-12pt}
+\end{table}
+
+Dari perhitungan yang sama, pada tiga \textit{node} sehat jumlah \textit{shard} primer adalah 8, 3, dan 5 untuk \texttt{node-a}, \texttt{node-b}, dan \texttt{node-c}. Ketika \texttt{node-c} hilang, 11 salinan yang tadinya di \texttt{node-c} harus dibuat ulang di \textit{node} lain, dan \textit{shard} yang tidak menyertakan \texttt{node-c} tidak berubah pemilik. Ketika \texttt{node-d} bergabung, 9 salinan pindah ke \texttt{node-d} dan sisanya tetap. Sebagai pembanding, dengan 10.000 kunci sintetis dan \textit{hash mod N} atas \textit{node}, perubahan dari 3 ke 2 \textit{node} memindahkan 6.674 kunci dan dari 3 ke 4 \textit{node} memindahkan 7.436 kunci.
+
+Dua hal dari tabel perlu dicatat. Pertama, sebaran salinan tidak rata (8, 13, 11) karena hanya ada 16 \textit{shard} dan hanya dua nama \textit{node} yang diacak. Kedua, \texttt{node-d} dengan 9 salinan menjadi primer untuk 9 \textit{shard} sekaligus. Keduanya akibat butirnya yang kasar, dan dicatat sebagai keterbatasan.
+
+\subsection{Penulisan}
+
+\textit{Method} \texttt{cluster.upsert} menulis ke kedua pemilik secara paralel, masing-masing dengan batas waktu 1 detik (\texttt{copyTimeout}). Penulisan dianggap berhasil bila minimal satu salinan ter-\textit{commit}. Salinan yang meleset menandai \textit{shard} sebagai \textit{dirty} di memori untuk diperbaiki. Bila kedua salinan gagal, \textit{error} dikembalikan dan pemanggil mengulang seperti biasa. Pilihan ini membuat penulisan tidak berhenti saat satu \textit{node} mati. Harganya adalah rekaman yang ditulis selama gangguan hanya punya satu salinan sampai \textit{rebalancer} menyalinnya, dan rekaman itu bisa hilang bila \textit{node} yang tersisa ikut mati sebelum perbaikan selesai.
+
+\subsection{Pembacaan}
+
+Pembacaan satu rekaman (\texttt{cluster.get}) menanyai primer lalu replika. Urutannya mendahulukan salinan yang berstatus \textit{synced} pada tabel \texttt{shard\_state}, sehingga \textit{node} yang baru bergabung dan masih kosong tidak dijadikan sumber jawaban lebih dulu. Replika juga ditanyai bila primer menjawab tanpa baris, karena penulisan yang meleset dapat meninggalkan lubang pada salah satu salinan. Hasil mengembalikan penempatan rekaman (\texttt{shard-N@node}).
+
+Pembacaan lintas \textit{shard} (\texttt{cluster.list}) mengirim satu pertanyaan per \textit{shard} secara paralel ke satu salinan yang menjawab, salinan \textit{synced} lebih dulu dan primer sebelum replika, lalu menggabungkan hasilnya terurut. Halamannya memakai \textit{keyset cursor} pada \texttt{(ingested\_at, hazard\_id)}, bukan \texttt{OFFSET}, sehingga halaman tidak mengulang dan tidak melompat saat data bertambah. Karena satu salinan per \textit{shard}, replika tidak terhitung dua kali. \textit{Shard} yang kedua pemiliknya tidak menjawab dicatat sebagai \texttt{shard-N} pada \texttt{unavailable\_units} dan jawabannya bertanda \texttt{partial}, tetap dengan status sukses.
+
+\subsection{Pemulihan dan Rebalancing}
+
+\textit{Rebalancer} (\texttt{rebalance.go}) berjalan pada satu replika Aggregator yang memegang \textit{lease} bernama \texttt{rebalance} di \texttt{coordination-db}. Ia berjalan saat mulai, setiap \texttt{STORE\_REBALANCE\_INTERVAL} (bawaan 30 detik), dan setiap kali himpunan \textit{node} hidup berubah (diperiksa tiap 2 detik). Untuk setiap \textit{shard} ia membandingkan jumlah baris dan \textit{digest} dari \textit{id} terurut pada kedua pemilik. Pemilik yang kurang atau baru disalin dari pemegang yang \textit{synced} dalam halaman 500 baris dengan jeda 100 milidetik (\texttt{REBALANCE\_PAGE\_PAUSE}). Penyalinan memakai \texttt{ON CONFLICT DO NOTHING}, jadi salinan lama tidak menimpa tulisan baru. Setelah salinan sama, \textit{shard} ditandai \textit{synced}, dan hasilnya diverifikasi sampai tiga kali. Penghapusan pada \textit{node} yang bukan pemilik hanya terjadi bila \texttt{REBALANCE\_DELETE=true} dan urutannya selalu salin, tandai, baru hapus, supaya tidak ada jendela dengan satu salinan. Nilai bawaannya \texttt{false}. Metriknya adalah \texttt{store\_shards\_underreplicated}, \texttt{store\_shards\_misplaced}, \texttt{store\_repair\_rows\_total}, dan \texttt{store\_shard\_rows}.
+
+Dengan mekanisme ini kriteria 4 sampai 6 dijawab sebagai berikut. \textit{Node} yang datanya dihapus keluar dari himpunan hidup setelah 30 detik, \textit{shard}-nya dipindahkan ke pemilik baru, dan \textit{rebalancer} menyalin dari salinan yang tersisa. \textit{Node} baru atau \textit{node} yang kembali dengan disk kosong dikenali lewat \texttt{SHOW bnpb.node\_name}, menjadi pemilik sebagian \textit{shard}, dan diisi dengan cara yang sama tanpa menghentikan penulisan maupun pembacaan. Kondisi kriteria 6 tercapai bila \texttt{store\_shards\_underreplicated} kembali 0.
+
+\section{Alternatif dan Dampaknya pada Sebaran Data}
+
+Subbab ini menjawab butir 3 ``Di laporan''. Ketidakmerataan alami dataset (kriteria 2) adalah gempa yang berkumpul di jalur yang sama dan lonjakan di satu wilayah.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.38\linewidth}|>{\raggedright\arraybackslash}p{0.32\linewidth}|}
+\hline
+\textbf{Pendekatan} & \textbf{Sebaran saat data miring (kriteria 2)} & \textbf{Konsekuensi lain} \\
+\hline
+\endhead
+\textit{Shard} menurut wilayah geografis & Buruk. Jalur megathrust Sunda membuat sebagian besar tulisan jatuh ke satu atau dua \textit{shard}, sehingga satu \textit{node} menjadi \textit{hot spot} & Kueri per wilayah murah, kueri lintas wilayah tetap \textit{scatter-gather} \\
+\hline
+\textit{Shard} menurut rentang waktu & Buruk untuk tulisan. Semua data baru masuk ke rentang terbaru, dan lonjakan gempa menghantam satu \textit{shard} & Kueri rentang waktu murah, \textit{shard} lama jadi dingin \\
+\hline
+\textit{Hash mod N} atas jumlah \textit{node} & Rata, tetapi hampir semua kunci berpindah saat N berubah (6.674 dari 10.000 pada 3 ke 2, 7.436 pada 3 ke 4, perhitungan di atas) & Pemindahan massal saat \textit{node} hilang atau datang bertentangan dengan kriteria 5 \\
+\hline
+\textit{Consistent hashing} dengan \textit{virtual node} & Rata dan perpindahan kecil, setara dengan pilihan kita & Kode lebih banyak untuk hasil yang sama \\
+\hline
+Hash \textit{id} ke 16 \textit{shard} dan rendezvous (dipilih) & Rata terhadap lokasi dan waktu karena kunci tidak memuat keduanya. Lonjakan di satu wilayah tersebar ke banyak \textit{shard} & Butirnya kasar karena hanya 16 \textit{shard}, sebaran per \textit{node} tidak sempurna \\
+\hline
+\end{longtable}
+
+Alternatif untuk replikasi dan mesin penyimpanan juga ditolak, sesuai \texttt{doc/P1\_STORAGE\_DESIGN.md}. \textit{Streaming replication} Postgres per \textit{shard} membutuhkan empat sampai delapan \textit{pod} yang tidak muat pada memori, dan skrip \textit{failover} harus ditulis sendiri. CockroachDB, YugabyteDB, dan Cassandra membutuhkan tiga replika, merekomendasikan memori di atas batas 1 GiB, dan menambah \textit{image}, \textit{driver}, serta beban operasi. Menuntut dua salinan pada setiap tulisan membuat tulisan ke separuh \textit{shard} gagal saat satu \textit{node} mati. Menulis ke primer lalu menyalin secara asinkron membuka jendela satu salinan pada setiap tulisan, bukan hanya saat gangguan.
+
+Catatan yang jujur untuk kriteria 2: kunci \textit{hash} meratakan \textit{shard}, tetapi tidak melindungi dari satu kunci yang sangat panas. Rekaman yang di-\textit{upsert} berulang selalu jatuh ke \textit{shard} yang sama. Selain itu pemuatan dataset katalog historis dan skrip simulasi lonjakan belum ada di repositori pada \textit{commit} ini (rencana \#293 pada rancangan), sehingga sebaran per \textit{node} dan beban saat lonjakan belum terukur. Angka pada Tabel di atas adalah sebaran \textit{shard}, bukan sebaran baris atau beban.
+
+\section{Jaminan Konsistensi per Endpoint}
+
+Subbab ini menjawab butir 4 ``Di laporan''. Semua jaminan di bawah berlaku untuk Aggregator pada \textit{commit} ini. Penulisan menerima konsistensi akhir: dua salinan dapat berbeda sesaat dan diseragamkan oleh \textit{rebalancer}.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.19\linewidth}|>{\raggedright\arraybackslash}p{0.24\linewidth}|>{\raggedright\arraybackslash}p{0.27\linewidth}|>{\raggedright\arraybackslash}p{0.2\linewidth}|}
+\hline
+\textbf{\textit{Endpoint}} & \textbf{Kondisi normal} & \textbf{Satu \textit{node} hilang} & \textbf{Alasan} \\
+\hline
+\endhead
+Tulis lewat \textit{ingest} dan \texttt{cluster.upsert} & Dua salinan ditulis paralel, sukses bila minimal satu \textit{commit}. Tidak ada jaminan kedua salinan identik pada saat \textit{ack} & Tetap menerima tulisan ke pemilik yang hidup. Rekaman punya satu salinan sampai diperbaiki & \textit{Availability} tulis lebih penting daripada dua salinan serempak \\
+\hline
+\texttt{GetHazard}, baca per \textit{id} lewat gRPC & Primer, replika bila primer gagal atau tidak punya baris. Bisa membaca nilai lama bila salinan yang menjawab belum menerima tulisan terbaru & Dijawab dari salinan yang tersisa. \texttt{UNAVAILABLE} bila kedua pemilik tidak terjangkau, \texttt{NOT\_FOUND} hanya bila ada salinan yang menjawab tanpa baris & Membedakan ``tidak ada'' dari ``tidak terjangkau'' \\
+\hline
+\texttt{ListHazards}, lintas \textit{shard} lewat gRPC & Satu salinan per \textit{shard}, urutan benar, \textit{keyset cursor} tanpa ulang dan lompat. Bukan \textit{snapshot}, \textit{shard} dibaca terpisah beberapa milidetik & Tetap 200. \texttt{partial=true} dan \texttt{unavailable\_units} berisi \textit{shard} yang tidak terjangkau, data \textit{shard} lain tetap lengkap & Tidak pernah gagal karena satu \textit{shard} mati dan tidak diam-diam salah \\
+\hline
+Audit \texttt{events} (\texttt{/internal/audit/events}) & Terurut naik pada \texttt{(ingested\_at, hazard\_id)}, per \textit{source} dan \texttt{since}, halaman dengan \textit{cursor} & Seperti \texttt{ListHazards}: \texttt{partial} dan \texttt{unavailable\_units} & Dipakai asisten untuk memverifikasi tidak ada \textit{HazardEvent} yang hilang \\
+\hline
+Audit \texttt{checksum} (\texttt{/internal/audit/checksum}) & SHA-256 atas \texttt{source\_ref\_id} terurut byte, digabung baris baru, satu salinan per \textit{shard}. Bukan \textit{snapshot} & Dihitung dari \textit{shard} yang terjangkau, \texttt{partial} menandai bahwa angka belum lengkap & Checksum sebagian tidak boleh disangka lengkap \\
+\hline
+\texttt{GET /hazards?type=} (klien, gRPC \texttt{GetHazards}) & Dibaca dari satu koneksi ke Service \texttt{store} (\texttt{db.listByType}), bukan dari \textit{cluster}. Berarti salah satu \textit{pod} penyimpanan yang ditunjuk DNS, bukan gabungan semua \textit{shard} & Bila \textit{pod} itu yang mati, dijawab \texttt{UNAVAILABLE}. Bila yang terambil \textit{pod} lain, hasilnya hanya data yang tersimpan di \textit{node} itu, tanpa penanda \texttt{partial} & Jalur ini warisan Milestone 1 dan belum dipindah ke \texttt{cluster.list} \\
+\hline
+\end{longtable}
+
+Baris terakhir adalah kekurangan yang diketahui. \texttt{ListHazards} dan \texttt{GetHazard} baru tersedia pada gRPC internal Aggregator, dan Client-Facing API belum memiliki \textit{route} yang memakainya. Endpoint pencarian menurut lokasi (rencana \#296) dan endpoint \textit{counts} untuk dasbor (rencana \#297) belum ada di kode.
+
+\section{Agregasi Dasbor Analitik}
+
+Subbab ini menjawab butir 5 ``Di laporan''. Kondisi sebenarnya: dasbor analitik (kriteria 7), endpoint \textit{counts}, dan fungsi \texttt{cluster.counts} yang disebut pada rancangan belum ada di \textit{commit} \texttt{5933d41}. Karena itu belum ada angka agregasi yang dapat dijelaskan dari kode yang berjalan, dan subbab ini memuat rancangan yang akan diisi dengan kode yang sebenarnya setelah \#297 digabung.
+
+Rancangan pada \texttt{doc/P1\_STORAGE\_DESIGN.md} menetapkan hal berikut. Penghitungan memakai pola yang sama dengan \texttt{cluster.list} dan \texttt{cluster.sourceIDs}: untuk setiap \textit{shard} dipilih satu salinan yang terjangkau dan \textit{synced}, kueri dikelompokkan per \textit{node} dengan \texttt{shard = ANY(...)}, lalu hasil per \textit{node} dijumlahkan. Replika tidak dihitung dua kali karena hanya satu salinan per \textit{shard} yang dipakai. Jika kedua pemilik sebuah \textit{shard} tidak terjangkau, jawaban tetap 200 dengan \texttt{partial: true} dan \texttt{unavailable\_units}, dan dasbor menampilkan penanda bahwa angka belum lengkap. Jaminan kesamaan dengan Audit API bersandar pada dasar yang sama dengan \texttt{checksum}: satu salinan per \textit{shard}. Angka tetap bukan \textit{snapshot} karena \textit{shard} dibaca berurutan.
+
+\ph{Ganti paragraf rancangan di atas dengan penjelasan kode \texttt{cluster.counts} dan halaman dasbor setelah \#297 digabung. Jangan menulis klaim sebelum kodenya ada.}
+
+\section{Batasan yang Disadari}
+
+\begin{itemize}
+\item Sebaran salinan per \textit{node} tidak rata karena hanya 16 \textit{shard}. Pada tiga \textit{node} dengan nama bawaan jumlahnya 8, 13, dan 11. Menambah jumlah \textit{shard} berarti mengubah \texttt{numShards}, yang memindahkan \textit{shard} setiap rekaman, jadi tidak dapat dilakukan tanpa migrasi.
+\item Tulisan selama gangguan hanya punya satu salinan sampai \textit{rebalancer} menyalinnya. \textit{Dirty set} disimpan di memori, setelah \textit{restart} Aggregator perbaikan tetap berjalan karena \textit{rebalancer} membandingkan salinan secara penuh.
+\item Satu replika membawa \textit{rebalancer}. Jika \texttt{coordination-db} mati, tidak ada \textit{lease} baru dan perbaikan berhenti sampai kembali.
+\item Penghapusan salinan pada \textit{node} yang bukan pemilik mati secara bawaan (\texttt{REBALANCE\_DELETE=false}), sehingga setelah \textit{node} bergabung sebagian data tersimpan di tempat yang bukan pemiliknya sampai sakelar dinyalakan.
+\item Migrasi \texttt{011\_shard\_state.sql} harus diterapkan manual pada \textit{node} yang sudah berisi data (\texttt{docs/DEPLOY.md}). Sebelum itu \textit{rebalancer} gagal memindai \textit{node} tersebut.
+\item Penyimpanan mulai dari kosong. Baris dari Milestone 1 memakai UUID acak dan tidak ber-\textit{shard}, sehingga \textit{volume} lama harus dihapus sekali.
+\item Jalur \texttt{GET /hazards} milik klien belum memakai pembacaan lintas \textit{shard}, dan endpoint lokasi serta dasbor analitik belum ada, seperti diuraikan di atas.
+\item Hubungan \textit{node} VM pada spesifikasi dengan istilah "satu \textit{node}" dari asisten belum dikonfirmasi (\texttt{doc/TOPOLOGY.md}). Rancangan mengasumsikan satu \textit{node} adalah satu mesin.
+\end{itemize}
+
+\section{Bukti per Kriteria}
+
+Bukti belum diambil. Setiap kotak merah di bawah menyebut apa yang harus dilampirkan dan sumbernya, dan akan terganti gambar sungguhan begitu \textit{file} dengan nama yang tertera ditaruh di \texttt{doc/latex/figures/bukti/}. Tidak ada angka atau keluaran yang ditulis sebelum bukti ada.
+
+\subsection{Kriteria 1: Sebaran Data per Node}
+
+\buktiph{p1-k1-sebaran.png}{Sebaran \textit{shard} dan baris per \textit{node} setelah dataset dimuat}{keluaran perintah pemuatan dataset katalog gempa dari asisten, lalu nilai \texttt{store\_shard\_rows\{node,shard\}} dari \texttt{/metrics} Aggregator berupa satu tabel jumlah baris per \textit{node}, serta keluaran \texttt{deploy/cluster/topology.sh} untuk deklarasi topologi.}{skrip pemuat dataset (\#293, belum ada), \texttt{kubectl exec} ke \textit{pod} Aggregator atau Prometheus untuk \texttt{store\_shard\_rows}, dan panel Grafana.}
+
+\subsection{Kriteria 2: Ketidakmerataan dan Lonjakan}
+
+\buktiph{p1-k2-lonjakan.png}{Beban tiap \textit{node} saat dataset dimuat dan saat lonjakan gempa satu wilayah}{dua grafik Grafana berupa CPU atau tulisan per detik per \textit{node} untuk dua periode, yaitu pemuatan dataset dan simulasi lonjakan di satu wilayah, dengan rentang waktu terlihat.}{skrip simulasi lonjakan (\#293, belum ada) dan dasbor Grafana pada \texttt{deploy/observability}.}
+
+\subsection{Kriteria 3: Kueri Lintas Lokasi dan Urutan}
+
+\buktiph{p1-k3-lintas.png}{50 \textit{event} terbaru lintas jenis bahaya dengan \textit{pagination}}{keluaran dua halaman berurutan dari \texttt{ListHazards} atau endpoint kliennya, dengan \textit{cursor} halaman pertama dipakai pada halaman kedua, disertai pemeriksaan bahwa urutan \texttt{(ingested\_at, hazard\_id)} menurun dan tidak ada \textit{id} ganda.}{\texttt{grpcurl} atau Client-Facing API bila \textit{route}-nya sudah ada, atau \texttt{/internal/audit/events} dengan \texttt{cursor} untuk urutan naik.}
+
+\subsection{Kriteria 4: Node Dimatikan dan Datanya Dihapus}
+
+\buktiph{p1-k4-node-hilang.png}{Satu \textit{node worker} dimatikan dan datanya dihapus, tidak ada \textit{HazardEvent} yang hilang}{log Tester Agent yang menunjukkan aksi (\texttt{kubectl logs -n tester-agent daemonset/tester-agent}), keluaran \texttt{tests/scenarios/audit-checksum.sh} sebelum dan sesudah dengan checksum yang sama dan \texttt{count} yang sama, dan beberapa respons permintaan selama pemulihan yang menunjukkan jawaban lengkap atau \texttt{partial=true}, tanpa 500.}{\texttt{kubectl exec -n tester-agent daemonset/tester-agent -{}- /app run practice <nama>} (nama dari \texttt{/app list}), \texttt{tests/scenarios/audit-checksum.sh}, dan \texttt{curl} berulang pada endpoint baca.}
+
+\subsection{Kriteria 5: Node Baru Ikut Menanggung Data}
+
+\buktiph{p1-k5-node-baru.png}{Node baru atau \textit{node} berdisk kosong ikut memegang data dan beban}{\texttt{store\_shard\_rows} per \textit{node} sebelum dan sesudah \textit{node} bergabung, \texttt{kubectl get pods -o wide -n sistem-informasi-kebencanaan-bnpb -l role=store}, dan bukti bahwa penulisan dan pembacaan terus berjalan selama itu (hasil permintaan berkala tanpa kegagalan).}{\texttt{kubectl}, \textit{endpoint} metrik Aggregator, dan skrip permintaan berkala.}
+
+\subsection{Kriteria 6: Tahan Kehilangan Satu Node Berikutnya}
+
+\buktiph{p1-k6-node-kedua.png}{Setelah pulih, kehilangan satu \textit{node} berikutnya tidak menghilangkan data}{nilai \texttt{store\_shards\_underreplicated} sama dengan 0 sebelum aksi kedua, lalu keluaran \texttt{tests/scenarios/audit-checksum.sh} sesudah \textit{node} kedua dimatikan.}{metrik Aggregator, \texttt{tests/scenarios/audit-checksum.sh}, dan Tester Agent.}
+
+\subsection{Kriteria 7: Dasbor Analitik}
+
+\buktiph{p1-k7-dasbor.png}{Dasbor analitik: \textit{line chart}, severity, dan wilayah, termasuk penanda saat sebagian data tidak terjangkau}{tangkapan layar peramban pada keadaan normal dan keadaan satu \textit{node} mati (penanda angka belum lengkap terlihat), serta perbandingan angka dengan hitungan langsung dari Audit API.}{halaman dasbor (\#297, belum ada) dan \texttt{/internal/audit/events}.}
