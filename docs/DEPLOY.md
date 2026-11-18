@@ -103,3 +103,23 @@ done
 
 - The Tester Agent lives in its own `tester-agent` namespace. Do not add a default-deny policy or a quota there.
 - Every pod gets a `role` label and memory requests and limits from Appendix B of the spec.
+
+## One command deploy and the check
+
+`deploy/deploy.sh [env-file]` does steps 2 to 4 above in the right order. It applies the namespace, runs `make-secrets.sh`, `make-schema.sh` and `make-rabbitmq.sh`, runs `kubectl apply -k deploy/`, then waits for every Deployment, StatefulSet and DaemonSet (the store is a DaemonSet) with `kubectl rollout status --timeout $TIMEOUT` (default `300s` each). A workload that is not ready is listed with the pods that are not Running and a hint to describe them, and the script exits 1. It ends with `deploy/check.sh`. The name differs from `deploy/cluster/up.sh`, which starts the VMs.
+
+```bash
+export KUBECONFIG=$HOME/vms/k3s/kubeconfig
+deploy/deploy.sh
+```
+
+`deploy/check.sh` prints one row per pod with its `role`, memory request and limit, and `ok` or the reason it fails. It exits 1 on a missing `role` label, a role outside `aggregator, store, broker, consumer, api, mock, sensor, other`, or memory that does not match the Appendix B class (`sensor` counts as other: 128Mi/256Mi). The memory of a pod is the sum of its containers, or the largest init container if that is bigger, as the scheduler counts it.
+
+```bash
+deploy/check.sh                                   # live pods of the namespace
+kubectl get pods -n sistem-informasi-kebencanaan-bnpb -o json | deploy/check.sh -p -
+deploy/check.sh -k                                # pod templates from kubectl kustomize deploy/, no cluster
+deploy/tests/check_test.sh                        # offline tests with the fixtures in deploy/tests/fixtures
+```
+
+The `-k` mode needs `python3` with PyYAML, and `jq` is needed in every mode.

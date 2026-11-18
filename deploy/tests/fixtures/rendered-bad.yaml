@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: good}
+spec:
+  template:
+    metadata: {labels: {role: api}}
+    spec:
+      containers:
+        - name: c
+          resources: {requests: {memory: 128Mi}, limits: {memory: 256Mi}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: nolabel}
+spec:
+  template:
+    metadata: {labels: {app: nolabel}}
+    spec:
+      containers:
+        - name: c
+          resources: {requests: {memory: 512Mi}, limits: {memory: 1Gi}}
