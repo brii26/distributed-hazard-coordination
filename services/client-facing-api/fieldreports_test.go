@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // Records publishes; gate, when set, holds each one until it is closed.
@@ -257,4 +259,36 @@ func hmacSHA256(secret []byte, s string) []byte {
 	m.Write([]byte(s))
 
 	return m.Sum(nil)
+}
+
+func TestRedialsWhenOnlyTheChannelCloses(t *testing.T) {
+	t.Parallel()
+
+	conn, ch := make(chan *amqp.Error), make(chan *amqp.Error, 1)
+	done := make(chan struct{})
+
+	go func() {
+		waitClosed(context.Background(), conn, ch)
+		close(done)
+	}()
+
+	ch <- &amqp.Error{Code: amqp.NotFound}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("waitClosed ignored the channel close")
+	}
+}
+
+func TestUnroutablePublishIsReported(t *testing.T) {
+	t.Parallel()
+
+	in := make(chan amqp.Return, 2)
+	l := newReturnLog(in)
+	in <- amqp.Return{MessageId: "a"}
+
+	if l.unroutable("b") || !l.unroutable("a") || l.unroutable("a") {
+		t.Fatal("return must match its own message id, once")
+	}
 }

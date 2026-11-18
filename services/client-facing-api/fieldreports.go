@@ -35,6 +35,7 @@ const (
 var (
 	errBrokerDown = errors.New("broker not connected")
 	errNacked     = errors.New("broker nacked the message")
+	errUnroutable = errors.New("broker returned the message, queue is gone")
 	validKey      = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	// Upper bounds in seconds for the confirm latency histogram.
 	confirmBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2}
@@ -266,8 +267,49 @@ func (a *fieldReportsAPI) writeMetrics(w io.Writer) {
 
 // One connection and one confirm channel, kept alive by run. publish fails at once while it is down.
 type brokerInbox struct {
-	mu sync.RWMutex
-	ch *amqp.Channel
+	mu  sync.RWMutex
+	ch  *amqp.Channel
+	ret *returnLog
+}
+
+// Remembers which message ids the broker sent back as unroutable.
+type returnLog struct {
+	mu  sync.Mutex
+	in  chan amqp.Return
+	ids map[string]bool
+}
+
+func newReturnLog(in chan amqp.Return) *returnLog {
+	return &returnLog{in: in, ids: map[string]bool{}}
+}
+
+// Whether the broker returned message id. A return always arrives before the confirm, so call this after the confirm.
+func (l *returnLog) unroutable(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for drained := false; !drained; {
+		select {
+		case r := <-l.in:
+			l.ids[r.MessageId] = true
+		default:
+			drained = true
+		}
+	}
+
+	ok := l.ids[id]
+	delete(l.ids, id)
+
+	return ok
+}
+
+// Blocks until the connection or the channel closes, or ctx is done.
+func waitClosed(ctx context.Context, conn, ch <-chan *amqp.Error) {
+	select {
+	case <-conn:
+	case <-ch:
+	case <-ctx.Done():
+	}
 }
 
 // Keeps a connection to the broker until ctx is done, redialing with a growing delay.
@@ -275,16 +317,14 @@ func (b *brokerInbox) run(ctx context.Context, url string) {
 	delay := 200 * time.Millisecond
 
 	for ctx.Err() == nil {
-		closed, err := b.connect(url)
+		conn, connClosed, chClosed, err := b.connect(url)
 		if err == nil {
 			delay = 200 * time.Millisecond
 
-			select {
-			case <-closed:
-			case <-ctx.Done():
-			}
+			waitClosed(ctx, connClosed, chClosed)
+			b.set(nil, nil)
 
-			b.set(nil)
+			_ = conn.Close()
 		} else {
 			delay = min(delay*2, 5*time.Second)
 		}
@@ -296,10 +336,10 @@ func (b *brokerInbox) run(ctx context.Context, url string) {
 	}
 }
 
-func (b *brokerInbox) connect(url string) (chan *amqp.Error, error) {
+func (b *brokerInbox) connect(url string) (*amqp.Connection, chan *amqp.Error, chan *amqp.Error, error) {
 	conn, err := amqp.DialConfig(url, amqp.Config{Heartbeat: 10 * time.Second, Dial: amqp.DefaultDial(2 * time.Second)})
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	ch, err := conn.Channel()
@@ -314,32 +354,33 @@ func (b *brokerInbox) connect(url string) (chan *amqp.Error, error) {
 	if err != nil {
 		_ = conn.Close()
 
-		return nil, err
+		return nil, nil, nil, err
 	}
 
-	closed := conn.NotifyClose(make(chan *amqp.Error, 1))
+	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
+	chClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
 
-	b.set(ch)
+	b.set(ch, newReturnLog(ch.NotifyReturn(make(chan amqp.Return, 256))))
 
-	return closed, nil
+	return conn, connClosed, chClosed, nil
 }
 
-func (b *brokerInbox) set(ch *amqp.Channel) {
+func (b *brokerInbox) set(ch *amqp.Channel, ret *returnLog) {
 	b.mu.Lock()
-	b.ch = ch
+	b.ch, b.ret = ch, ret
 	b.mu.Unlock()
 }
 
 func (b *brokerInbox) publish(ctx context.Context, m reportMsg) error {
 	b.mu.RLock()
-	ch := b.ch
+	ch, ret := b.ch, b.ret
 	b.mu.RUnlock()
 
 	if ch == nil || ch.IsClosed() {
 		return errBrokerDown
 	}
 
-	conf, err := ch.PublishWithDeferredConfirmWithContext(ctx, "", reportQueue, false, false, amqp.Publishing{
+	conf, err := ch.PublishWithDeferredConfirmWithContext(ctx, "", reportQueue, true, false, amqp.Publishing{
 		ContentType:   "application/json",
 		DeliveryMode:  amqp.Persistent,
 		CorrelationId: m.correlationID,
@@ -359,6 +400,10 @@ func (b *brokerInbox) publish(ctx context.Context, m reportMsg) error {
 
 	if !acked {
 		return errNacked
+	}
+
+	if ret.unroutable(m.id) {
+		return errUnroutable
 	}
 
 	return nil
