@@ -211,6 +211,60 @@ done
 - The Tester Agent lives in its own `tester-agent` namespace. Do not add a default-deny policy or a quota there.
 - Every pod gets a `role` label and memory requests and limits from Appendix B of the spec.
 
+## Running every practice scenario
+
+`tests/scenarios/all-k8s.sh` runs the scenario scripts that exist, in a fixed order, against the cluster and ends with one table. It has no scenario logic of its own, it only starts the child scripts and judges them by their exit code. The Compose runner for `problem1.sh` to `problem5.sh` stays `tests/scenarios/all.sh`.
+
+```bash
+export KUBECONFIG=$HOME/vms/k3s/kubeconfig
+tests/scenarios/all-k8s.sh --list                         # scenarios, scripts, timeouts, needed variables
+DRY_RUN=1 tests/scenarios/all-k8s.sh                      # the plan, nothing is run and no cluster is touched
+EMAIL=... PASSWORD=... API_URL=... BASE_URL=... tests/scenarios/all-k8s.sh
+tests/scenarios/all-k8s.sh --only rolling-update,autoscale
+tests/scenarios/all-k8s.sh --skip load-ratio
+tests/scenarios/all-k8s.sh --include-destructive          # also gameday and wipe-node
+```
+
+Order and why:
+
+| # | Name | Script | Issue | Kind |
+|---|---|---|---|---|
+| 1 | `audit-checksum` | `tests/scenarios/audit-checksum.sh` | #295 | read only, so it also shows the Audit API works before anything moves |
+| 2 | `rolling-update` | `tests/scenarios/rolling-update.sh` | #286 | short, patches `bnpb-config` and restores it |
+| 3 | `autoscale` | `tests/scenarios/autoscale.sh` | #327 | needs the live HPA at its minimum, so it runs before the load scripts that delete the HPA |
+| 4 | `p2-leases` | `tests/scenarios/problem2-k8s.sh` | #287 | slot, in PR #388 |
+| 5 | `p3-e2e` | `tests/scenarios/problem3-k8s.sh`, `p3-e2e.sh` or `problem3-e2e.sh` | #307 | slot, not written yet |
+| 6 | `p4-60x` | `tests/scenarios/problem4-k8s.sh`, `p4-60x.sh` or `problem4-60x.sh` | #315 | slot, not written yet |
+| 7 | `load-p2` | `tests/load/p2-k8s.sh` | #288 | heavy, scales the Aggregator and deletes the HPA, restores both |
+| 8 | `load-ratio` | `tests/load/p2-ratio.sh` | #288 | heaviest, 1 against 3 Aggregators |
+| 9 | `gameday` | `tests/scenarios/gameday.sh` | #324 | destructive, runs wipe-node and kill-store |
+| 10 | `p1-wipe-node` | `tests/scenarios/problem1-k8s.sh`, `p1-wipe-node.sh` or `problem1-wipe-node.sh` | #298 | destructive slot, not written yet |
+
+Short and read only checks come first so a broken cluster shows up cheaply. The scripts that change the ConfigMap or the HPA come next, then the heavy load, and the destructive ones come last because a node can stay down or a database can need a manual recovery. `wipe-node` is the last of all for that reason. A slot is an entry whose script has not landed. The orchestrator uses the first candidate file that exists, so the entry starts working as soon as the script is merged, with no change to `all-k8s.sh`. Until then it prints SKIP with the issue number. The candidate names are guesses, so adjust `REGISTRY` in `all-k8s.sh` if the real file is named differently. `critical-alerts.sh`, `trace-check.sh` and `problem1.sh` to `problem5.sh` need Docker Compose or are not practice scenarios, so they are not part of this run.
+
+Before the first scenario it checks that every node is Ready, every pod in the namespace is ready, `coordination-db-0` is running and the leases of BMKG, PVMBG and SENSOR_PANTAI are held. If that fails nothing runs and the exit code is 2. It also saves the values of `ACCESS_TOKEN_TTL_S`, `RATE_LIMIT_RPS` and `CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS` in `bnpb-config`, whether `tester-run` exists and whether the HPA of the Aggregator exists.
+
+After each scenario that ran, it puts back what the child may have left: the three ConfigMap values (and restarts `auth-service` and `client-facing-api`), a `tester-run` ConfigMap that was not there before, and the HPA from `deploy/aggregator-hpa.yaml`. Then it waits up to `HEALTH_WAIT` seconds (120) for the same health checks, and checks the Audit API through a port-forward: events and checksum for each source must answer 200, location and unprocessed are checked when the build has them (a 404 is noted as not available). The same health check runs before each scenario, so an unhealthy cluster gives a SKIP with the reason instead of a failure that is not the scenario's fault.
+
+Results per scenario:
+
+| Result | Meaning |
+|---|---|
+| PASS | the child exited 0 |
+| FAIL | any other exit code |
+| TIMEOUT | the child ran longer than its timeout and was stopped (exit 124 or 137) |
+| SKIP | not run: script missing or not on main yet, a required variable not set, destructive without the flag, `--only` or `--skip`, the cluster not healthy, or the child exited 2 (it could not start) |
+
+The Audit column is separate: an Audit failure does not change the scenario result but makes the overall exit code 1. Timeouts default to the values in `--list` and can be changed with `TIMEOUT_<NAME>` (for example `TIMEOUT_ROLLING_UPDATE=900`).
+
+Destructive scenarios (`gameday`, `p1-wipe-node`) are skipped unless `--include-destructive` is given. With the flag the script prints what each one destroys, at the start and again just before it runs, and waits `CONFIRM_SECONDS` (10) so you can press Ctrl-C. `gameday` is started with `STRICT=1`, so a FAIL verdict gives a non-zero exit code.
+
+Manual steps, also printed at the top of every run: the VM freeze of the P2 freeze check (`FREEZE_NODE`, `NODE_FREEZE_CMD`, `NODE_THAW_CMD`), joining a node in the P1 script, and starting the VM again after wipe-node (`NODE_UP_CMD`).
+
+Output goes to `tests/results/` (not tracked): `all-<stamp>.json` and `all-<stamp>.txt` with the table, `all-<stamp>.log` with the whole run and `all-<stamp>/<scenario>.log` for each child. The exit code is 0 when nothing failed (PASS and SKIP only), 1 when a scenario FAILed or timed out, an Audit check failed, or a SKIP happened with `--fail-on-skip`, and 2 for a usage error or an unhealthy cluster at the start. Ctrl-C runs the cleanup and writes the results gathered so far.
+
+`tests/scenarios/all-k8s_test.sh` checks the orchestrator offline, with fake child scripts (PASS, FAIL, hang, exit 2, missing), a fake `kubectl` and a fake Audit API. It touches no cluster. The orchestrator itself has not been run against the cluster.
+
 ## One command deploy and the check
 
 `deploy/deploy.sh [env-file]` does steps 2 to 5 above in the right order. It applies the namespace, runs `make-secrets.sh`, `make-schema.sh`, `make-coordination.sh` and `make-rabbitmq.sh`, runs `kubectl apply -k deploy/`, then waits for every Deployment, StatefulSet and DaemonSet (the store is a DaemonSet) with `kubectl rollout status --timeout $TIMEOUT` (default `300s` each). A workload that is not ready is listed with the pods that are not Running and a hint to describe them, and the script exits 1. It ends with `deploy/check.sh`. The name differs from `deploy/cluster/up.sh`, which starts the VMs.
