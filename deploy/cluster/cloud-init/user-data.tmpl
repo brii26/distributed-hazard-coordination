@@ -13,3 +13,4 @@ package_update: false
 runcmd:
   - [ sh, -c, "printf '127.0.1.1 @NAME@\n@HOSTS@' >> /etc/hosts" ]
   - [ systemctl, disable, --now, ufw ]
+  - [ sh, -c, "cp --remove-destination /usr/sbin/xtables-nft-multi /usr/sbin/iptables" ]
