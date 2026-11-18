@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,8 @@ const (
 	retryMax     = 5 * time.Second
 	// Tries a record gets before it is handed to the retry worker.
 	quickTries = 3
+	// Set-aside elements of one batch parked one by one. The rest of the batch becomes one summary row.
+	maxSetAsideParked = 100
 )
 
 // Second stage per source: map the poller's records, upsert them, publish the new or changed ones.
@@ -179,7 +183,18 @@ func (i *ingest) keepRejected(ctx context.Context, res pollResult, events []Haza
 func (i *ingest) keepSetAside(ctx context.Context, res pollResult) bool {
 	ok := true
 
-	for _, r := range res.rejected {
+	rejected := res.rejected
+	if len(rejected) > maxSetAsideParked {
+		over, first := len(rejected)-maxSetAsideParked, rejected[maxSetAsideParked]
+		// The payload is derived from the count and the first overflow element, so the same batch arriving again collapses into one row.
+		sum := sha256.Sum256(first.raw)
+		note := fmt.Sprintf("%d more set aside in this batch (first of them sha256 %x)", over, sum[:8])
+		rejected = append(rejected[:maxSetAsideParked:maxSetAsideParked], rejectedRaw{raw: []byte(note), err: fmt.Errorf("%s: %w", note, first.err)})
+
+		withID(res.correlationID).Warn("ingest set aside many records, parked the first ones and one summary", "source", i.name, "set_aside", len(res.rejected), "parked_individually", maxSetAsideParked)
+	}
+
+	for _, r := range rejected {
 		_, code := classifyFailure(r.err)
 		withID(res.correlationID).Warn("ingest set a record aside", "source", i.name, "code", code)
 

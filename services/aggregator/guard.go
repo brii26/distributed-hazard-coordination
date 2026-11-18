@@ -75,6 +75,8 @@ func readBody(r io.Reader, limit int) (body []byte, cut bool, err error) {
 	return body, false, nil
 }
 
+var errTrailing = errors.New("unexpected data after the closing ] of the array")
+
 var errNullRecord = errors.New("record is null, not an object")
 
 // Finds where the array element that starts at from ends: the offset of the "," or "]" that closes it at depth 0.
@@ -189,7 +191,12 @@ func decodeRecords(body []byte, cut bool) (recs []map[string]any, raws [][]byte,
 
 	recs, raws = []map[string]any{}, [][]byte{}
 
-	bad, _, _ = streamArray(body, int(dec.InputOffset()), cut, func(e json.RawMessage) error {
+	var (
+		next   int
+		broken bool
+	)
+
+	bad, next, broken = streamArray(body, int(dec.InputOffset()), cut, func(e json.RawMessage) error {
 		var m map[string]any
 		if uerr := json.Unmarshal(e, &m); uerr != nil {
 			return uerr
@@ -199,6 +206,10 @@ func decodeRecords(body []byte, cut bool) (recs []map[string]any, raws [][]byte,
 
 		return nil
 	})
+
+	if tail := skipSpace(body, next); !broken && tail < len(body) {
+		bad = append(bad, rejectedRaw{body[tail:], errTrailing})
+	}
 
 	return recs, raws, bad, nil
 }
