@@ -175,6 +175,88 @@ type observationsBody struct {
 	NextCursor  *string           `json:"next_cursor"`
 }
 
+// Reads one observations page. A bad item does not fail the page: it comes back in bad and the other items stay. A break in the
+// syntax ends the items, and next_cursor is then left unread so the page is asked for again.
+func decodeObservations(r io.Reader, limit int) (body observationsBody, bad []rejectedRaw, err error) { //nolint:gocyclo // one walk over the top-level keys
+	raw, cut, err := readBody(r, limit)
+	if err != nil {
+		return body, nil, err
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	base := int64(0) // body offset = base + dec.InputOffset()
+
+	if tok, terr := dec.Token(); terr != nil || tok != json.Delim('{') {
+		if cut {
+			terr = errOversize
+		} else if terr = checkShape(raw); terr == nil {
+			terr = errNotArray
+		}
+
+		return body, []rejectedRaw{{raw, terr}}, terr
+	}
+
+	for dec.More() {
+		key, kerr := dec.Token()
+		if kerr != nil {
+			return body, nil, kerr
+		}
+
+		switch key {
+		case "items":
+			tok, terr := dec.Token()
+			if terr == nil && tok == nil {
+				continue
+			}
+
+			if terr != nil || tok != json.Delim('[') {
+				return body, nil, errNotArray
+			}
+
+			var (
+				broken bool
+				next   int
+			)
+
+			bad, next, broken = streamArray(raw, int(base+dec.InputOffset()), cut, func(e json.RawMessage) error {
+				body.Items = append(body.Items, e)
+
+				return nil
+			})
+			if broken {
+				return body, bad, nil
+			}
+
+			// The decoder did not read the items, so start a new one just after them: the "{" stands in for the object it is inside.
+			next = skipSpace(raw, next)
+			if next < len(raw) && raw[next] == ',' {
+				next++
+			}
+
+			base = int64(next) - 1
+			dec = json.NewDecoder(io.MultiReader(strings.NewReader("{"), bytes.NewReader(raw[next:])))
+
+			if _, err = dec.Token(); err != nil {
+				return body, bad, err
+			}
+		case "generated_at":
+			err = dec.Decode(&body.GeneratedAt)
+		case "next_cursor":
+			err = dec.Decode(&body.NextCursor)
+		default:
+			var skip json.RawMessage
+
+			err = dec.Decode(&skip)
+		}
+
+		if err != nil {
+			return body, bad, err
+		}
+	}
+
+	return body, bad, nil
+}
+
 // One poll: pages from the saved cursor until the sensor has nothing new (next_cursor null, which keeps the old cursor).
 // The cursor in memory moves only when the whole poll worked; the saved one moves after the batch is stored (afterBatch).
 func (s *sensorClient) fetch(ctx context.Context, _ time.Time) (pollResult, error) {
@@ -210,10 +292,21 @@ func (s *sensorClient) fetch(ctx context.Context, _ time.Time) (pollResult, erro
 			q += "&cursor=" + url.QueryEscape(cur)
 		}
 
-		var body observationsBody
+		var (
+			body observationsBody
+			bad  []rejectedRaw
+		)
 
-		if err := s.get(ctx, "/v1/observations", q, func(r io.Reader) error { return json.NewDecoder(r).Decode(&body) }); err != nil {
-			return pollResult{}, err
+		err := s.get(ctx, "/v1/observations", q, func(r io.Reader) (derr error) {
+			body, bad, derr = decodeObservations(r, s.http.bodyCap())
+
+			return derr
+		})
+
+		res.rejected = append(res.rejected, bad...)
+
+		if err != nil {
+			return pollResult{rejected: res.rejected}, err
 		}
 
 		if t, err := time.Parse(time.RFC3339Nano, body.GeneratedAt); err == nil && t.After(res.generatedAt) {

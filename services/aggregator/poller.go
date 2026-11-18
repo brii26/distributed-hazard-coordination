@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +26,9 @@ const (
 type pollResult struct {
 	records, warnings []map[string]any
 	// Each entry of records as received, byte for byte. Nil when unknown.
-	rawRecords    [][]byte
+	rawRecords [][]byte
+	// Records and stretches of body that were set aside before mapping (bad JSON, too deep, bad UTF-8, too large).
+	rejected      []rejectedRaw
 	cursor        time.Time
 	correlationID string
 	trace         trace.SpanContext
@@ -196,12 +197,17 @@ func (p *poller) pollOnce(ctx context.Context) pollOutcome {
 		l.Warn("poll", "source", p.name, "result", "failure", "duration_ms", elapsed, "error", err.Error())
 	}
 
+	if err != nil && len(res.rejected) > 0 {
+		// A garbage body fails the poll, but it is still kept as a failed message.
+		p.handoff(ctx, pollResult{rejected: res.rejected, correlationID: id, trace: res.trace, epoch: res.epoch})
+	}
+
 	return outcome
 }
 
 // Sends records to ingest and waits if the channel is full, since a dropped batch would never be fetched again.
 func (p *poller) handoff(ctx context.Context, res pollResult) {
-	if len(res.records)+len(res.warnings) == 0 {
+	if len(res.records)+len(res.warnings)+len(res.rejected) == 0 {
 		return
 	}
 
@@ -222,17 +228,20 @@ type sourceClient struct {
 	auth    func(*http.Request) error
 	// Runs on a 401, the credential is no longer good.
 	onUnauthorized func()
+	// Overrides maxPollBody when set.
+	maxBody int
 }
 
 // GETs path (with ?since if set) and decodes a JSON array of objects.
 func (c *sourceClient) records(ctx context.Context, path string, since time.Time) ([]map[string]any, error) {
-	recs, _, err := c.recordsRaw(ctx, path, since)
+	recs, _, _, err := c.recordsRaw(ctx, path, since)
 
 	return recs, err
 }
 
-// Like records, plus each element's bytes as received.
-func (c *sourceClient) recordsRaw(ctx context.Context, path string, since time.Time) ([]map[string]any, [][]byte, error) {
+// Like records, plus each element's bytes as received and the elements that were set aside. A bad element does not fail the call,
+// only a body that is not an array at all does (the body then comes back as the one rejected stretch).
+func (c *sourceClient) recordsRaw(ctx context.Context, path string, since time.Time) ([]map[string]any, [][]byte, []rejectedRaw, error) {
 	query := ""
 	if !since.IsZero() {
 		query = "since=" + url.QueryEscape(since.UTC().Format(time.RFC3339Nano))
@@ -241,36 +250,36 @@ func (c *sourceClient) recordsRaw(ctx context.Context, path string, since time.T
 	var (
 		out  []map[string]any
 		raws [][]byte
+		bad  []rejectedRaw
 	)
 
 	err := c.get(ctx, path, query, func(r io.Reader) error {
-		var elems []json.RawMessage
-		if err := json.NewDecoder(r).Decode(&elems); err != nil {
+		body, cut, err := readBody(r, c.bodyCap())
+		if err != nil {
 			return err
 		}
 
-		if elems != nil {
-			out, raws = make([]map[string]any, len(elems)), make([][]byte, len(elems))
-		}
+		out, raws, bad, err = decodeRecords(body, cut)
 
-		for n, e := range elems {
-			if err := json.Unmarshal(e, &out[n]); err != nil {
-				return err
-			}
-
-			raws[n] = e
-		}
-
-		return nil
+		return err
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, bad, err
 	}
 
-	return out, raws, nil
+	return out, raws, bad, nil
 }
 
-// GETs path with a raw query string and hands the body (capped at maxPollBody) to decode. Any status but 200 is an error.
+// The most a poll body may be, 8 MiB unless a test sets less.
+func (c *sourceClient) bodyCap() int {
+	if c.maxBody > 0 {
+		return c.maxBody
+	}
+
+	return maxPollBody
+}
+
+// GETs path with a raw query string and hands the body (one byte over the cap, so a decoder can tell a cut) to decode. Any status but 200 is an error.
 func (c *sourceClient) get(ctx context.Context, path, query string, decode func(io.Reader) error) (err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "GET "+c.baseURL+path)
@@ -315,7 +324,7 @@ func (c *sourceClient) get(ctx context.Context, path, query string, decode func(
 		return fmt.Errorf("%s returned status %d", path, resp.StatusCode)
 	}
 
-	if err := decode(io.LimitReader(resp.Body, maxPollBody)); err != nil {
+	if err := decode(io.LimitReader(resp.Body, int64(c.bodyCap())+1)); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 
@@ -339,17 +348,17 @@ func newest(recs []map[string]any, key string) time.Time {
 // Polls BMKG: seismic events and tsunami warnings are two endpoints read together. The cursor follows the seismic events.
 func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
-		events, raws, err := c.recordsRaw(ctx, "/seismic-events", since)
+		events, raws, bad, err := c.recordsRaw(ctx, "/seismic-events", since)
 		if err != nil {
-			return pollResult{}, err
+			return pollResult{rejected: bad}, err
 		}
 
-		warnings, err := c.records(ctx, "/tsunami-warnings", since)
+		warnings, _, wbad, err := c.recordsRaw(ctx, "/tsunami-warnings", since)
 		if err != nil {
-			return pollResult{}, err
+			return pollResult{rejected: append(bad, wbad...)}, err
 		}
 
-		return pollResult{records: events, rawRecords: raws, warnings: warnings, cursor: newest(events, "occurred_at")}, nil
+		return pollResult{records: events, rawRecords: raws, warnings: warnings, rejected: append(bad, wbad...), cursor: newest(events, "occurred_at")}, nil
 	}
 }
 
@@ -360,12 +369,12 @@ func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, ti
 			return pollResult{}, fmt.Errorf("PVMBG token: %w", err)
 		}
 
-		reports, raws, err := c.recordsRaw(ctx, "/volcanic-reports", since)
+		reports, raws, bad, err := c.recordsRaw(ctx, "/volcanic-reports", since)
 		if err != nil {
-			return pollResult{}, err
+			return pollResult{rejected: bad}, err
 		}
 
-		return pollResult{records: reports, rawRecords: raws, cursor: newest(reports, "reported_at")}, nil
+		return pollResult{records: reports, rawRecords: raws, rejected: bad, cursor: newest(reports, "reported_at")}, nil
 	}
 }
 
