@@ -14,7 +14,7 @@ import (
 // Timeout for every call to the Canonical Store.
 const dbQueryTimeout = 2 * time.Second
 
-// Upserts by (source, source_ref_id) and returns a row only when something is new or changed, flagging which. hazard_id and ingested_at stay out of the UPDATE so the id is stable and a repeat never looks changed.
+// Upserts by (source, source_ref_id) and returns a row only when something is new or changed, flagging which. hazard_id and ingested_at stay out of the UPDATE so the id is stable and a repeat never looks changed. updated_at is set to now() on every real change, so the retry guard sees updates too.
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
@@ -27,7 +27,8 @@ ON CONFLICT (source, source_ref_id) DO UPDATE SET
     latitude    = EXCLUDED.latitude,
     longitude   = EXCLUDED.longitude,
     occurred_at = EXCLUDED.occurred_at,
-    attributes  = EXCLUDED.attributes
+    attributes  = EXCLUDED.attributes,
+    updated_at  = now()
 WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_name,
        hazard_events.latitude, hazard_events.longitude, hazard_events.occurred_at,
        hazard_events.attributes)
@@ -36,6 +37,28 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
        EXCLUDED.latitude, EXCLUDED.longitude, EXCLUDED.occurred_at,
        EXCLUDED.attributes)
 RETURNING hazard_id, (xmax = 0) AS inserted`
+
+// The retry path's upsert: the same statement, but it writes nothing when the stored row was last written after $13 (the failure time), so an old record never overwrites a newer one.
+var guardedUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND hazard_events.updated_at <= $13::timestamptz\nRETURNING", 1)
+
+var errSuperseded = errors.New("a newer write exists")
+
+type notNewerThanKey struct{}
+
+// Makes upserts under ctx skip a stored row written after t and return errSuperseded.
+func withNotNewerThan(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, notNewerThanKey{}, t)
+}
+
+// Only labels a skipped guarded upsert as superseded. The write decision was already made atomically by the upsert itself.
+func storedIsNewer(ctx context.Context, tx *sql.Tx, h HazardEvent, guard time.Time) bool {
+	var newer bool
+
+	err := tx.QueryRowContext(ctx, `SELECT updated_at > $3::timestamptz FROM hazard_events WHERE source = $1 AND source_ref_id = $2`,
+		h.Source, h.SourceRefID, guard).Scan(&newer)
+
+	return err == nil && newer
+}
 
 // The only door to the Canonical Store. *sql.DB is a pool, safe for concurrent use.
 type store struct {
@@ -109,14 +132,26 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 		inserted bool
 	)
 
-	err = tx.QueryRowContext(ctx, upsertSQL,
+	query := upsertSQL
+	args := []any{
 		h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
 		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID),
-	).Scan(&id, &inserted)
+	}
+
+	guard, guarded := ctx.Value(notNewerThanKey{}).(time.Time)
+	if guarded {
+		query, args = guardedUpsertSQL, append(args, guard)
+	}
+
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&id, &inserted)
 
 	changed := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
+	}
+
+	if guarded && !changed && storedIsNewer(ctx, tx, h, guard) {
+		return false, errSuperseded
 	}
 
 	if err = tx.Commit(); err != nil {

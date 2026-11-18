@@ -110,8 +110,16 @@ func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest //
 	}
 
 	rows, _, _ := s.listFailed(ctx, failedParked, "", 10)
-	if len(rows) != 1 || rows[0].Attempts != 0 {
+	if len(rows) != 1 || rows[0].Attempts != 1 {
 		t.Fatalf("a re-poll must not duplicate or bump: rows=%d", len(rows))
+	}
+
+	if ok, _ := s.markRecovered(ctx, m.MessageID); ok {
+		t.Fatal("a parked row must not turn recovered")
+	}
+
+	if _, err := s.db.ExecContext(ctx, `UPDATE failed_messages SET status = 'retrying'`); err != nil {
+		t.Fatal(err)
 	}
 
 	if ok, err := s.markRecovered(ctx, m.MessageID); !ok || err != nil {
@@ -128,7 +136,7 @@ func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest //
 	}
 
 	rows, _, _ = s.listFailed(ctx, failedParked, "", 10)
-	if len(rows) != 1 || rows[0].Attempts != 1 || !rows[0].LastErrorAt.Equal(m.LastErrorAt.Truncate(time.Microsecond)) {
+	if len(rows) != 1 || rows[0].Attempts != 2 || !rows[0].LastErrorAt.Equal(m.LastErrorAt.Truncate(time.Microsecond)) {
 		t.Fatalf("regression must reopen the row: %+v", rows)
 	}
 }
@@ -193,8 +201,8 @@ func TestFailedStoreParallelAttempts(t *testing.T) { //nolint:paralleltest // sh
 
 	wg.Wait()
 
-	if rows, _, _ := s.listFailed(ctx, failedParked, "", 10); len(rows) != 1 || rows[0].Attempts != 20 {
-		t.Fatalf("attempts must be 20: %+v", rows)
+	if rows, _, _ := s.listFailed(ctx, failedParked, "", 10); len(rows) != 1 || rows[0].Attempts != 21 {
+		t.Fatalf("attempts must be 21 (1 + 20): %+v", rows)
 	}
 }
 

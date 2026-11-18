@@ -36,9 +36,13 @@ type failedMessage struct {
 	Status      string
 	SourceRefID string
 	LastErrorAt time.Time
+	// MappedEvent is the HazardEvent as JSON, set on rows the retry worker writes. Payload stays the record as received.
+	MappedEvent   []byte
+	NextAttemptAt time.Time
+	CorrelationID string
 }
 
-// Builds the row for raw, id = source + ":" + hex(sha256(raw)) over the full bytes, and cuts the payload when it is over 1 MiB.
+// Builds the row for raw (the first failure is attempt 1), id = source + ":" + hex(sha256(raw)) over the full bytes, and cuts the payload when it is over 1 MiB.
 func newFailedMessage(source string, raw []byte, reason string, retryable bool, receivedAt time.Time) failedMessage {
 	sum := sha256.Sum256(raw)
 	m := failedMessage{
@@ -51,6 +55,7 @@ func newFailedMessage(source string, raw []byte, reason string, retryable bool, 
 		Reason:      reason,
 		Retryable:   retryable,
 		Status:      failedParked,
+		Attempts:    1,
 		LastErrorAt: receivedAt,
 	}
 
@@ -66,23 +71,33 @@ func newFailedMessage(source string, raw []byte, reason string, retryable bool, 
 	return m
 }
 
-// Inserts m once. The same bytes failing again change nothing, unless the row was recovered: then it is reopened as parked with attempts + 1.
+// Inserts m once. The same bytes failing again change nothing, unless the row was recovered: then it is reopened with attempts + 1.
 const insertFailedSQL = `
 INSERT INTO failed_messages
     (message_id, source, received_at, payload, payload_sha256, payload_size, oversize,
-     reason, retryable, status, source_ref_id, last_error_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11, ''), $12)
+     reason, retryable, attempts, status, source_ref_id, last_error_at,
+     mapped_event, next_attempt_at, correlation_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, ''), $13,
+        NULLIF($14::text, '')::jsonb, $15, NULLIF($16, ''))
 ON CONFLICT (message_id) DO UPDATE SET
-    status = 'parked', attempts = failed_messages.attempts + 1,
-    last_error_at = EXCLUDED.last_error_at, reason = EXCLUDED.reason
+    status = EXCLUDED.status, attempts = failed_messages.attempts + 1,
+    last_error_at = EXCLUDED.last_error_at, reason = EXCLUDED.reason,
+    retryable = EXCLUDED.retryable, mapped_event = EXCLUDED.mapped_event,
+    next_attempt_at = EXCLUDED.next_attempt_at, correlation_id = EXCLUDED.correlation_id
 WHERE failed_messages.status = 'recovered'`
 
 func (s *store) insertFailed(ctx context.Context, m failedMessage) error {
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
+	var next *time.Time
+	if !m.NextAttemptAt.IsZero() {
+		next = &m.NextAttemptAt
+	}
+
 	_, err := s.db.ExecContext(ctx, insertFailedSQL, m.MessageID, m.Source, m.ReceivedAt, m.Payload,
-		m.PayloadSHA, m.PayloadSize, m.Oversize, m.Reason, m.Retryable, m.Status, m.SourceRefID, m.LastErrorAt)
+		m.PayloadSHA, m.PayloadSize, m.Oversize, m.Reason, m.Retryable, m.Attempts, m.Status, m.SourceRefID, m.LastErrorAt,
+		string(m.MappedEvent), next, m.CorrelationID)
 
 	return err
 }
@@ -160,9 +175,9 @@ LIMIT $4`, status, afterID, after, limit+1)
 	return rows, next, nil
 }
 
-// Sets status to recovered. False if the id does not exist.
+// Sets a retrying row to recovered. False if the id does not exist or the row is no longer retrying.
 func (s *store) markRecovered(ctx context.Context, id string) (bool, error) {
-	return s.updateFailed(ctx, `UPDATE failed_messages SET status = 'recovered' WHERE message_id = $1`, id)
+	return s.updateFailed(ctx, `UPDATE failed_messages SET status = 'recovered', next_attempt_at = NULL WHERE message_id = $1 AND status = 'retrying'`, id)
 }
 
 // Adds 1 to attempts and stamps last_error_at in SQL, so parallel callers never lose a count.

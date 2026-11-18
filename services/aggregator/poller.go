@@ -26,9 +26,11 @@ const (
 // Result of one poll cycle from a source: records, warnings (BMKG), the cursor for the next ?since=, correlationID and the cycle's trace span.
 type pollResult struct {
 	records, warnings []map[string]any
-	cursor            time.Time
-	correlationID     string
-	trace             trace.SpanContext
+	// Each entry of records as received, byte for byte. Nil when unknown.
+	rawRecords    [][]byte
+	cursor        time.Time
+	correlationID string
+	trace         trace.SpanContext
 
 	// Sensor Pantai only: each record as received (parallel to records, a nil record is an item that was not a JSON
 	// object), the sensor's clock for the response and the cursor that follows this batch, empty when it did not move.
@@ -224,19 +226,48 @@ type sourceClient struct {
 
 // GETs path (with ?since if set) and decodes a JSON array of objects.
 func (c *sourceClient) records(ctx context.Context, path string, since time.Time) ([]map[string]any, error) {
+	recs, _, err := c.recordsRaw(ctx, path, since)
+
+	return recs, err
+}
+
+// Like records, plus each element's bytes as received.
+func (c *sourceClient) recordsRaw(ctx context.Context, path string, since time.Time) ([]map[string]any, [][]byte, error) {
 	query := ""
 	if !since.IsZero() {
 		query = "since=" + url.QueryEscape(since.UTC().Format(time.RFC3339Nano))
 	}
 
-	var out []map[string]any
+	var (
+		out  []map[string]any
+		raws [][]byte
+	)
 
-	err := c.get(ctx, path, query, func(r io.Reader) error { return json.NewDecoder(r).Decode(&out) })
+	err := c.get(ctx, path, query, func(r io.Reader) error {
+		var elems []json.RawMessage
+		if err := json.NewDecoder(r).Decode(&elems); err != nil {
+			return err
+		}
+
+		if elems != nil {
+			out, raws = make([]map[string]any, len(elems)), make([][]byte, len(elems))
+		}
+
+		for n, e := range elems {
+			if err := json.Unmarshal(e, &out[n]); err != nil {
+				return err
+			}
+
+			raws[n] = e
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return out, nil
+	return out, raws, nil
 }
 
 // GETs path with a raw query string and hands the body (capped at maxPollBody) to decode. Any status but 200 is an error.
@@ -308,7 +339,7 @@ func newest(recs []map[string]any, key string) time.Time {
 // Polls BMKG: seismic events and tsunami warnings are two endpoints read together. The cursor follows the seismic events.
 func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, error) {
 	return func(ctx context.Context, since time.Time) (pollResult, error) {
-		events, err := c.records(ctx, "/seismic-events", since)
+		events, raws, err := c.recordsRaw(ctx, "/seismic-events", since)
 		if err != nil {
 			return pollResult{}, err
 		}
@@ -318,7 +349,7 @@ func bmkgFetch(c *sourceClient) func(context.Context, time.Time) (pollResult, er
 			return pollResult{}, err
 		}
 
-		return pollResult{records: events, warnings: warnings, cursor: newest(events, "occurred_at")}, nil
+		return pollResult{records: events, rawRecords: raws, warnings: warnings, cursor: newest(events, "occurred_at")}, nil
 	}
 }
 
@@ -329,12 +360,12 @@ func pvmbgFetch(c *sourceClient, tokenErr func() error) func(context.Context, ti
 			return pollResult{}, fmt.Errorf("PVMBG token: %w", err)
 		}
 
-		reports, err := c.records(ctx, "/volcanic-reports", since)
+		reports, raws, err := c.recordsRaw(ctx, "/volcanic-reports", since)
 		if err != nil {
 			return pollResult{}, err
 		}
 
-		return pollResult{records: reports, cursor: newest(reports, "reported_at")}, nil
+		return pollResult{records: reports, rawRecords: raws, cursor: newest(reports, "reported_at")}, nil
 	}
 }
 
