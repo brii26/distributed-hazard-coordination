@@ -46,6 +46,9 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `AGGREGATOR_MAX_INFLIGHT_REQUESTS` | aggregator | 100 | Concurrency cap of the gRPC read API (`RESOURCE_EXHAUSTED` beyond it) |
 | `DB_POOL_SIZE` | aggregator | 20 | Connection pool to the Canonical Store |
 | `LEASE_TTL` / `LEASE_RENEW_INTERVAL` | aggregator (Kubernetes) | 15s / 3s | How long the polling lease lasts and how often the holder renews it. Read once the lease code lands |
+| `STORE_REBALANCE_INTERVAL` | aggregator (Kubernetes) | 30s | Time between rebalance rounds, which copy missing rows to the shard owners |
+| `REBALANCE_PAGE_PAUSE` | aggregator (Kubernetes) | 100ms | Pause between copy pages, so a round does not starve live traffic |
+| `REBALANCE_DELETE` | aggregator (Kubernetes) | false | Also delete shards from nodes that no longer own them. Keep it false until the coordination database exists |
 | `JWT_SIGNING_SECRET` | auth-service, client-facing-api | none | Shared HMAC secret for JWTs |
 | `SECRET_SALT` | user-db, auth-service | none | Salt in `sha256(password + salt)`; the User DB seed uses it too |
 | `ACCESS_TOKEN_TTL_S` | auth-service, client-facing-api | 60 | Access token lifetime for every role (seconds) |

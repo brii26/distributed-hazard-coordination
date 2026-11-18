@@ -45,6 +45,19 @@ docker push 127.0.0.1:5000/aggregator:0.1.0
 
 Writes go to the owner shards through `STORE_SERVICE=store` and `STORE_DSN_TEMPLATE`, which is built from `store-credentials` and `CANONICAL_DB_NAME`. Reads still use `DATABASE_URL`, which points at the headless Service `store`, so a read lands on an arbitrary shard until the read path is changed to ask every shard.
 
+A store node that already has data never runs `011_shard_state.sql` (the shard state table and the `rebalance` lease name), so apply it by hand on every store pod, after `deploy/make-schema.sh` has refreshed `store-schema`. The file is safe to apply twice:
+
+```bash
+for p in $(kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l role=store -o name); do
+  kubectl -n sistem-informasi-kebencanaan-bnpb exec "$p" -- sh -c \
+    'psql -U "$POSTGRES_USER" -d canonical_store -f /docker-entrypoint-initdb.d/011_shard_state.sql'
+done
+```
+
+Until it is applied the rebalancer cannot read the shard state of that node: its scan fails, nothing is copied to or from it, and reads keep their normal owner order without preferring synced copies. The error shows in the Aggregator log as a failed scan. The rebalancer starts working on its next round after the table exists.
+
+The rebalancer is set with `STORE_REBALANCE_INTERVAL`, `REBALANCE_PAGE_PAUSE` and `REBALANCE_DELETE`, see [CONFIGURATION.md](CONFIGURATION.md). Keep `REBALANCE_DELETE` off until the coordination database exists, because the rebalance lease lives on the store nodes and several Aggregator replicas can then run a round at once. With delete off that is harmless, copies are idempotent.
+
 The credentials sit inside the DSN, and the template goes through `Sprintf`. `make-secrets.sh` therefore only accepts letters, digits and `. _ ~ -` in the store and RabbitMQ user names and passwords, and stops with a message otherwise.
 
 The PVMBG token file is on a per-pod `emptyDir`. A container restart keeps it, but a new pod starts without it and signs in again with the one-time code. Handing the token over on a takeover is part of the lease design, not of this manifest.
