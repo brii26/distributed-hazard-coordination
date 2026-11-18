@@ -118,3 +118,25 @@ func TestRequestLogCarriesTheAggregatorsCorrelationID(t *testing.T) {
 		}
 	}
 }
+
+//nolint:paralleltest // swaps the global logger
+func TestRequestLogCarriesTheCallerAddress(t *testing.T) {
+	var buf bytes.Buffer
+
+	setupLogging(&buf)
+	t.Cleanup(func() { setupLogging(os.Stdout) })
+
+	h := withRequestLog(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/volcanic-reports", nil)
+	req.RemoteAddr = "10.244.2.9:5555"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	var line map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &line); err != nil {
+		t.Fatalf("not JSON: %q", buf.String())
+	}
+
+	if line["remote_addr"] != "10.244.2.9" {
+		t.Fatalf("expected remote_addr 10.244.2.9 without the port, got %v", line["remote_addr"])
+	}
+}

@@ -101,3 +101,35 @@ func TestHealthRequestNotLoggedAtInfo(t *testing.T) {
 		t.Fatalf("health probes should be debug-only, got %v", lines)
 	}
 }
+
+func TestRequestLogCarriesTheCallerAddress(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/seismic-events", nil)
+	req.RemoteAddr = "10.244.1.7:41234"
+	req.Header.Set("X-BMKG-Key", testAPIKey)
+
+	newMux(testAPIKey, &eventStore{}, newLogger(&buf), 0, 0).ServeHTTP(httptest.NewRecorder(), req)
+
+	sc := bufio.NewScanner(&buf)
+	for sc.Scan() {
+		var line map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &line); err != nil {
+			t.Fatalf("not JSON: %q", sc.Text())
+		}
+
+		if line["message"] != "request" {
+			continue
+		}
+
+		if line["remote_addr"] != "10.244.1.7" {
+			t.Fatalf("expected remote_addr 10.244.1.7 without the port, got %v", line["remote_addr"])
+		}
+
+		return
+	}
+
+	t.Fatal("no request line logged")
+}

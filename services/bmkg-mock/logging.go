@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -102,6 +103,16 @@ func withRequestLog(base *slog.Logger, next http.Handler) http.Handler {
 		}
 
 		l.Log(req.Context(), level, "request",
-			"endpoint", endpoint, "status", rec.status, "duration_ms", time.Since(start).Milliseconds())
+			"endpoint", endpoint, "remote_addr", remoteHost(r), "status", rec.status, "duration_ms", time.Since(start).Milliseconds())
 	})
+}
+
+// The caller's IP without the port, so a load test can tell which Aggregator instance fetched.
+func remoteHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+
+	return host
 }
