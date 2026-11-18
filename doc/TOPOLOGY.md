@@ -32,7 +32,7 @@ The node names are exactly what `kubectl get nodes` prints. The Audit API report
 Needs VirtualBox, `kubectl`, `ssh`, `curl`, `mkfs.vfat` and `mcopy` (dosfstools and mtools) on the machine that hosts the VMs. About 30 GB of free disk and about 7 GiB of free RAM with the default sizes (3 VMs of 2 GiB). Any machine can host the cluster. Lower `NODE_RAM_MB` on a smaller machine.
 
 ```bash
-deploy/cluster/up.sh      # create and boot the two VMs (first run downloads about 590 MB)
+deploy/cluster/up.sh      # create and boot the three VMs (first run downloads about 590 MB)
 deploy/cluster/k3s.sh     # install k3s, the registry, and write the kubeconfig
 export KUBECONFIG=$HOME/vms/k3s/kubeconfig
 kubectl get nodes
@@ -50,8 +50,8 @@ deploy/cluster/down.sh destroy    # delete the VMs and the NAT Network
 ## How it works
 
 - `up.sh` imports the Ubuntu 24.04 cloud image once as a template VM (`k3s-template`), converts its disk to VDI, grows it, and clones it for each node. A VMDK grown in place does not boot, which is why the VDI copy exists.
-- Each node gets a small cloud-init disk (label `cidata`) rendered from `deploy/cluster/cloud-init/*.tmpl`: hostname, a static address, the `ubuntu` user with a dedicated SSH key (`~/.ssh/k3s_vm_ed25519`, created if missing), and the `/etc/hosts` entries for both nodes.
-- `k3s.sh` runs the official installer over SSH: the server on node-a with `--node-ip`, `--advertise-address`, `--flannel-iface` and `--tls-san`, then the agent on node-b with the server token. It writes `registries.yaml` on both nodes so that `10.77.0.11:5000` is pulled over plain HTTP, and puts `deploy/cluster/registry.yaml` in the k3s manifests directory.
+- Each node gets a small cloud-init disk (label `cidata`) rendered from `deploy/cluster/cloud-init/*.tmpl`: hostname, a static address, the `ubuntu` user with a dedicated SSH key (`~/.ssh/k3s_vm_ed25519`, created if missing), and the `/etc/hosts` entries for every node.
+- `k3s.sh` runs the official installer over SSH: the server on node-a with `--node-ip`, `--advertise-address`, `--flannel-iface` and `--tls-san`, then the agent on every other node with the server token. It writes `registries.yaml` on every node so that `10.77.0.11:5000` is pulled over plain HTTP, and puts `deploy/cluster/registry.yaml` in the k3s manifests directory.
 
 ## Access from the host
 
