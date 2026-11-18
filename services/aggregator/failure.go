@@ -18,6 +18,10 @@ import (
 const (
 	codeSchema           = "schema_incompatible"
 	codeMalformed        = "malformed"
+	codeMalformedJSON    = "malformed_json"
+	codeTooDeep          = "too_deep"
+	codeInvalidUTF8      = "invalid_utf8"
+	codeTooLarge         = "too_large"
 	codeInvalidValue     = "invalid_value"
 	codeTimeout          = "timeout"
 	codeStoreUnavailable = "store_unavailable"
@@ -55,7 +59,15 @@ func classifyFailure(err error) (retryable bool, code string) { //nolint:gocyclo
 	switch {
 	case errors.As(err, &schema):
 		return false, codeSchema
-	case errors.As(err, &syn), errors.As(err, &typ), errors.Is(err, errNotUTF8), errors.Is(err, errTooDeep), errors.Is(err, errOversize), errors.Is(err, errBadEvent):
+	case errors.Is(err, errNotUTF8):
+		return false, codeInvalidUTF8
+	case errors.Is(err, errTooDeep):
+		return false, codeTooDeep
+	case errors.Is(err, errOversize):
+		return false, codeTooLarge
+	case errors.As(err, &syn), errors.Is(err, errNotArray):
+		return false, codeMalformedJSON
+	case errors.As(err, &typ), errors.Is(err, errBadEvent):
 		return false, codeMalformed
 	case isPermanent(err):
 		return false, codeInvalidValue

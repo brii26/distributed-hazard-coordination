@@ -79,7 +79,7 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	raws := i.keepRejected(ctx, res, events, err)
 	outage := false
 	changed := 0
-	clean := err == nil
+	clean := err == nil && i.keepSetAside(ctx, res)
 
 	for n, h := range events {
 		if i.stage != nil && isCritical(h) {
@@ -173,6 +173,36 @@ func (i *ingest) keepRejected(ctx context.Context, res pollResult, events []Haza
 	}
 
 	return raws
+}
+
+// Stores what the poller set aside before mapping (bad JSON, too deep, bad UTF-8, too large) as parked messages. False if one could not be stored.
+func (i *ingest) keepSetAside(ctx context.Context, res pollResult) bool {
+	ok := true
+
+	for _, r := range res.rejected {
+		_, code := classifyFailure(r.err)
+		withID(res.correlationID).Warn("ingest set a record aside", "source", i.name, "code", code)
+
+		if i.fail == nil {
+			// Production always sets fail (main.go). Without it nothing is kept, so say so and do not count the batch as clean.
+			withID(res.correlationID).Error("ingest has no failed store, set-aside record dropped", "source", i.name, "code", code)
+
+			ok = false
+
+			continue
+		}
+
+		m := newFailedMessage(i.name, r.raw, code+": "+r.err.Error(), false, time.Now())
+		m.CorrelationID = res.correlationID
+
+		if err := i.fail(context.WithoutCancel(ctx), m); err != nil {
+			withID(res.correlationID).Warn("ingest could not keep rejected record", "source", i.name, "error", err.Error())
+
+			ok = false
+		}
+	}
+
+	return ok
 }
 
 func collectRecordErrors(err error, into map[int]error) {
