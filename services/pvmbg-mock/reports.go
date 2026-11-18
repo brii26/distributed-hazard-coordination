@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,105 @@ type VolcanicReport struct {
 	AshColumnHeightM float64   `json:"ash_column_height_m"`
 	ReportedAt       time.Time `json:"reported_at"`
 	ConfidenceLevel  *float64  `json:"confidence_level,omitempty"`
+
+	changes schemaMode // the incompatible changes this report was published with, fixed at creation
+}
+
+// The schema a report is generated in: legacy (zero), extended, or legacy plus a set of incompatible changes.
+type schemaMode uint8
+
+const (
+	modeLegacy    schemaMode = 0
+	modeExtended  schemaMode = 1
+	changeRename  schemaMode = 2
+	changeType    schemaMode = 4
+	changeMissing schemaMode = 8
+
+	allChanges = changeRename | changeType | changeMissing
+)
+
+var changeNames = map[string]schemaMode{"rename": changeRename, "type": changeType, "missing": changeMissing, "all": allChanges}
+
+// Parses the optional "change" of an incompatible switch. Absent or null means all three. A name is trimmed and
+// case insensitive. Anything else falls back to all three and the second result says why, so the caller can log
+// it: the mock never answers 4xx for a body it does not like.
+func incompatibleMode(raw json.RawMessage) (schemaMode, string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return allChanges, ""
+	}
+
+	var name string
+	if json.Unmarshal(raw, &name) != nil {
+		return allChanges, "change is not a string, using all"
+	}
+
+	if m, ok := changeNames[strings.ToLower(strings.TrimSpace(name))]; ok {
+		return m, ""
+	}
+
+	return allChanges, "unknown change, using all"
+}
+
+func (m schemaMode) incompatible() bool { return m&allChanges != 0 }
+
+// Empty body behaviour: legacy and extended swap, incompatible goes back to legacy.
+func (m schemaMode) toggled() schemaMode {
+	if m == modeLegacy {
+		return modeExtended
+	}
+
+	return modeLegacy
+}
+
+func (m schemaMode) name() string {
+	switch {
+	case m.incompatible():
+		return "incompatible"
+	case m == modeExtended:
+		return "extended"
+	}
+
+	return "legacy"
+}
+
+func (m schemaMode) changeName() string {
+	for _, n := range []string{"rename", "type", "missing"} {
+		if m == changeNames[n] {
+			return n
+		}
+	}
+
+	return "all"
+}
+
+// Renders the contract fields, then applies the report's own changes, so old reports never change shape.
+func (r VolcanicReport) MarshalJSON() ([]byte, error) {
+	type plain VolcanicReport
+
+	b, err := json.Marshal(plain(r))
+	if err != nil || r.changes == modeLegacy {
+		return b, err
+	}
+
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil, err
+	}
+
+	if r.changes&changeRename != 0 {
+		fields["eruption_count"] = fields["eruption_count_24h"]
+		delete(fields, "eruption_count_24h")
+	}
+
+	if r.changes&changeType != 0 {
+		fields["ash_column_height_m"] = json.RawMessage(strconv.Quote(strconv.FormatFloat(r.AshColumnHeightM, 'f', -1, 64)))
+	}
+
+	if r.changes&changeMissing != 0 {
+		delete(fields, "volcano_id")
+	}
+
+	return json.Marshal(fields)
 }
 
 // The mock's in-memory dataset. The generator appends while the handler reads, so access goes through the RWMutex.
@@ -57,8 +157,8 @@ func randInt(lo, hi int) int {
 	return lo + rand.IntN(hi-lo+1) //nolint:gosec // mock data, not security-sensitive
 }
 
-// Generates one report stamped with the given time and appends it.
-func (s *reportStore) add(at time.Time, extended bool) VolcanicReport {
+// Generates one report stamped with the given time and schema mode, and appends it.
+func (s *reportStore) add(at time.Time, mode schemaMode) VolcanicReport {
 	level := randInt(0, len(alertLevels)-1)
 
 	s.mu.Lock()
@@ -75,7 +175,9 @@ func (s *reportStore) add(at time.Time, extended bool) VolcanicReport {
 		ReportedAt:       at,
 	}
 
-	if extended {
+	r.changes = mode & allChanges
+
+	if mode&modeExtended != 0 {
 		c := float64(randInt(50, 100)) / 100
 		r.ConfidenceLevel = &c
 	}
@@ -85,17 +187,17 @@ func (s *reportStore) add(at time.Time, extended bool) VolcanicReport {
 	return r
 }
 
-// Backfills n reports spaced interval apart, ending now, with the schema current at startup.
-func (s *reportStore) seed(n int, interval time.Duration, now time.Time, extended bool) {
+// Backfills n reports spaced interval apart, ending now, with the mode current at startup.
+func (s *reportStore) seed(n int, interval time.Duration, now time.Time, mode schemaMode) {
 	for i := n; i > 0; i-- {
-		s.add(now.Add(-time.Duration(i)*interval), extended)
+		s.add(now.Add(-time.Duration(i)*interval), mode)
 	}
 
 	log.Printf("seeded %d volcanic reports", n)
 }
 
 // Appends one report every interval until ctx is done. It ignores outage state, so data keeps accumulating and is there the moment the outage ends.
-func (s *reportStore) run(ctx context.Context, interval time.Duration, extended func() bool) {
+func (s *reportStore) run(ctx context.Context, interval time.Duration, mode func() schemaMode) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 
@@ -104,7 +206,7 @@ func (s *reportStore) run(ctx context.Context, interval time.Duration, extended 
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			r := s.add(now, extended())
+			r := s.add(now, mode())
 			log.Printf("generated volcanic report report_id=%s alert_level=%s", r.ReportID, r.AlertLevel)
 		}
 	}
