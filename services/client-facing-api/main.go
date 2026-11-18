@@ -128,7 +128,7 @@ func newHealthAPI() (healthAPI, error) {
 		return healthAPI{}, err
 	}
 
-	conn, err := grpc.NewClient(agg, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithUnaryInterceptor(logOutbound(agg)))
+	conn, err := grpc.NewClient(agg, append(aggregatorDialOptions(agg), grpc.WithStatsHandler(otelgrpc.NewClientHandler()))...)
 	if err != nil {
 		return healthAPI{}, err
 	}

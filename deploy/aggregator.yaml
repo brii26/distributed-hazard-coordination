@@ -4,15 +4,29 @@ metadata:
   namespace: sistem-informasi-kebencanaan-bnpb
   name: aggregator
 spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    role: aggregator
+  ports:
+    - name: health
+      port: 8091
+      targetPort: health
+---
+# Headless: DNS returns one A record per ready pod, the Client-Facing API balances over them (dns:///aggregator-grpc:9091).
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: aggregator-grpc
+spec:
+  clusterIP: None
   selector:
     role: aggregator
   ports:
     - name: grpc
       port: 9091
       targetPort: grpc
-    - name: health
-      port: 8091
-      targetPort: health
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -20,7 +34,11 @@ metadata:
   namespace: sistem-informasi-kebencanaan-bnpb
   name: aggregator
 spec:
-  replicas: 1
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       role: aggregator
@@ -29,10 +47,18 @@ spec:
       labels:
         role: aggregator
     spec:
+      # Soft rule: pods spread over the nodes, but still schedule on a single node.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              role: aggregator
       initContainers:
         - name: wait-for-store
           image: postgres:16-alpine
-          command: ["sh", "-c", "until pg_isready -h store -p 5432; do sleep 2; done"]
+          command: ["sh", "-c", "until pg_isready -h store -p 5432 && pg_isready -h coordination-db -p 5432; do sleep 2; done"]
           resources:
             requests:
               memory: 16Mi
@@ -63,6 +89,8 @@ spec:
                   key: CANONICAL_DB_NAME
             - name: DATABASE_URL
               value: postgres://$(STORE_USER):$(STORE_PASSWORD)@store:5432/$(STORE_DB)?sslmode=disable
+            - name: COORDINATION_DATABASE_URL
+              value: postgres://$(STORE_USER):$(STORE_PASSWORD)@coordination-db:5432/coordination?sslmode=disable
             - name: STORE_SERVICE
               value: store
             - name: STORE_DSN_TEMPLATE
@@ -126,17 +154,25 @@ spec:
               containerPort: 9091
             - name: health
               containerPort: 8091
+          # /health is 503 only when the store ping fails, so the pod leaves the Service endpoints.
           readinessProbe:
             httpGet:
               path: /health
               port: health
             periodSeconds: 5
             timeoutSeconds: 3
+            failureThreshold: 2
+          # Does not touch the store: a store outage must not restart the pods.
           livenessProbe:
             tcpSocket:
               port: health
             initialDelaySeconds: 10
             periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           resources:
             requests:
               memory: 256Mi

@@ -300,6 +300,8 @@ type pipeline struct {
 	ingest *ingest
 	// Set, the poller only runs while this lease is held.
 	lease *elector
+	// Set, wraps the work done under the lease (the PVMBG token manager lives here).
+	lead func(ctx context.Context, work func(context.Context))
 }
 
 // Runs both stages until ctx is done and ingest has drained.
@@ -312,7 +314,12 @@ func (p pipeline) run(ctx context.Context) {
 		wg.Go(func() {
 			defer close(p.poller.out)
 
-			p.lease.run(ctx, p.poller.loop)
+			work := p.poller.loop
+			if p.lead != nil {
+				work = func(ctx context.Context) { p.lead(ctx, p.poller.loop) }
+			}
+
+			p.lease.run(ctx, work)
 		})
 	}
 

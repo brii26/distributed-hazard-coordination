@@ -1,0 +1,86 @@
+# One authoritative Postgres for lease, source cursors and the PVMBG token pair. Reuses the Secret store-credentials
+# and needs the ConfigMap coordination-db-init (make-coordination.sh). Local-path PVC, like user-db.
+# role=store only for the Appendix B memory class. The store Service and the aggregator shard membership skip it
+# because it has no bnpb.node_name setting, and the store policy excludes app=coordination-db.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: coordination-db
+spec:
+  clusterIP: None
+  selector:
+    app: coordination-db
+  ports:
+    - name: pg
+      port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: coordination-db
+spec:
+  serviceName: coordination-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coordination-db
+  template:
+    metadata:
+      labels:
+        app: coordination-db
+        role: store
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          args:
+            - -c
+            - shared_buffers=64MB
+            - -c
+            - max_connections=40
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: store-credentials
+                  key: password
+            - name: POSTGRES_DB
+              value: coordination
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: pg
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d coordination"]
+            periodSeconds: 3
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init
+          configMap:
+            name: coordination-db-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi

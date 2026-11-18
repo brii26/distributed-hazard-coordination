@@ -12,6 +12,9 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -46,6 +49,7 @@ type readAPI struct {
 	auditTok string              // bearer token for the audit routes
 
 	sem chan struct{}
+	hs  *health.Server // standard gRPC health, SERVING only while the store answers
 }
 
 func newReadAPI(db *store, rabbitUp func(context.Context) error, breakers map[string]*breaker, maxInflight int) *readAPI {
@@ -58,11 +62,49 @@ func newReadAPI(db *store, rabbitUp func(context.Context) error, breakers map[st
 	}
 }
 
+// Connections are closed after maxConnAge so the Client-Facing API re-resolves DNS and meets new replicas.
+const (
+	maxConnAge      = 30 * time.Second
+	maxConnAgeGrace = 10 * time.Second
+	storeWatchEvery = 2 * time.Second
+)
+
 func newGRPCServer(a *readAPI) *grpc.Server {
-	s := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.UnaryInterceptor(a.limit))
+	s := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.UnaryInterceptor(a.limit),
+		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: maxConnAge, MaxConnectionAgeGrace: maxConnAgeGrace}))
 	aggregatorpb.RegisterAggregatorServer(s, a)
 
+	if a.hs == nil {
+		a.hs = health.NewServer()
+	}
+
+	healthpb.RegisterHealthServer(s, a.hs)
+
 	return s
+}
+
+// Mirrors the store ping into the gRPC health status, so clients stop sending to an instance without a store.
+func (a *readAPI) watchStore(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+
+	for {
+		st := healthpb.HealthCheckResponse_SERVING
+
+		pctx, cancel := context.WithTimeout(ctx, every)
+		if a.ping(pctx) != nil {
+			st = healthpb.HealthCheckResponse_NOT_SERVING
+		}
+
+		cancel()
+		a.hs.SetServingStatus("", st)
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 // Concurrency cap. Never queues: past the cap a request gets RESOURCE_EXHAUSTED at once.

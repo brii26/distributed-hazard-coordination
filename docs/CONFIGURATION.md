@@ -45,6 +45,7 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `CB_OPEN_DURATION_MS` | aggregator | 10000 | How long the breaker stays open before a trial poll |
 | `AGGREGATOR_MAX_INFLIGHT_REQUESTS` | aggregator | 100 | Concurrency cap of the gRPC read API (`RESOURCE_EXHAUSTED` beyond it) |
 | `DB_POOL_SIZE` | aggregator | 20 | Connection pool to the Canonical Store |
+| `COORDINATION_DATABASE_URL` | aggregator | value of `DATABASE_URL` | Database for lease, source cursors and the PVMBG token pair. Set to the Service `coordination-db` in k3s, unset in docker-compose (one pool for both). Credentials are `store-credentials`, so there is nothing new in `.env` |
 | `RETRY_BASE` / `RETRY_CAP` | aggregator | 10s / 10m | First wait before a failed record is retried, and the longest wait. The wait doubles per failure, with jitter |
 | `RETRY_MAX_ATTEMPTS` | aggregator | 8 | The failure that reaches this number parks the record (no more automatic retries) |
 | `RETRY_POLL` | aggregator | 5s | How often the retry worker looks for due records |

@@ -13,7 +13,7 @@ func (s *store) getCursor(ctx context.Context, source string) (string, error) {
 
 	var c string
 
-	err := s.db.QueryRowContext(ctx, `SELECT cursor FROM source_cursors WHERE source = $1`, source).Scan(&c)
+	err := s.coordDB().QueryRowContext(ctx, `SELECT cursor FROM source_cursors WHERE source = $1`, source).Scan(&c)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -26,7 +26,7 @@ func (s *store) setCursor(ctx context.Context, source, cursor string) error {
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.coordDB().ExecContext(ctx, `
 INSERT INTO source_cursors (source, cursor, updated_at) VALUES ($1, $2, now())
 ON CONFLICT (source) DO UPDATE SET cursor = EXCLUDED.cursor, updated_at = now()`, source, cursor)
 

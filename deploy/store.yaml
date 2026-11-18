@@ -16,6 +16,7 @@ spec:
   clusterIP: None
   selector:
     role: store
+    app: store
   ports:
     - name: pg
       port: 5432
@@ -33,6 +34,7 @@ spec:
     metadata:
       labels:
         role: store
+        app: store
     spec:
       containers:
         - name: postgres
