@@ -1,0 +1,6 @@
+# Test-only overlay: publishes the broker's AMQP port so the field-reports integration tests can reach it from the host.
+# Use: docker compose -f docker-compose.yml -f docker-compose.it.yml up -d rabbitmq
+services:
+  rabbitmq:
+    ports:
+      - "127.0.0.1:${RABBITMQ_AMQP_PORT:-5672}:5672"

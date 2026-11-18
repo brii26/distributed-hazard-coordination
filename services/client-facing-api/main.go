@@ -171,7 +171,23 @@ func main() {
 	mux := newMux(auth)
 	mux.Handle("GET /health", health)
 
-	mux.Handle("GET /metrics", http.HandlerFunc(inflight.metrics))
+	var reports *fieldReportsAPI
+
+	if url := os.Getenv("RABBITMQ_URL"); url != "" {
+		inbox := &brokerInbox{}
+		go inbox.run(context.Background(), url)
+
+		reports = newFieldReportsAPI(inbox)
+		mux.Handle("POST /field-reports", auth.verifier.require(reports))
+	}
+
+	mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inflight.metrics(w, r)
+
+		if reports != nil {
+			reports.writeMetrics(w)
+		}
+	}))
 
 	mux.Handle("GET /hazards", auth.verifier.require(hazardsAPI{agg: health.aggregator, timeout: health.timeout}))
 
