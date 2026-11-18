@@ -110,7 +110,7 @@ func (l *inflightLimiter) release(role string) {
 func (l *inflightLimiter) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Streams have their own limits. Probes and scrapes must work under load.
-		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || r.URL.Path == "/hazards/stream" {
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || r.URL.Path == "/hazards/stream" || r.URL.Path == "/alerts/stream" {
 			next.ServeHTTP(w, r)
 
 			return

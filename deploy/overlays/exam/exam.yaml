@@ -1,0 +1,17 @@
+- op: replace
+  path: /spec/template/spec/containers/0/env/0
+  value:
+    name: PANTAI_PROFILE
+    value: exam
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    name: key
+    mountPath: /var/run/pantai
+    readOnly: true
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: key
+    secret:
+      secretName: pantai-key

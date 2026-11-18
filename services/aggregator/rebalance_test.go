@@ -212,12 +212,12 @@ func TestRebalanceSourceFailsThenAnotherPass(t *testing.T) {
 
 	inner := c.listShard
 	broken := true
-	c.listShard = func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error) {
+	c.listShard = func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error) {
 		if broken && n.name == "a" {
 			return nil, errDown
 		}
 
-		return inner(ctx, n, shard, after, limit)
+		return inner(ctx, n, shard, after, limit, f)
 	}
 
 	rb.pass(t.Context())

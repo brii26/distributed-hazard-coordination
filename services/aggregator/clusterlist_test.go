@@ -17,7 +17,7 @@ import (
 // A cluster over fake nodes whose per-shard list reads the fake rows in client order.
 func (f *fakeStore) listCluster(names ...string) *cluster {
 	c := f.cluster(names...)
-	c.listShard = func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error) {
+	c.listShard = func(ctx context.Context, n *node, shard int, after *listPos, limit int, lf listFilter) ([]HazardEvent, error) {
 		if err := f.gate(ctx, n); err != nil {
 			return nil, err
 		}
@@ -32,20 +32,44 @@ func (f *fakeStore) listCluster(names ...string) *cluster {
 				continue
 			}
 
-			if after != nil && !newer(HazardEvent{IngestedAt: after.T, HazardID: after.ID}, h) {
+			if after != nil && !lf.before(HazardEvent{IngestedAt: after.T, HazardID: after.ID}, h) {
+				continue
+			}
+
+			if !lf.keeps(h) {
 				continue
 			}
 
 			rows = append(rows, h)
 		}
 
-		sort.Slice(rows, func(i, j int) bool { return newer(rows[i], rows[j]) })
+		sort.Slice(rows, func(i, j int) bool { return lf.before(rows[i], rows[j]) })
 
 		if len(rows) > limit {
 			rows = rows[:limit]
 		}
 
 		return rows, nil
+	}
+	c.idsShard = func(ctx context.Context, n *node, shard int, source string) ([]string, error) {
+		if err := f.gate(ctx, n); err != nil {
+			return nil, err
+		}
+
+		f.mu.Lock()
+		defer f.mu.Unlock()
+
+		var ids []string
+
+		for _, h := range f.rows[n.name] {
+			if shardOf(h.HazardID) == shard && h.Source == source {
+				ids = append(ids, h.SourceRefID)
+			}
+		}
+
+		sort.Strings(ids)
+
+		return ids, nil
 	}
 
 	return c
@@ -288,7 +312,7 @@ func TestListShardOnPagesEqualTimestampsOnRealDB(t *testing.T) { //nolint:parall
 
 	sort.Sort(sort.Reverse(sort.StringSlice(want)))
 
-	first, err := listShardOn(ctx, s.db, shard, nil, 3)
+	first, err := listShardOn(ctx, s.db, shard, nil, 3, listFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +323,7 @@ func TestListShardOnPagesEqualTimestampsOnRealDB(t *testing.T) { //nolint:parall
 
 	last := first[2]
 
-	rest, err := listShardOn(ctx, s.db, shard, &listPos{T: last.IngestedAt, ID: last.HazardID}, 3)
+	rest, err := listShardOn(ctx, s.db, shard, &listPos{T: last.IngestedAt, ID: last.HazardID}, 3, listFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -26,6 +26,12 @@ type ingest struct {
 	upsert              func(context.Context, HazardEvent) (bool, error)
 	publish             func(ctx context.Context, h HazardEvent, correlationID string)
 	retryBase, retryMax time.Duration
+	// Set, a critical event is written here before its upsert so it survives a crash or a broker outage.
+	stage func(ctx context.Context, h HazardEvent, correlationID string) error
+	// Called after every batch with whether all of it was stored. Nil for sources that keep no durable cursor.
+	afterBatch func(ctx context.Context, res pollResult, clean bool)
+	// Called when a store rejected a write as stale, with the batch's token. Nil without a lease.
+	onFenced func(epoch int64)
 }
 
 // Runs until the poller closes the channel, so queued records are still written on shutdown.
@@ -43,6 +49,11 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	defer span.End()
 
 	ctx = withCorrelation(ctx, res.correlationID)
+
+	if res.epoch > 0 {
+		ctx = withLeaseEpoch(ctx, res.epoch)
+	}
+
 	l := withID(res.correlationID)
 
 	for _, d := range describeFields(i.name, res.records) {
@@ -59,11 +70,40 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 	}
 
 	changed := 0
+	clean := err == nil
 
 	for _, h := range events {
+		if i.stage != nil && isCritical(h) {
+			if err := i.stageCritical(ctx, h, res.correlationID); err != nil {
+				l.Warn("ingest critical stage failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
+
+				clean = false
+
+				if ctx.Err() != nil {
+					break
+				}
+
+				continue
+			}
+		}
+
 		c, err := i.write(ctx, h)
+		if errors.Is(err, errFenced) {
+			l.Warn("fenced", "source", i.name, "source_ref_id", h.SourceRefID, "epoch", res.epoch, "error", err.Error())
+
+			if i.onFenced != nil {
+				i.onFenced(res.epoch)
+			}
+
+			clean = false
+
+			break
+		}
+
 		if err != nil {
 			l.Warn("ingest upsert failed", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
+
+			clean = false
 
 			if ctx.Err() != nil {
 				break
@@ -81,13 +121,17 @@ func (i *ingest) handle(ctx context.Context, res pollResult) {
 
 	l.Info("ingest", "source", i.name, "records", len(res.records), "mapped", len(events),
 		"rejected", len(res.records)-len(events), "changed", changed, "duration_ms", time.Since(start).Milliseconds())
+
+	if i.afterBatch != nil {
+		i.afterBatch(ctx, res, clean)
+	}
 }
 
 // Upserts h. An outage is retried with a growing delay and holds the batch (the poller waits too), a data error returns at once.
 func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 	for attempt := 0; ; attempt++ {
 		changed, err := i.upsert(context.WithoutCancel(ctx), h)
-		if err == nil || isPermanent(err) {
+		if err == nil || isPermanent(err) || errors.Is(err, errFenced) {
 			return changed, err
 		}
 
@@ -96,6 +140,24 @@ func (i *ingest) write(ctx context.Context, h HazardEvent) (bool, error) {
 		select {
 		case <-ctx.Done():
 			return false, err
+		case <-time.After(min(i.retryBase*time.Duration(1<<min(attempt, 10)), i.retryMax)):
+		}
+	}
+}
+
+// Stages h with the same retry as the upsert. A failure skips the upsert too, so the record is polled and staged again.
+func (i *ingest) stageCritical(ctx context.Context, h HazardEvent, correlationID string) error {
+	for attempt := 0; ; attempt++ {
+		err := i.stage(context.WithoutCancel(ctx), h, correlationID)
+		if err == nil || isPermanent(err) {
+			return err
+		}
+
+		withID(correlationID).Warn("ingest critical stage retrying", "source", i.name, "source_ref_id", h.SourceRefID, "error", err.Error())
+
+		select {
+		case <-ctx.Done():
+			return err
 		case <-time.After(min(i.retryBase*time.Duration(1<<min(attempt, 10)), i.retryMax)):
 		}
 	}
@@ -130,6 +192,10 @@ func (p pipeline) run(ctx context.Context) {
 		})
 	}
 
+	if p.lease != nil {
+		p.ingest.onFenced = p.lease.fence
+	}
+
 	wg.Go(func() { p.ingest.run(ctx) })
 
 	wg.Wait()
@@ -143,19 +209,27 @@ func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool,
 		sourcePVMBG: func(r pollResult) ([]HazardEvent, error) { return m.mapVolcanic(r.records) },
 	}
 
+	var after func(context.Context, pollResult, bool)
+
+	if c.pantai != nil {
+		mappers[sourceSensorPantai], after = c.pantai.mapBatch, c.pantai.afterBatch
+	}
+
 	var out []pipeline
 
 	for _, p := range newPollers(c) {
 		ch := make(chan pollResult, ingestBuffer)
 		p.out = ch
 
-		out = append(out, pipeline{
-			poller: p,
-			ingest: &ingest{
-				name: p.name, in: ch, mapBatch: mappers[p.name], upsert: upsert, publish: publish,
-				retryBase: retryBase, retryMax: retryMax,
-			},
-		})
+		in := &ingest{
+			name: p.name, in: ch, mapBatch: mappers[p.name], upsert: upsert, publish: publish,
+			retryBase: retryBase, retryMax: retryMax,
+		}
+		if p.name == sourceSensorPantai {
+			in.afterBatch = after
+		}
+
+		out = append(out, pipeline{poller: p, ingest: in})
 	}
 
 	return out

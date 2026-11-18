@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: pvmbg-mock
+  labels:
+    role: mock
+spec:
+  type: ClusterIP
+  selector:
+    app: pvmbg-mock
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: pvmbg-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pvmbg-mock
+  template:
+    metadata:
+      labels:
+        role: mock
+        app: pvmbg-mock
+    spec:
+      containers:
+        - name: pvmbg-mock
+          image: pvmbg-mock
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PORT
+              value: "8082"
+            - name: OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: pvmbg-credentials
+                  key: client_id
+            - name: OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pvmbg-credentials
+                  key: client_secret
+            - name: PVMBG_ONE_TIME_CODE
+              valueFrom:
+                secretKeyRef:
+                  name: pvmbg-credentials
+                  key: one_time_code
+            - name: SEED_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PVMBG_SEED_COUNT
+            - name: EVENT_INTERVAL_S
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PVMBG_EVENT_INTERVAL_S
+            - name: PVMBG_DELAY_MIN_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PVMBG_DELAY_MIN_MS
+            - name: PVMBG_DELAY_MAX_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: PVMBG_DELAY_MAX_MS
+            - name: TRACING_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: TRACING_ENABLED
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-config
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+          ports:
+            - name: http
+              containerPort: 8082
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 128Mi

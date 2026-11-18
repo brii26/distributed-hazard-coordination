@@ -29,7 +29,7 @@ const (
 )
 
 // Maps a hazard type to the one source that feeds it.
-var typeSources = map[string]string{typeSeismic: sourceBMKG, typeVolcanic: sourcePVMBG}
+var typeSources = map[string]string{typeSeismic: sourceBMKG, typeVolcanic: sourcePVMBG, typeCoastal: sourceSensorPantai}
 
 // Order sources are reported in.
 var healthSources = []string{sourceBMKG, sourcePVMBG}
@@ -42,7 +42,8 @@ type readAPI struct {
 	ping     func(ctx context.Context) error // checks the Canonical Store
 	rabbitUp func(ctx context.Context) error
 	breakers map[string]*breaker // by source name
-	cl       *cluster            // nil without STORE_SERVICE; ListHazards and GetHazard need it
+	cl       *cluster            // nil without STORE_SERVICE; ListHazards, GetHazard and the audit routes need it
+	auditTok string              // bearer token for the audit routes
 
 	sem chan struct{}
 }
@@ -145,7 +146,12 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 
 	src, ok := typeSources[req.GetHazardType()]
 	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "hazard_type must be SEISMIC or VOLCANIC")
+		return nil, status.Error(codes.InvalidArgument, "hazard_type must be SEISMIC, VOLCANIC or COASTAL")
+	}
+
+	br := a.breakers[src]
+	if br == nil {
+		return nil, status.Errorf(codes.Unavailable, "%s is not enabled", src)
 	}
 
 	q, err := pageQuery(req)
@@ -160,7 +166,7 @@ func (a *readAPI) GetHazards(ctx context.Context, req *aggregatorpb.GetHazardsRe
 		return nil, status.Error(codes.Unavailable, "canonical store unavailable")
 	}
 
-	snap := a.breakers[src].snapshot()
+	snap := br.snapshot()
 
 	unfiltered := q.Offset == 0 && q.Severity == "" && q.Search == ""
 	if len(events) == 0 && unfiltered && snap.Status == statusDown {
@@ -348,7 +354,7 @@ func (a *readAPI) ListHazards(ctx context.Context, req *aggregatorpb.ListHazards
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	events, more, unavailable := a.cl.list(withCorrelation(ctx, id), limit, after)
+	events, more, unavailable := a.cl.list(withCorrelation(ctx, id), limit, after, listFilter{})
 
 	resp := &aggregatorpb.ListHazardsResponse{HasMore: more, Partial: len(unavailable) > 0, UnavailableUnits: unavailable}
 

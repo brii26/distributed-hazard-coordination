@@ -179,6 +179,10 @@ func main() {
 		mux.Handle("GET /hazards/stream", auth.verifier.require(newStreamAPI(upstream)))
 	}
 
+	if upstream := os.Getenv("NOTIFIER_URL"); upstream != "" {
+		mux.Handle("GET /alerts/stream", auth.verifier.require(newAlertsAPI(upstream)))
+	}
+
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatal(err)

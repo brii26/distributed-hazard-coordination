@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"time"
 )
@@ -18,7 +19,8 @@ type cluster struct {
 	write func(ctx context.Context, n *node, h HazardEvent) (bool, error)
 	read  func(ctx context.Context, n *node, id string) (*HazardEvent, error)
 
-	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error)
+	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error)
+	idsShard  func(ctx context.Context, n *node, shard int, source string) ([]string, error)
 
 	// Whether a node holds a shard in full (shard_state). Nil means every copy counts as synced.
 	isSynced func(name string, shard int) bool
@@ -55,8 +57,11 @@ func newCluster(live func() []*node) *cluster {
 		live:  live,
 		write: func(ctx context.Context, n *node, h HazardEvent) (bool, error) { return upsertOn(ctx, n.db, h) },
 		read:  func(ctx context.Context, n *node, id string) (*HazardEvent, error) { return getOn(ctx, n.db, id) },
-		listShard: func(ctx context.Context, n *node, shard int, after *listPos, limit int) ([]HazardEvent, error) {
-			return listShardOn(ctx, n.db, shard, after, limit)
+		listShard: func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error) {
+			return listShardOn(ctx, n.db, shard, after, limit, f)
+		},
+		idsShard: func(ctx context.Context, n *node, shard int, source string) ([]string, error) {
+			return idsShardOn(ctx, n.db, shard, source)
 		},
 		dirty: map[int]bool{},
 	}
@@ -106,12 +111,19 @@ func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 		committed, changed = true, changed || r.changed
 	}
 
+	fenced := slices.ContainsFunc(errs, func(e error) bool { return errors.Is(e, errFenced) })
+
 	if !committed {
 		return false, errors.Join(errs...)
 	}
 
 	if len(errs) > 0 || len(own) < 2 {
 		c.markDirty(shard)
+	}
+
+	// One copy committed, but a stale writer must still stop.
+	if fenced {
+		return changed, errors.Join(errs...)
 	}
 
 	return changed, nil

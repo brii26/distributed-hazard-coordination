@@ -19,6 +19,7 @@ Postgres builds the tables from `store-schema` only on an empty data directory. 
 |---|---|---|---|
 | `bnpb-config` | ConfigMap | `kubectl apply -k` | Non-secret settings, same names as `.env.example` |
 | `store-schema` | ConfigMap | `make-schema.sh` | The SQL migrations |
+| `rabbitmq-definitions` | ConfigMap | `make-rabbitmq.sh` | The broker topology template, render script and config from `infra/rabbitmq` |
 | `bmkg-credentials` | Secret | `make-secrets.sh` | `api_key` |
 | `pvmbg-credentials` | Secret | `make-secrets.sh` | `client_id`, `client_secret`, `one_time_code` |
 | `store-credentials` | Secret | `make-secrets.sh` | `user`, `password` of the sharded store |
@@ -49,6 +50,54 @@ The credentials sit inside the DSN, and the template goes through `Sprintf`. `ma
 The PVMBG token file is on a per-pod `emptyDir`. A container restart keeps it, but a new pod starts without it and signs in again with the one-time code. Handing the token over on a takeover is part of the lease design, not of this manifest.
 
 The BMKG and PVMBG mocks and RabbitMQ come in their own manifests. Until they exist the Aggregator logs `no such host` for them and its circuit breakers open, which is expected.
+
+## The BMKG and PVMBG mocks
+
+`deploy/bmkg-mock.yaml` (port 8081) and `deploy/pvmbg-mock.yaml` (port 8082) each hold a ClusterIP Service and a one-replica Deployment. Both pods carry `role: mock` and 64Mi/128Mi memory, with a readiness probe on `/health`. Only the Service `pvmbg-mock` is labelled `role: mock`, because the Tester Agent lists Services with that label and must find exactly one. Keys and credentials come from `bmkg-credentials` and `pvmbg-credentials`, the other settings from `bnpb-config`. The images are `10.77.0.11:5000/bmkg-mock:0.1.0` and `10.77.0.11:5000/pvmbg-mock:0.1.0`, set in the `images` block. Build and push from the host:
+
+```bash
+docker build -t 127.0.0.1:5000/bmkg-mock:0.1.0 services/bmkg-mock
+docker push 127.0.0.1:5000/bmkg-mock:0.1.0
+docker build -t 127.0.0.1:5000/pvmbg-mock:0.1.0 services/pvmbg-mock
+docker push 127.0.0.1:5000/pvmbg-mock:0.1.0
+```
+
+## RabbitMQ and the consumers
+
+`deploy/make-rabbitmq.sh` creates the ConfigMap `rabbitmq-definitions` from `infra/rabbitmq` (`definitions.json.tpl`, `render-definitions.sh`, `rabbitmq.conf`), so the files stay in one place. Run it before the first `kubectl apply -k deploy/` and again after a change, then `kubectl rollout restart statefulset/rabbitmq`. The repo holds the definitions as a template without credentials, so the broker renders `definitions.json` at start with `RABBITMQ_USER` and `RABBITMQ_PASSWORD` from the Secret `rabbitmq-credentials`, as in Compose. The definitions declare the user and the fanout exchange `hazard.events`. Each consumer declares and binds its own durable queue (`QUEUE_NAME`) when it first connects, so a queue appears once its consumer has run.
+
+`deploy/rabbitmq.yaml` holds the Service `rabbitmq` (AMQP 5672, management 15672) and a StatefulSet with 1 replica, `role: broker`, 512Mi/1Gi memory. A StatefulSet gives the pod a fixed hostname (`rabbitmq-0`), and RabbitMQ names its data directory after the hostname. Queue data is on a 1Gi PersistentVolumeClaim from `volumeClaimTemplates`, served by the k3s `local-path` class. It survives a pod restart or deletion, and the pod then runs again on the same node, because the volume lives on that node's disk. It is lost if that node is wiped.
+
+`deploy/dashboard-updater.yaml`, `notifier.yaml` and `audit-logger.yaml` are Deployments with `role: consumer`, 128Mi/256Mi memory and one replica each. They read `bnpb-config`, build `RABBITMQ_URL` from `rabbitmq-credentials` and set `QUEUE_NAME` and `HEALTH_PORT` (8093, 8094, 8095). Images come from the `images` block (`10.77.0.11:5000/<name>:0.1.0`, built and pushed like the Aggregator, from `services/<name>`). The notifier and the audit logger keep their dedup log (and the audit log) on an `emptyDir`: it survives a container restart but not a new pod, which then may process a redelivered message once more. The dashboard-updater keeps its state in memory.
+
+```bash
+kubectl exec -n sistem-informasi-kebencanaan-bnpb rabbitmq-0 -- rabbitmqctl list_queues name messages
+```
+
+## The Sensor Pantai
+
+`deploy/sensor-pantai/` holds the Service `sensor-pantai` (8080) and the assistants' Deployment (`role: sensor`, 128Mi/256Mi, image pinned by digest, state on an `emptyDir` at `/data`). It differs from their example only by the namespace, the memory, the Service, the probes on `/healthz` and the env values coming from `bnpb-config`. The image is never modified.
+
+`PANTAI_AUTH_TOKEN` comes from the Secret `pantai-token` (`PANTAI_AUTH_TOKEN` in `.env`). The Aggregator reads the same Secret and `PANTAI_BASE_URL=http://sensor-pantai:8080` from its own manifest, and it needs both to start polling the sensor. `PANTAI_PROFILE`, `PANTAI_SEED` and `PANTAI_SPEED` come from `bnpb-config`, practice by default.
+
+For the exam profile, put the key file from the assistants in `PANTAI_KEY_FILE`, run `deploy/make-secrets.sh`, then `kubectl apply -k deploy/overlays/exam`. The overlay renders only the sensor Service and Deployment, sets `PANTAI_PROFILE=exam` and mounts the Secret `pantai-key` at `/var/run/pantai`. The sensor exits at start without a valid key. To go back to practice, apply `deploy/` again with `kubectl apply -k deploy/`. Applying the overlay or `deploy/` rolls the pod, because the Deployment changes.
+
+## The user database, Auth, Client-Facing API and web frontend
+
+`deploy/user-db.yaml`, `auth-service.yaml`, `client-facing-api.yaml` and `web-frontend.yaml` hold, in this order, the StatefulSet `user-db` (Postgres, `role: store`, 512Mi/1Gi, 1Gi local-path volume), and the Deployments `auth-service` and `client-facing-api` (`role: api`, 128Mi/256Mi) and `web-frontend` (`role: other`, 128Mi/256Mi). The API reaches the Aggregator at `aggregator:9091` and Auth at `auth-service:9092`.
+
+`deploy/make-schema.sh` also creates the ConfigMap `user-db-init` from `services/auth-service/migrations`. Postgres runs the schema and the seed Operator script from it on an empty volume only, so deleting the `user-db` pod and its PVC (`data-user-db-0`) brings the account back on the next start.
+
+The web frontend is on NodePort 30080 (it proxies `/api` to the API) and the Client-Facing API on NodePort 30081, both on every node address, for example `http://10.77.0.11:30080`. The cluster scripts forward no host port to them yet, so from the host use `kubectl port-forward svc/web-frontend 3000:80` and open http://localhost:3000. `COOKIE_SECURE` is `true`, which browsers accept on `localhost` but not on a plain-HTTP node address.
+
+Build and push the three images from the host, then bump the tags in the `images` block of `deploy/kustomization.yaml` on a new build:
+
+```bash
+for s in auth-service client-facing-api web-frontend; do
+  docker build -t 127.0.0.1:5000/$s:0.1.0 services/$s
+  docker push 127.0.0.1:5000/$s:0.1.0
+done
+```
 
 ## Rules for this namespace
 

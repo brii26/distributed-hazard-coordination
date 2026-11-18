@@ -29,6 +29,17 @@ type pollResult struct {
 	cursor            time.Time
 	correlationID     string
 	trace             trace.SpanContext
+
+	// Sensor Pantai only: each record as received (parallel to records, a nil record is an item that was not a JSON
+	// object), the sensor's clock for the response and the cursor that follows this batch, empty when it did not move.
+	raws        [][]byte
+	generatedAt time.Time
+	nextCursor  string
+	gen         uint64
+	slow        bool // some call answered 200 but over the slow limit
+
+	// Fencing token of the lease term that fetched this batch, 0 when no lease is involved.
+	epoch int64
 }
 
 // One source's polling loop. One goroutine, one call at a time, so there are never two calls in flight for a source.
@@ -41,6 +52,15 @@ type poller struct {
 
 	// loadSince reads the stored cursor. Set, it is read at the start of every cycle and a new lease term starts from it.
 	loadSince func(context.Context) (time.Time, error)
+
+	// Runs at the start of every lease term.
+	onTerm func()
+
+	// Optional. backoff stretches the wait after failed polls, onReject runs when the breaker turns a poll away and onWait gets
+	// the extra delay in use.
+	backoff  *backoff
+	onReject func()
+	onWait   func(time.Duration)
 
 	// since is only touched by the run goroutine.
 	// ponytail: the cursor lives in memory, so a restart re-reads everything once (upsert dedup makes that safe). Assumes source timestamps never go backwards.
@@ -61,27 +81,63 @@ func (p *poller) run(ctx context.Context) {
 
 // Polls until ctx is done and leaves out open, so a later lease term can use it again.
 func (p *poller) loop(ctx context.Context) {
+	if p.onTerm != nil {
+		p.onTerm()
+	}
+
 	if p.loadSince != nil {
 		p.since = time.Time{}
 	}
 
+	if p.backoff != nil {
+		p.backoff.reset()
+	}
+
 	for {
 		start := time.Now()
+		out := p.pollOnce(ctx)
+		wait := nextWait(p.interval, time.Since(start))
 
-		p.pollOnce(ctx)
+		switch out {
+		case pollFailed:
+			if p.backoff != nil {
+				wait = max(wait, p.backoff.failed())
+			}
+		case pollOK:
+			if p.backoff != nil {
+				p.backoff.reset()
+			}
+		case pollSkipped:
+		}
+
+		if p.backoff != nil && p.onWait != nil {
+			p.onWait(p.backoff.last)
+		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(nextWait(p.interval, time.Since(start))):
+		case <-time.After(wait):
 		}
 	}
 }
 
+type pollOutcome int
+
+const (
+	pollOK pollOutcome = iota
+	pollFailed
+	pollSkipped // the breaker did not let the poll through
+)
+
 // One call: log the result, hand over the records. Any error, timeout included, is a failed poll, and the cursor only moves after the hand-over.
-func (p *poller) pollOnce(ctx context.Context) {
+func (p *poller) pollOnce(ctx context.Context) pollOutcome {
 	if !p.breaker.allow() {
-		return
+		if p.onReject != nil {
+			p.onReject()
+		}
+
+		return pollSkipped
 	}
 
 	ctx, span := tracer.Start(ctx, "poll "+p.name)
@@ -107,12 +163,24 @@ func (p *poller) pollOnce(ctx context.Context) {
 	elapsed := time.Since(start).Milliseconds()
 	res.correlationID = id
 	res.trace = span.SpanContext()
+	res.epoch, _ = leaseEpoch(ctx)
 
-	if err != nil {
+	outcome := pollOK
+
+	switch {
+	case err != nil:
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		p.breaker.failure()
-	} else {
+
+		outcome = pollFailed
+	case res.slow:
+		// The data is good and is kept, but a slow sensor counts against the breaker.
+		l.Warn("poll slow", "source", p.name, "duration_ms", elapsed)
+		p.breaker.failure()
+
+		outcome = pollFailed
+	default:
 		p.breaker.success()
 	}
 
@@ -125,6 +193,8 @@ func (p *poller) pollOnce(ctx context.Context) {
 	default:
 		l.Warn("poll", "source", p.name, "result", "failure", "duration_ms", elapsed, "error", err.Error())
 	}
+
+	return outcome
 }
 
 // Sends records to ingest and waits if the channel is full, since a dropped batch would never be fetched again.
@@ -153,7 +223,24 @@ type sourceClient struct {
 }
 
 // GETs path (with ?since if set) and decodes a JSON array of objects.
-func (c *sourceClient) records(ctx context.Context, path string, since time.Time) (_ []map[string]any, err error) {
+func (c *sourceClient) records(ctx context.Context, path string, since time.Time) ([]map[string]any, error) {
+	query := ""
+	if !since.IsZero() {
+		query = "since=" + url.QueryEscape(since.UTC().Format(time.RFC3339Nano))
+	}
+
+	var out []map[string]any
+
+	err := c.get(ctx, path, query, func(r io.Reader) error { return json.NewDecoder(r).Decode(&out) })
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// GETs path with a raw query string and hands the body (capped at maxPollBody) to decode. Any status but 200 is an error.
+func (c *sourceClient) get(ctx context.Context, path, query string, decode func(io.Reader) error) (err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "GET "+c.baseURL+path)
 
@@ -163,13 +250,13 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 	defer cancel()
 
 	u := c.baseURL + path
-	if !since.IsZero() {
-		u += "?since=" + url.QueryEscape(since.UTC().Format(time.RFC3339Nano))
+	if query != "" {
+		u += "?" + query
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
@@ -179,12 +266,12 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 	}
 
 	if err := c.auth(req); err != nil {
-		return nil, err
+		return err
 	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	defer func() { _ = resp.Body.Close() }()
@@ -194,15 +281,14 @@ func (c *sourceClient) records(ctx context.Context, path string, since time.Time
 			c.onUnauthorized()
 		}
 
-		return nil, fmt.Errorf("%s returned status %d", path, resp.StatusCode)
+		return fmt.Errorf("%s returned status %d", path, resp.StatusCode)
 	}
 
-	var out []map[string]any
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPollBody)).Decode(&out); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	if err := decode(io.LimitReader(resp.Body, maxPollBody)); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 
-	return out, nil
+	return nil
 }
 
 // Latest RFC 3339 timestamp under key, or zero.
@@ -285,17 +371,45 @@ type pollConfig struct {
 	token             func() string
 	tokenErr          func() error
 	rejectToken       func() // PVMBG answered 401: renew the token now
+	pantaiURL         string // empty leaves Sensor Pantai off
+	pantaiToken       string
+	sensor            sensorConfig
+	pantai            *sensorClient // built in run once the store is open
 }
 
-// Builds the BMKG and PVMBG pollers, each with its own circuit breaker.
+// Builds the BMKG and PVMBG pollers, and Sensor Pantai's when configured, each with its own circuit breaker.
 func newPollers(c pollConfig) []*poller {
 	client := &http.Client{}
 
 	bmkg := &sourceClient{baseURL: strings.TrimRight(c.bmkgURL, "/"), timeout: c.timeout, client: client, auth: bmkgAuth(c.bmkgKey)}
 	pvmbg := &sourceClient{baseURL: strings.TrimRight(c.pvmbgURL, "/"), timeout: c.timeout, client: client, auth: pvmbgAuth(c.token), onUnauthorized: c.rejectToken}
 
-	return []*poller{
+	out := []*poller{
 		{name: sourceBMKG, interval: c.interval, fetch: bmkgFetch(bmkg), breaker: newBreaker(sourceBMKG, c.cbThreshold, c.cbOpenFor)},
 		{name: sourcePVMBG, interval: c.interval, fetch: pvmbgFetch(pvmbg, c.tokenErr), breaker: newBreaker(sourcePVMBG, c.cbThreshold, c.cbOpenFor)},
 	}
+
+	if c.pantai != nil {
+		sc := c.sensor.orDefaults()
+		br := newBreaker(sourceSensorPantai, sc.cbThreshold, sc.cbOpenFor)
+
+		if c.pantai.stats == nil {
+			c.pantai.stats = &sensorStats{}
+		}
+
+		st := c.pantai.stats
+		st.breaker = br
+		c.pantai.staleAfter = sc.staleAfter
+		c.pantai.onStale = func(stale bool, since time.Time) {
+			br.setStale(stale, since)
+			st.setStale(stale)
+		}
+
+		out = append(out, &poller{
+			name: sourceSensorPantai, interval: c.interval, fetch: c.pantai.fetch, onTerm: c.pantai.newTerm, breaker: br,
+			backoff: newBackoff(sc.backoffBase, sc.backoffMax), onReject: func() { st.breakerRejected() }, onWait: st.setBackoff,
+		})
+	}
+
+	return out
 }

@@ -7,4 +7,4 @@ CREATE TABLE IF NOT EXISTS shard_state (
 
 -- The rebalancer takes its own lease, so the source check must allow its name.
 ALTER TABLE source_lease DROP CONSTRAINT IF EXISTS source_lease_source_check;
-ALTER TABLE source_lease ADD CONSTRAINT source_lease_source_check CHECK (source IN ('BMKG','PVMBG','rebalance'));
+ALTER TABLE source_lease ADD CONSTRAINT source_lease_source_check CHECK (source IN ('BMKG','PVMBG','SATELIT','SENSOR_PANTAI','rebalance'));

@@ -1,4 +1,4 @@
-// Command aggregator polls BMKG and PVMBG, stores to the Canonical Store and publishes to the broker.
+// Command aggregator polls BMKG, PVMBG and Sensor Pantai, stores to the Canonical Store and publishes to the broker.
 package main
 
 import (
@@ -31,6 +31,8 @@ var portPattern = regexp.MustCompile(`^[0-9]{1,5}$`)
 func newMux(api *readAPI) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.healthHandler)
+	mux.HandleFunc("GET /internal/audit/events", api.auditEvents)
+	mux.HandleFunc("GET /internal/audit/checksum", api.auditChecksum)
 
 	return mux
 }
@@ -86,6 +88,8 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 		token:       tokens.Token,
 		tokenErr:    tokens.LastError,
 		rejectToken: tokens.Reject,
+		pantaiURL:   os.Getenv("PANTAI_BASE_URL"),
+		pantaiToken: os.Getenv("PANTAI_AUTH_TOKEN"),
 	}
 
 	var err error
@@ -97,8 +101,17 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 		return pollConfig{}, firstErr
 	}
 
+	if c.sensor, err = loadSensorConfig(); err != nil {
+		return pollConfig{}, err
+	}
+
 	if c.bmkgURL == "" || c.bmkgKey == "" {
 		return pollConfig{}, errors.New("BMKG_BASE_URL and BMKG_API_KEY must be set")
+	}
+
+	// Sensor Pantai is optional until the sensor runs everywhere, but half a setting is a mistake.
+	if (c.pantaiURL == "") != (c.pantaiToken == "") {
+		return pollConfig{}, errors.New("PANTAI_BASE_URL and PANTAI_AUTH_TOKEN must be set together")
 	}
 
 	return c, nil
@@ -252,6 +265,10 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	defer func() { _ = db.close() }()
 
+	if pc.pantaiURL != "" {
+		pc.pantai = newSensorClient(pc, db)
+	}
+
 	upsert, cl, err := chooseUpsert(ctx, db)
 	if err != nil {
 		return err
@@ -270,6 +287,15 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	pubWG.Go(func() { pub.run(pubCtx) })
 
+	criticalQueue := os.Getenv("CRITICAL_QUEUE_NAME")
+	if criticalQueue == "" {
+		criticalQueue = defaultCriticalQueue
+	}
+
+	relay := newCriticalRelay(pgOutbox{db: db.db}, dialCritical(rabbitURL, criticalQueue))
+
+	pubWG.Go(func() { relay.run(pubCtx) })
+
 	lc, err := loadLeaseConfig()
 	if err != nil {
 		return err
@@ -280,6 +306,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	for _, p := range newPipelines(pc, upsert, pub.publish) {
 		breakers[p.poller.name] = p.poller.breaker
 
+		p.ingest.stage = relay.stage
 		p.lease = newElector(p.poller.name, lc, pgLease{db: db.db})
 		electors = append(electors, p.lease)
 		p.poller.loadSince = func(ctx context.Context) (time.Time, error) { return db.lastOccurred(ctx, p.poller.name) }
@@ -320,6 +347,11 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}
 
 	api.cl = cl
+	api.auditTok = os.Getenv("AUDIT_TOKEN")
+
+	if api.auditTok == "" {
+		log.Print("WARNING: AUDIT_TOKEN is empty, every audit request will be refused")
+	}
 
 	go func() {
 		if err := grpcSrv.Serve(grpcLis); err != nil {
@@ -330,12 +362,17 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 	mux := newMux(api)
 	leaseMetrics := leaseMetricsHandler(electors)
-
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		leaseMetrics(w, r)
+		relay.writeMetrics(w)
 
 		if rb != nil {
 			rb.writeMetrics(w, rbLease.isLeader.Load() == 1)
+		}
+
+		if pc.pantai != nil {
+			pc.pantai.rejects.writeMetrics(w)
+			pc.pantai.stats.writeMetrics(w)
 		}
 	})
 

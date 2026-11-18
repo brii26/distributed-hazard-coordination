@@ -164,6 +164,7 @@ services:
       DATABASE_URL: postgres://${CANONICAL_DB_USER:-aggregator}:${CANONICAL_DB_PASSWORD}@canonical-store:5432/${CANONICAL_DB_NAME:-canonical_store}?sslmode=disable
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
+      CRITICAL_QUEUE_NAME: ${CRITICAL_QUEUE_NAME:-critical-alerts}
       BMKG_BASE_URL: http://bmkg-mock:8081
       BMKG_API_KEY: ${BMKG_API_KEY}
       PVMBG_BASE_URL: http://pvmbg-mock:8082
@@ -222,6 +223,7 @@ services:
       AGGREGATOR_GRPC_ADDR: aggregator:9091
       AUTH_SERVICE_GRPC_ADDR: auth-service:9092
       DASHBOARD_UPDATER_URL: http://dashboard-updater:8093
+      NOTIFIER_URL: http://notifier:8094
       JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET}
       MAX_INFLIGHT_REQUESTS: ${CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS:-100}
       MEDIA_MAX_INFLIGHT: ${MEDIA_MAX_INFLIGHT:-}
@@ -281,6 +283,7 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
       QUEUE_NAME: notifier
+      CRITICAL_QUEUE_NAME: ${CRITICAL_QUEUE_NAME:-critical-alerts}
       DEDUP_STORE_PATH: /var/lib/notifier/dedup.log
     volumes:
       - notifier_dedup_data:/var/lib/notifier

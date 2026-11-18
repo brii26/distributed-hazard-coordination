@@ -4,7 +4,7 @@
 #   user      -> POSTGRES_USER
 #   password  -> POSTGRES_PASSWORD
 # ConfigMap `store-schema`: content is owned by P1 and created from services/aggregator/migrations
-#   (001_hazard_events.sql, 002_shard.sql, 008_shard_state.sql); #270 only adds it to the kustomization.
+#   (001_hazard_events.sql, 002_shard.sql, 011_shard_state.sql); #270 only adds it to the kustomization.
 # hostPath /var/lib/bnpb-store must match the Tester Agent wipe-node path (verify in #269).
 # Memory stays 512Mi requests / 1Gi limits (Appendix B, checked by #275); shared_buffers=128MB.
 apiVersion: v1

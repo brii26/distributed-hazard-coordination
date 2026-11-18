@@ -331,7 +331,7 @@ func (r *rebalancer) copyShard(ctx context.Context, shard int, src, dst *node) e
 		}
 
 		cctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
-		rows, err := r.c.listShard(cctx, src, shard, after, r.pageSize)
+		rows, err := r.c.listShard(cctx, src, shard, after, r.pageSize, listFilter{})
 
 		cancel()
 

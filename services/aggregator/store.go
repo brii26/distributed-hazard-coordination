@@ -73,7 +73,7 @@ func (s *store) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 	return upsertOn(ctx, s.db, h)
 }
 
-// Writes h to db in one transaction. True if new or changed, false for an identical repeat.
+// Writes h to db in one transaction, after the fencing check when ctx carries a lease epoch. True if new or changed, false for an identical repeat.
 func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error) {
 	start := time.Now()
 	ctx = startCall(ctx, "canonical-store upsert")
@@ -99,6 +99,10 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 	}
 
 	defer func() { _ = tx.Rollback() }()
+
+	if err = fenceTx(ctx, tx, h.Source); err != nil {
+		return false, err
+	}
 
 	var (
 		id       string
@@ -238,6 +242,8 @@ func scanHazard(sc interface{ Scan(...any) error }) (HazardEvent, error) {
 		if err := json.Unmarshal(attrs, &h.Attributes); err != nil {
 			return h, err
 		}
+
+		h.RawAttributes = attrs
 	}
 
 	return h, nil

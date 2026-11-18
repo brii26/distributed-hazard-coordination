@@ -22,6 +22,15 @@
       "read": ".*"
     }
   ],
+  "queues": [
+    {
+      "name": "critical-alerts",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
   "exchanges": [
     {
       "name": "hazard.events",
