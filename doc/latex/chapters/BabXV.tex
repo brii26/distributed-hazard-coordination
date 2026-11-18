@@ -1,0 +1,326 @@
+% sumber: doc/IF4031 - Tugas Besar - M2.pdf (Problem 5), doc/P5_SLO.md, docs/CONFIGURATION.md, .env.example,
+% services/aggregator/{sensor,sensor_resilience,sensor_validate,breaker,critical}.go, services/client-facing-api/inflight.go
+% Bukti (screenshot, log, trace) belum ada. Setiap \ph{...} adalah placeholder yang harus diganti setelah game day (\#324) dan fresh clone (\#329).
+\chapter[MILESTONE 2: PROBLEM 5]{Milestone 2: Problem 5, Pelampung yang Berbohong}
+
+Problem 5 pada Milestone 2 menambahkan Sensor Pantai, sumber ketiga yang dibuat vendor lain dan tidak bisa diubah kodenya. \textit{Image}-nya dipakai apa adanya dengan digest yang ditentukan spesifikasi. Bab ini membahas tiap persoalan pada kriteria 2 sampai 5, mekanisme ketahanan beserta konfigurasinya, alternatif yang tidak dipilih, perilaku menyimpang sensor yang ditemukan, target keandalan, dan kerangka post-mortem \textit{game day}. Bagian Bukti dan post-mortem masih berisi placeholder merah karena \textit{game day} belum dijalankan.
+
+\section{Identifikasi Persoalan}
+
+Setiap subbab berikut memuat nama persoalan, konsepnya dalam literatur sistem terdistribusi, dan kriteria spesifikasi yang memicunya.
+
+\subsection{Data yang Melanggar Kontrak (Kriteria 2)}
+
+Persoalannya adalah \textit{poison message}: satu observasi yang rusak bisa ikut tersimpan sebagai \texttt{HazardEvent} dan sampai ke Tim Lapangan, atau membuat seluruh \textit{batch} gagal sehingga observasi valid di sebelahnya ikut tertunda. Konsep yang dipakai adalah \textit{boundary validation} bersama \textit{quarantine}, juga disebut \textit{dead-letter store}. Data yang ditolak disisihkan utuh beserta alasannya, tidak dibuang dan tidak diproses. Karena datanya sendiri yang salah, pengulangan tidak akan mengubah hasil, sehingga baris itu ditandai tidak dapat dicoba ulang.
+
+\subsection{Kegagalan Berantai dari Sensor yang Tidak Sehat (Kriteria 3 dan 4)}
+
+Persoalannya adalah \textit{cascading failure}: bila \textit{poller} Sensor Pantai menunggu sensor yang hang, sumber daya yang sama, yaitu \textit{goroutine}, koneksi, dan waktu, tidak tersedia untuk BMKG, PVMBG, atau permintaan \textit{client}. Dua konsep dipakai bersama. \textit{Circuit breaker} memutus panggilan ke dependensi yang terus gagal dan mencoba lagi sesekali pada keadaan \textit{half-open}, sehingga jumlah permintaan ke sensor yang sakit tidak bertambah. \textit{Bulkhead} memberi sensor kolam sumber daya sendiri sehingga kegagalannya tidak menjalar ke sumber lain.
+
+\subsection{Menunggu Tanpa Batas (Kriteria 4)}
+
+Persoalannya adalah panggilan jaringan yang tidak punya batas waktu, sehingga \textit{client} ikut menunggu sampai \textit{timeout} bawaan. Konsep yang dipakai adalah \textit{timeout} pada setiap panggilan keluar dan pemisahan jalur baca dari jalur polling, supaya permintaan \textit{client} dijawab dari Canonical Store tanpa menyentuh sensor.
+
+\subsection{Retry Storm (Kriteria 4)}
+
+Persoalannya adalah \textit{retry storm}, kadang disebut \textit{thundering herd}: ketika sensor gagal, ketiga replika Aggregator dan semua percobaan ulang yang tidak diatur dapat mengetuk sensor pada saat yang sama dan mempercepat kejatuhannya. Konsep yang dipakai adalah \textit{exponential backoff with jitter}: jeda antar percobaan membesar berlipat sampai batas atas, dan \textit{jitter} acak mencegah semua pemanggil sinkron.
+
+\subsection{Sensor yang Mengaku Sehat tetapi Datanya Basi (Kriteria 4)}
+
+Sensor dapat menjawab 200 sementara jam dan observasi terbarunya berhenti bergerak. Persoalannya adalah perbedaan \textit{liveness}, yaitu proses hidup dan menjawab, dengan \textit{freshness}, yaitu data masih bergerak. Perbedaan ini dikenal pada \textit{failure detector}. Mekanisme yang dipakai adalah \textit{stale detection}: kemajuan waktu sensor dibandingkan terhadap jam lokal, bukan nilai jam sensor itu sendiri.
+
+\subsection{Jawaban Cepat Saat Sumber Mati (Kriteria 4)}
+
+Persoalannya adalah menjawab \textit{client} ketika sumbernya tidak ada. Konsep yang dipakai adalah \textit{graceful degradation}: data terakhir yang tersimpan tetap dilayani bersama penanda \texttt{source\_status} dan \texttt{stale\_since}, jadi \textit{client} tahu data itu mungkin tertinggal dan tidak menerima angka lama yang tampak segar.
+
+\subsection{Beban Melebihi Kapasitas (Kriteria 5)}
+
+Persoalannya adalah kapasitas Client-Facing API habis ketika semua jenis \textit{client} berebut slot yang sama, sementara permintaan Tim Lapangan lebih penting daripada Media. Konsep yang dipakai adalah \textit{load shedding} berdasarkan prioritas: sebagian kapasitas dicadangkan, dan permintaan prioritas rendah ditolak lebih awal secara terkontrol dengan 429 dan \texttt{Retry-After}.
+
+\subsection{Peringatan Kritis yang Tidak Boleh Hilang (Kriteria 1)}
+
+Kriteria 1 tidak termasuk daftar yang diminta bab ini, tetapi jalurnya dibahas karena sisanya bergantung padanya. Persoalannya adalah kehilangan peringatan ketika broker atau Notifier mati. Konsepnya adalah \textit{transactional outbox}, publish dengan \textit{publisher confirms}, antrean durable dengan \textit{manual acknowledgment}, dan konsumen idempoten, yang bersama-sama memberi pengiriman \textit{at-least-once} dengan efek tepat satu kali.
+
+\section{Mekanisme Ketahanan dan Konfigurasinya}
+
+Nilai default di bawah dibaca dari \texttt{.env.example} dan \env{docs/CONFIGURATION.md}, dan cocok dengan konstanta di kode. Alasan tiap nilai adalah pertimbangan desain kelompok. Angka yang belum diuji pada \textit{cluster} ditandai.
+
+\newcommand{\envtab}[1]{%
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.32\linewidth}|>{\raggedright\arraybackslash}p{0.08\linewidth}|>{\raggedright\arraybackslash}p{0.5\linewidth}|}
+\hline
+\textbf{Variabel} & \textbf{Default} & \textbf{Alasan nilai} \\
+\hline
+\endfirsthead
+\hline
+\endhead
+#1
+\end{longtable}}
+
+\subsection{Timeout dan Batas Jawaban Lambat}
+
+Setiap panggilan ke sensor dibatasi \textit{timeout} satu detik, dan jawaban 200 yang lebih lambat dari 800 ms dihitung sebagai kegagalan walau datanya tetap disimpan.
+
+\envtab{
+\env{SENSOR_TIMEOUT_MS} & 1000 & Satu panggilan tidak boleh menahan \textit{poller} lebih lama dari satu detik. Nilai ini lebih kecil dari \texttt{POLL\_TIMEOUT\_MS} (4000) milik BMKG dan PVMBG karena sensor adalah sumber yang paling tidak dipercaya. \\
+\hline
+\env{SENSOR_SLOW_MS} & 800 & Sensor yang menjawab mendekati batas \textit{timeout} hampir pasti akan gagal berikutnya. Menghitungnya sebagai kegagalan membuat \textit{breaker} terbuka lebih dulu. Harus tidak lebih besar dari \texttt{SENSOR\_TIMEOUT\_MS}, dan aplikasi menolak start bila dilanggar. \\
+\hline
+\env{UPSTREAM_TIMEOUT_MS} & 1000 & Batas panggilan Client-Facing API ke Aggregator dan Auth Service, sehingga permintaan \textit{client} tidak menunggu lebih lama dari satu detik walau Aggregator lambat. \\
+\hline
+}
+
+\subsection{Circuit Breaker}
+
+\textit{Poller} sensor memakai \textit{circuit breaker} yang sama dengan BMKG dan PVMBG (\texttt{breaker.go}). Tiga kegagalan atau jawaban lambat berturut-turut membuatnya OPEN. Selama OPEN \textit{poller} tidak menelepon sensor sama sekali dan hanya menambah penghitung \env{aggregator_sensor_rejected_by_breaker_total}. Setelah masa OPEN selesai, satu panggilan percobaan dikirim (HALF-OPEN). Bila berhasil \textit{breaker} CLOSED lagi, bila gagal OPEN lagi. Pemulihan tidak membutuhkan restart.
+
+\envtab{
+\env{SENSOR_CB_FAILURE_THRESHOLD} & 3 & Sama dengan default sumber lain. Satu kegagalan tunggal (misalnya satu 503 pendek) tidak membuka \textit{breaker}, tetapi tiga berturut-turut sudah menandakan masalah yang bukan kebetulan. \\
+\hline
+\env{SENSOR_CB_OPEN_MS} & 10000 & Sama dengan sumber lain. Selama 10 detik sensor tidak diganggu, dan setelah itu paling banyak satu panggilan percobaan per 10 detik. Nilai yang lebih pendek memberi pemulihan lebih cepat tetapi lebih banyak ketukan ke sensor yang sakit. \\
+\hline
+}
+
+Test \env{TestSensorRequestsBoundedDuringOutage} memeriksa bahwa dalam satu detik outage jumlah panggilan ke sensor paling banyak tiga ditambah satu percobaan per periode OPEN (dengan periode OPEN dan backoff diperpendek agar test cepat), bukan terus bertambah.
+
+\subsection{Backoff dengan Jitter}
+
+Setelah poll gagal, jeda berikutnya adalah yang lebih besar antara interval polling dan hasil \textit{backoff}. Jeda dimulai dari nilai dasar dan dilipatduakan tiap kegagalan berturut-turut sampai batas atas. \textit{Jitter} mengurangi hingga separuh jeda secara acak, sehingga batas atas tidak pernah terlewati. Keberhasilan mengembalikan jeda ke awal. Nilai jeda terakhir terlihat pada gauge \env{aggregator_sensor_backoff_seconds}.
+
+\envtab{
+\env{SENSOR_BACKOFF_BASE_MS} & 3000 & Sama dengan \texttt{POLL\_INTERVAL\_MS}, sehingga kegagalan pertama tidak membuat sensor dipanggil lebih sering dari laju normal. Dokumentasi menyebut jeda tidak pernah lebih pendek dari interval polling. \\
+\hline
+\env{SENSOR_BACKOFF_MAX_MS} & 30000 & Batas atas supaya sensor yang sudah pulih ditemukan dalam hitungan puluhan detik, bukan menit. Harus tidak lebih kecil dari nilai dasar. \\
+\hline
+}
+
+Mekanisme yang sama dengan konstanta berbeda dipakai pada jalur lain: publisher fan-out dan relay peringatan kritis mencoba ulang dengan jeda 200 ms sampai 5 detik (\texttt{retryBase} dan \texttt{retryMax} pada \texttt{ingest.go}), dan pekerja \textit{retry} untuk pesan gagal memakai \texttt{RETRY\_BASE} 10 detik, \texttt{RETRY\_CAP} 10 menit, dan \texttt{RETRY\_MAX\_ATTEMPTS} 8, juga dengan \textit{jitter}. Jeda relay kritis sengaja pendek karena target latensinya lima detik.
+
+\subsection{Bulkhead}
+
+Sensor punya kolam koneksi HTTP sendiri yang tidak dipakai sumber lain, \textit{goroutine} \textit{poller} sendiri, dan \textit{semaphore} yang membatasi panggilan bersamaan. Panggilan yang melebihi batas tidak menunggu slot dan langsung gagal dengan \texttt{errBulkheadFull}, dihitung pada \env{aggregator_sensor_rejected_by_bulkhead_total}. Satu poll juga hanya membaca sejumlah halaman, sisanya dibaca pada poll berikutnya.
+
+\envtab{
+\env{SENSOR_MAX_CONCURRENT} & 2 & \textit{Poller} bersifat satu \textit{goroutine} sehingga satu panggilan berjalan pada satu waktu. Batas dua memberi satu slot cadangan dan tetap menjaga ukuran kolam koneksi kecil, jadi sensor yang hang tidak bisa menahan banyak koneksi. \\
+\hline
+\env{SENSOR_MAX_PAGES} & 20 & Halaman sensor paling banyak 1000 item, jadi satu poll membaca paling banyak 20.000 observasi. Bila sensor mengirim semuanya sekaligus, \textit{poller} tidak terkunci di satu poll yang panjang dan tidak melewati batas \textit{timeout} lain. \\
+\hline
+}
+
+Test \env{TestSensorDownDoesNotStopOtherSources} menjalankan \textit{poller} BMKG berdampingan dengan sensor yang menggantung dan memeriksa bahwa BMKG tetap dipoll selama \textit{breaker} sensor terbuka.
+
+\subsection{Stale Detection}\label{sec:p5m2-stale}
+
+\textit{Poller} mencatat waktu sensor terbaru yang pernah terlihat, yaitu \texttt{generated\_at} atau \texttt{observed\_at} yang paling besar, dan kapan waktu lokal terakhir nilai itu bertambah. Bila tidak bertambah selama batas yang ditentukan padahal sensor menjawab, sumber ditandai \texttt{STALE}. Hanya kemajuan yang dibandingkan, bukan nilai jam sensor, karena jam sensor adalah jamnya sendiri. Status \texttt{DOWN} tidak ditutupi oleh \texttt{STALE} (\env{TestStaleDoesNotHideDown}).
+
+\envtab{
+\env{SENSOR_STALE_AFTER_MS} & 60000 & Dua puluh kali interval polling. Cukup panjang agar jeda normal antar observasi tidak dianggap basi, dan cukup pendek agar sensor yang membeku terdeteksi dalam satu menit. Angka ini belum dikalibrasi terhadap profil ujian. \\
+\hline
+}
+
+\subsection{Degradasi pada Jalur Baca}
+
+Permintaan \texttt{GET /hazards} untuk data \texttt{COASTAL} dijawab dari satu \textit{pod} store lewat \texttt{DATABASE\_URL} (bukan Canonical Store ber-RF 2, lihat Subbab~\ref{sec:p5m2-batasan}) tanpa menunggu sensor. Respons membawa \texttt{source\_status} (\texttt{UP}, \texttt{DEGRADED}, \texttt{DOWN}, atau \texttt{STALE}), \texttt{last\_success\_at}, dan \texttt{stale\_since}. \texttt{DEGRADED} berarti poll gagal tetapi \textit{breaker} belum terbuka, \texttt{DOWN} berarti \textit{breaker} tidak CLOSED, dan \texttt{STALE} berarti sensor menjawab tetapi datanya tidak bergerak. Pola ini sama dengan degradasi PVMBG pada Problem 2 M1, sehingga tidak ada konfigurasi tambahan.
+
+\subsection{Load Shedding Berdasarkan Prioritas}
+
+Client-Facing API menghitung permintaan yang sedang berjalan menurut peran dari JWT yang diverifikasi lokal. Tim Lapangan dan Operator berprioritas tinggi. Media dan permintaan anonim seperti login, \textit{refresh}, dan token tidak valid, berbagi satu anggaran rendah. Bila anggaran rendah penuh, permintaan ditolak dengan 429 dan \texttt{Retry-After}. Prioritas tinggi baru ditolak ketika batas global tercapai. Kedua pemeriksaan dilakukan di bawah satu \textit{lock}, sehingga permintaan yang ditolak tidak memegang slot. Jalur \texttt{/health}, \texttt{/metrics}, dan dua jalur \textit{stream} tidak dibatasi supaya \textit{probe} dan \textit{scrape} tetap bekerja saat beban tinggi. Penolakan tercatat pada \env{client_api_inflight_rejected_requests_total} per peran dan alasan (\texttt{media\_cap} atau \texttt{global\_cap}).
+
+\envtab{
+\env{CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS} & 100 & Batas global permintaan bersamaan. Minimal 2 agar anggaran rendah bisa lebih kecil dari batas global. \\
+\hline
+\env{MEDIA_MAX_INFLIGHT} & 80\% batas global & Cadangan 20 slot dari 100 hanya dapat dipakai Tim Lapangan dan Operator, jadi lonjakan Media tidak bisa menghabiskannya. Nilai harus positif dan lebih kecil dari batas global, dan aplikasi menolak start bila dilanggar. Rasio 80\% adalah pertimbangan desain dan belum dituning terhadap beban nyata. \\
+\hline
+\env{RATE_LIMIT_RPS} & 50 & \textit{Token bucket} per akun dari Problem 2 M1, melengkapi batas kapasitas dengan batas per \textit{client}. \\
+\hline
+}
+
+Penghitung in-flight bersifat lokal per instance Client-Facing API, sehingga cadangan 20 slot berlaku per instance dan bukan total \textit{cluster}.
+
+\subsection{Jalur Peringatan Kritis}
+
+Observasi dengan \texttt{critical=true} dari sensor ditulis ke tabel \texttt{critical\_outbox} di satu \textit{pod} store lewat \texttt{DATABASE\_URL} (bukan Canonical Store ber-RF 2, lihat Subbab~\ref{sec:p5m2-batasan}) sebelum \textit{upsert} \texttt{HazardEvent}, sehingga crash atau outage setelah titik itu tidak menghilangkan peringatan. Relay dengan koneksi dan loop sendiri memindahkan baris ke antrean durable \texttt{critical-alerts} dengan pesan persistent dan publish mandatory, lalu menunggu \textit{publisher confirm}, secara berurutan dan mengulang dengan jeda 200 ms sampai 5 detik. Antrean ini terpisah dari \textit{fan-out} umum, sehingga \textit{backlog} konsumen lain tidak berada di depannya. Notifier mengonsumsinya dengan \textit{manual acknowledgment}, melakukan \textit{requeue} setelah 100 ms bila pengiriman gagal, dan mengirim peringatan lewat \textit{server-sent events} ke Tim Lapangan sebelum ack. Duplikat dibuang berdasarkan \texttt{observation\_id}. Nama antrean dikonfigurasi lewat \texttt{CRITICAL\_QUEUE\_NAME} (default \texttt{critical-alerts}) dan harus sama dengan \env{infra/rabbitmq/definitions.json.tpl}.
+
+\section{Alternatif yang Dibandingkan}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.38\linewidth}|>{\raggedright\arraybackslash}p{0.34\linewidth}|}
+\hline
+\textbf{Pilihan} & \textbf{Alasan dipilih atau tidak} & \textbf{Trade-off} \\
+\hline
+\endfirsthead
+\hline
+\endhead
+Dipilih \textit{circuit breaker}, bukan \textit{timeout} dan \textit{retry} saja & \textit{Timeout} hanya membatasi lama satu panggilan. Sensor yang hang tetap diketuk pada setiap poll, sehingga jumlah panggilan tidak turun. \textit{Breaker} menghentikan panggilan sama sekali selama OPEN, dan \env{TestSensorRequestsBoundedDuringOutage} memeriksa jumlah panggilannya terbatas & Dibutuhkan tiga kegagalan sebelum \textit{breaker} terbuka, dan keadaannya ada di memori tiap proses. Percobaan pemulihan paling cepat setiap 10 detik \\
+\hline
+Dipilih \textit{backoff} dengan \textit{jitter}, bukan \textit{retry} berjeda tetap & Jeda tetap sama dengan laju polling normal dan ketiga replika Aggregator bisa mengetuk bersamaan. Jeda yang melipat dua sampai 30 detik dengan \textit{jitter} acak menjauhkan ketukan dari sensor yang sakit & Sensor yang sudah pulih baru ditemukan setelah jeda berjalan, paling lama 30 detik. Perilakunya lebih sulit diuji karena acak \\
+\hline
+Dipilih \textit{load shedding} berdasarkan prioritas, bukan 429 biasa saat penuh & Batas global saja menolak siapa pun yang datang saat penuh, termasuk Tim Lapangan. Cadangan 20 dari 100 slot hanya dipakai Tim Lapangan dan Operator, sehingga lonjakan Media tidak menghabiskannya & Media dibatasi 80 slot walau Tim Lapangan sedang sepi. Penghitung bersifat lokal per instance, dan rasio 80\% belum dituning \\
+\hline
+Dipilih karantina per item, bukan menggagalkan seluruh \textit{batch} & Satu observasi rusak tidak menahan observasi valid di sebelahnya. Baris rusak disimpan utuh dengan alasannya dan ditandai tidak dapat dicoba ulang. Menggagalkan \textit{batch} membuat kursor tidak maju, sehingga \textit{batch} yang sama dibaca ulang terus & Aturan validator bisa salah menolak observasi yang sebenarnya valid, dan batasnya berasal dari profil \textit{practice} (\#319). Tabel \texttt{failed\_messages} tumbuh dan perlu dibaca lewat audit \\
+\hline
+Dipilih \textit{outbox} transaksional, bukan \textit{publish} langsung & \textit{Publish} langsung sesudah \textit{upsert} kehilangan peringatan bila proses crash atau broker mati di antara keduanya. Baris \textit{outbox} ditulis sebelum \textit{upsert} dan dikirim relay dengan \textit{publisher confirm} & Ada satu tulisan tambahan dan latensi relay, dan pengiriman menjadi \textit{at-least-once} sehingga Notifier harus membuang duplikat. Lokasi tabelnya punya batasan pada Subbab~\ref{sec:p5m2-batasan} \\
+\hline
+\end{longtable}
+
+\section{Perilaku Menyimpang Sensor Pantai}
+
+Daftar berikut berasal dari catatan menjalankan \textit{image} profil \textit{practice} secara lokal dengan Docker (dicatat pada issue \#317 dan \#318) dan dari kode, test, serta dokumen yang menanganinya. Penanganan tidak memakai ID, seed, urutan, atau pola khusus profil latihan, sesuai ketentuan spesifikasi. Hasil pengamatan profil ujian belum ada dan ditandai pada akhir bab ini.
+
+\subsection{Observasi Duplikat}
+
+Sekitar dua persen observasi yang dikirim sensor berulang. Dokumen kontrak tidak menyebutnya. Pengulangan dapat terjadi dalam satu \textit{batch} maupun pada \textit{batch} berikutnya, dan seluruh \textit{batch} dapat terbaca ulang setelah kursor di-reset. Penanganannya ada pada tiga lapis. \texttt{mapBatch} memetakan satu \texttt{observation\_id} sekali per \textit{batch}, \texttt{observation\_id} dipakai sebagai \texttt{source\_ref\_id} sehingga penyimpanan berupa \textit{upsert}, dan Notifier membuang duplikat pada jalur kritis. \env{TestSensorDuplicatesPublishOnce} memeriksa tiga skenario tadi dan memastikan setiap id dipublikasikan sekali.
+
+\subsection{Item Tidak Berurutan}
+
+Lampiran kontrak menyatakan item diurutkan menurut \texttt{observed\_at} lalu \texttt{observation\_id}, tetapi profil \textit{practice} mengirim item yang tidak berurutan. Penyimpangan ini dicatat sebagai deviasi dari kontrak. Sistem tidak memakai urutan item maupun \texttt{observed\_at} yang naik, dan kemajuan dibaca hanya dari \texttt{next\_cursor} milik sensor. Test \texttt{TestSensorMapBatch} menyertakan observasi lebih lama yang muncul setelah yang lebih baru dan memeriksa keduanya diproses.
+
+\subsection{Periode 503 yang Singkat}
+
+Sensor kadang menjawab 503 selama periode pendek lalu pulih. Satu kegagalan tidak membuka \textit{breaker} karena ambangnya tiga, tetapi dihitung sebagai kegagalan berturut-turut, dan \textit{backoff} dengan \textit{jitter} mengatur jeda sampai sensor pulih. Test klien sensor menyertakan jawaban 503 sebagai kegagalan, dan \env{TestSensorHalfOpenProbeAndRecovery} memeriksa bahwa polling lanjut sendiri setelah pulih. Karena kursor hanya maju setelah \textit{batch} tersimpan, 503 di tengah poll tidak membuat data terlewat.
+
+\subsection{Flag Kritis Tidak Bergantung pada Nilai}
+
+Flag \texttt{critical} tidak mengikuti nilai \texttt{wave\_height\_m}, \texttt{sea\_level\_anomaly\_m}, atau \texttt{quality}. Sistem karena itu tidak membuat ambang sendiri: severity \texttt{AWAS} bila dan hanya bila sensor menandai \texttt{critical}, selain itu \texttt{NORMAL}. Observasi dengan \texttt{quality} \texttt{suspect} tetap disimpan, dan bila \texttt{critical}-nya true tetap masuk jalur kritis sesuai sub-test \textit{severity follows the critical flag only} pada \texttt{TestSensorMapBatch}. Alasannya adalah biaya kesalahan yang tidak simetris: membuang peringatan kritis karena nilainya tampak biasa dapat menghilangkan satu peringatan tsunami, sedangkan peringatan tambahan hanya menambah satu notifikasi.
+
+\subsection{Kursor Null dan Kursor Milik Klien}
+
+Bila tidak ada data baru, \texttt{next\_cursor} bernilai null. \textit{Poller} menyimpan kursornya sendiri dan tidak kembali ke awal bila kursor sudah ada. Kursor disimpan di satu \textit{pod} store lewat \texttt{DATABASE\_URL} (bukan Canonical Store ber-RF 2, lihat Subbab~\ref{sec:p5m2-batasan}) setelah \textit{batch} tersimpan, dan \textit{batch} yang gagal tersimpan mengembalikan kursor ke nilai tersimpan. \env{TestSensorRestartKeepsCursor} memeriksa restart di tengah aliran tidak menghasilkan duplikat dan tidak ada celah.
+
+\subsection{Sensor Mengaku Sehat tetapi Datanya Basi}
+
+Sensor dapat menjawab 200 sementara jam dan observasi terbarunya tidak bergerak. Ini ditangani oleh \textit{stale detection} pada Subbab~\ref{sec:p5m2-stale} dan diuji pada \env{TestSensorStaleWhenClockStandsStill} dan \env{TestSensorStaleCountsNewObservations}.
+
+\subsection{Alasan Penolakan oleh Validator}
+
+Validator (\texttt{sensor\_validate.go}) memeriksa tiap observasi terhadap satu tabel aturan: \textit{field} wajib ada dan bertipe benar, lalu pemeriksaan nilai. Kode alasan, batas, dan hasilnya adalah sebagai berikut. Batas rentang sengaja jauh di luar pembacaan nyata sehingga hanya menangkap nilai yang mustahil. Stasiun dibaca dari \texttt{/v1/stations} saat berjalan, bukan daftar tetap, dan tanpa stasiun semua observasi ditolak.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.22\linewidth}|>{\raggedright\arraybackslash}p{0.7\linewidth}|}
+\hline
+\textbf{Kode alasan} & \textbf{Kondisi} \\
+\hline
+\endfirsthead
+\hline
+\endhead
+\texttt{missing\_field} & \textit{Field} tidak ada, bernilai null, atau string kosong pada salah satu dari \texttt{observation\_id}, \texttt{station\_id}, \texttt{observed\_at}, \texttt{sea\_level\_anomaly\_m}, \texttt{wave\_height\_m}, \texttt{quality}, \texttt{critical}. \\
+\hline
+\texttt{bad\_type} & Tipe salah (angka berupa string, \texttt{critical} berupa string), \texttt{observed\_at} bukan waktu RFC 3339, \texttt{observed\_at} tidak dalam UTC, atau item bukan objek JSON. \\
+\hline
+\texttt{bad\_quality} & \texttt{quality} bukan \texttt{ok} atau \texttt{suspect}. \\
+\hline
+\texttt{unknown\_station} & \texttt{station\_id} tidak ada pada daftar stasiun dari sensor. \\
+\hline
+\texttt{future\_observed\_at} & \texttt{observed\_at} lebih dari satu detik setelah \texttt{generated\_at} milik sensor pada respons yang sama. \\
+\hline
+\texttt{out\_of\_range} & \texttt{sea\_level\_anomaly\_m} di luar $-20$ sampai $20$, \texttt{wave\_height\_m} di luar $0$ sampai $30$, NaN, atau angka yang meluap (misalnya \texttt{1e999}). \\
+\hline
+\end{longtable}
+
+Pemeriksaan berhenti pada pelanggaran pertama, dengan pemeriksaan keberadaan dan tipe semua \textit{field} dilakukan sebelum pemeriksaan nilai. Baris yang ditolak disimpan pada \textit{failed message store} sebagai tidak dapat dicoba ulang, dengan \textit{payload} asli, sumber, waktu terima, \texttt{observation\_id} bila ada, dan alasan berformat \texttt{kode: detail}. Alasan itu terlihat pada \texttt{GET /internal/audit/unprocessed}. Penghitung \env{aggregator_sensor_rejected_total} dipecah per alasan. Aturan batas ini berasal dari tipe pada kontrak dan nilai profil \textit{practice}, karena kontrak tidak mencantumkan nilai \texttt{quality}, rentang numerik, atau kategori pelanggaran (issue \#319). Tidak satu pun konstanta khusus profil latihan ada pada validator (\env{TestValidatorHasNoPracticeConstants}).
+
+\subsection{Perilaku dari Profil Ujian}
+
+\ph{BELUM ADA. Setelah \textit{game day} atau run profil exam, tambahkan di sini tiap perilaku baru yang terlihat misalnya \textit{field} rusak, lonjakan \textit{batch}, 503 panjang, atau jam sensor mundur. Tulis juga cara menemukannya lewat log Aggregator \textit{sensor observation rejected}, \env{aggregator_sensor_rejected_total} per alasan, atau panel \textit{dashboard}, dan cara penanganannya. Jangan menulis perilaku yang tidak teramati.}
+
+\section{Target Keandalan}
+
+Target ditulis pada \texttt{doc/P5\_SLO.md} dan dievaluasi oleh \textit{recording rules} dan panel \textit{dashboard} grup \textit{SLO and error budget}. Cakupannya jalur yang bergantung pada Tim Lapangan saat bencana. Portal Media dan kesegaran polling BMKG dan PVMBG tidak termasuk.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.05\linewidth}|>{\raggedright\arraybackslash}p{0.45\linewidth}|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.3\linewidth}|}
+\hline
+\textbf{No} & \textbf{Indikator} & \textbf{Target} & \textbf{Status} \\
+\hline
+\endfirsthead
+\hline
+\endhead
+1 & Peringatan kritis terkirim ke Tim Lapangan dalam 5 detik sejak ingest & 99,9\% & Terimplementasi \\
+\hline
+2 & Permintaan baca Tim Lapangan yang bukan galat server dan tidak ditolak & 99,5\% & Terimplementasi sebagai proksi \\
+\hline
+3 & Permintaan baca Tim Lapangan di bawah 1 detik & 99\% & Terdefinisi, belum diukur karena metrik belum ada \\
+\hline
+\end{longtable}
+
+Jendela SLO adalah 30 hari bergulir. Prometheus pada \textit{cluster} hanya menyimpan data 2 jam, sehingga \textit{error budget} dihitung atas rentang waktu yang dipilih pada Grafana, yaitu rentang \textit{game day}, ditambah panel \textit{trailing} 2 jam. Angka 99,9\% lebih ketat dari kebutuhan p95 pada spesifikasi karena p95 mengizinkan 5\% peringatan terlambat. Peringatan yang tidak pernah terkirim tidak dapat dihitung oleh Notifier, sehingga dipantau terpisah lewat selisih \env{aggregator_critical_staged_total} dan \env{critical_alerts_delivered_total} dengan alert \env{CriticalAlertsUndelivered}, karena kebutuhannya nol kehilangan. Alasan lengkap, definisi \textit{bad event}, \textit{burn rate} (14,4 untuk jendela cepat dan 6 untuk jendela lambat), serta keterbatasan SLI 2 dan 3 ada pada \texttt{doc/P5\_SLO.md}. Aturan itu baru diuji dengan \texttt{promtool test rules} terhadap data sintetis, belum pada \textit{cluster} hidup.
+
+\section{Bukti per Kriteria}
+
+Bukti belum diambil. Setiap kotak merah di bawah menyebut apa yang harus dilampirkan dan sumbernya, dan akan terganti gambar sungguhan begitu \textit{file} dengan nama yang tertera ditaruh di \texttt{doc/latex/figures/bukti/}. Bukti diambil setelah \textit{game day} (\#324) dan verifikasi \textit{fresh clone} (\#329). Tidak ada angka atau keluaran yang ditulis sebelum bukti ada.
+
+\subsection{Kriteria 1: Peringatan Kritis Tidak Hilang}
+
+\buktiph{p5-k1-kritis.png}{Keluaran skenario peringatan kritis dengan RabbitMQ dan Notifier dimatikan}{keluaran \env{tests/scenarios/critical-alerts.sh} (baris PASS dan RESULT) yang membuktikan semua peringatan terkirim tepat sekali, beserta p95 latensi.}{\texttt{docker compose up -d --build --wait canonical-store rabbitmq aggregator notifier} lalu jalankan skrip.}
+
+\subsection{Kriteria 2: Validasi dan Karantina}
+
+\buktiph{p5-k2-karantina.png}{Baris sensor yang disisihkan beserta alasannya}{keluaran \texttt{GET /internal/audit/unprocessed} (token Internal Ops) dengan baris sensor, kolom reason berformat kode: detail, dan retryable=false, lalu \texttt{curl} ke \texttt{/metrics} Aggregator yang memperlihatkan \env{aggregator_sensor_rejected_total} per alasan, dan bukti bahwa \texttt{GET /hazards?type=COASTAL} tidak memuat \texttt{observation\_id} yang ditolak.}{jalankan sensor dengan profil yang menghasilkan data rusak, lalu panggil endpoint dengan token \texttt{AUDIT\_TOKEN}.}
+
+\subsection{Kriteria 3: Sumber Lain Tetap Memenuhi Latensi M1}
+
+\buktiph{p5-k3-latensi.png}{Latensi SEISMIC dan VOLCANIC selama sensor bermasalah}{keluaran waktu respons \texttt{GET /hazards?type=SEISMIC} dan \texttt{type=VOLCANIC} selama outage sensor beserta p95-nya (batas latensi M1), dan panel Grafana sumber lain yang tetap terpoll.}{matikan atau bekukan sensor sesuai skenario \textit{game day}, jalankan \texttt{curl} berulang dengan \texttt{-w '\%\{time\_total\}'}.}
+
+\subsection{Kriteria 4: Sensor Tidak Sehat dan Pulih Sendiri}
+
+\buktiph{p5-k4-breaker.png}{\textit{Breaker} sensor terbuka lalu menutup tanpa intervensi}{panel Grafana \textit{Breaker} dan \env{aggregator_sensor_breaker_state} yang naik ke 1 (OPEN) lalu kembali ke 0 setelah sensor pulih tanpa restart, grafik \env{rate(aggregator_sensor_requests_total[1m])} yang tidak naik di atas laju normal, \env{aggregator_sensor_backoff_seconds}, \env{aggregator_sensor_rejected_by_breaker_total}, \env{aggregator_sensor_in_flight}, dan \env{aggregator_sensor_stale}=1 saat sensor membeku.}{satu \textit{scrape} \texttt{/metrics} saat outage, panel Grafana dengan rentang waktu terlihat, dan log Aggregator \textit{poll} dengan \texttt{result=failure} atau \texttt{timeout} serta \textit{circuit breaker transition}.}
+
+\buktiph{p5-k4-degradasi.png}{Jawaban cepat saat sensor DOWN atau STALE}{respons \texttt{GET /hazards?type=COASTAL} dengan \texttt{source\_status} \texttt{DOWN} atau \texttt{STALE} dan \texttt{stale\_since} terisi, beserta waktu responsnya, dan keluaran \texttt{go test ./... -run 'TestSensor|TestBackoff|TestStale'} dari \texttt{services/aggregator}.}{\texttt{curl} berulang saat outage dan saat sensor membeku.}
+
+\subsection{Kriteria 5: Load Shedding}
+
+\buktiph{p5-k5-shedding.png}{Tim Lapangan tetap dilayani, Media ditolak terkontrol}{keluaran \env{tests/load/priority.sh} (k6, peran campuran di atas kapasitas) dengan tingkat keberhasilan Tim Lapangan (target 99\% atau lebih, galat selain 429 di bawah 1\%) dan jumlah 429 untuk Media, serta grafik \env{client_api_inflight_rejected_requests_total} per peran.}{hasil tersimpan di \texttt{tests/load/results/} dan panel Grafana saat beban.}
+
+\subsection{Kriteria 6: Kombinasi Kegagalan Tanpa Intervensi}
+
+\buktiph{p5-k6-gameday.png}{\textit{Game day} dengan kombinasi kegagalan dan pemulihan tanpa intervensi}{log skrip \textit{game day} yang memuat kegagalan apa yang disuntikkan dan jam mulai serta selesainya, penegasan bahwa tidak ada perintah dari anggota kelompok selama jendela pemulihan, dan keadaan akhir sistem, yaitu semua \textit{pod} Ready, sumber UP, dan peringatan kritis terkirim.}{skrip \textit{game day} (\#324) dan \texttt{kubectl get pods} sebelum dan sesudah jendela pemulihan.}
+
+\subsection{Kriteria 7: Kegagalan Dijelaskan dari Dashboard dan Trace}
+
+\buktiph{p5-k7-trace.png}{\textit{Dashboard} dan trace dari permintaan yang terdampak}{tangkapan layar \textit{dashboard} \texttt{hazard-overview} pada saat \textit{game day} dan satu \textit{trace} Jaeger dari permintaan yang terdampak, dengan ID korelasi yang sama pada log layanan, serta catatan anggota kelompok yang menjelaskan kegagalan dari bukti itu dan siapa penulis lainnya.}{\env{tests/scenarios/trace-check.sh}, Grafana, dan Jaeger.}
+
+\subsection{Kriteria 8: Target Keandalan dan Pemakaiannya}
+
+Target didefinisikan pada bagian Target Keandalan di atas. Pemakaiannya selama \textit{game day} diisi pada subbab berikut.
+
+\subsubsection*{Pemakaian Target pada Game Day}
+
+\ph{BELUM ADA. Isi setelah \textit{game day} (\#324) dijalankan. Atur rentang waktu Grafana ke seluruh run (dari kegagalan pertama sampai pulih), lalu salin dari grup \textit{SLO and error budget}: (a) nilai panel \textit{Critical alert error budget remaining over the selected time range} dan \textit{Read availability error budget remaining}, (b) panel \textit{Critical alerts in the selected time range} yang memuat jumlah terkirim, terlambat, dan belum terkirim, (c) grafik \textit{burn rate} beserta saat melewati garis 6 dan 14,4, dan (d) apakah alert \env{CriticalAlertsUndelivered} atau \texttt{*FastBurn} pernah firing (halaman Alerts Prometheus). Tulis berapa persen budget terpakai dan cantumkan catatan bahwa SLI 2 adalah proksi dan SLI 3 tidak diukur. Jangan memperkirakan angka, hanya menyalin yang terbaca.}
+
+\section{Post-mortem Game Day}
+
+\ph{KERANGKA. Bagian ini diisi setelah skrip \textit{game day} (\#324) dijalankan dan template \env{doc/POSTMORTEM_TEMPLATE.md} tersedia. Hapus kotak merah ini setelah semuanya terisi, dan tulis hanya yang benar-benar terjadi.}
+
+\subsection{Deteksi}
+
+\ph{Isi: kegagalan apa yang disuntikkan dan pada jam berapa (waktu dari log skrip), panel atau alert mana yang pertama kali menunjukkannya (nama panel, nama alert), berapa lama dari mulai kegagalan sampai terdeteksi, dan siapa yang mendeteksi. Lampirkan tangkapan layar panel pada saat itu.}
+
+\subsection{Dampak}
+
+\ph{Isi: sumber yang terdampak, endpoint yang gagal atau melambat, jumlah permintaan gagal, jumlah peringatan kritis terkirim, terlambat, dan belum terkirim (panel hitungan SLO), serta berapa persen \textit{error budget} terpakai (rujuk Subbab Kriteria 8 pada bagian Bukti). Cantumkan juga apakah ada peringatan kritis yang hilang.}
+
+\subsection{Mitigasi}
+
+\ph{Isi: mekanisme yang bekerja sendiri selama jendela pemulihan yaitu \textit{breaker}, backoff, \textit{load shedding}, dan degradasi, beserta bukti waktunya, dan berapa lama sampai sistem pulih. Spesifikasi melarang intervensi selama jendela itu, jadi tulis dengan jelas bila tidak ada.}
+
+\subsection{Perbaikan}
+
+\ph{Isi: akar masalah tiap hal yang tidak berjalan sesuai harapan, perubahan yang dibuat (nomor issue atau commit), dan item yang belum diperbaiki beserta alasannya.}
+
+\section{Batasan yang Disadari}\label{sec:p5m2-batasan}
+
+\begin{itemize}
+\tightlist
+\item
+  Angka default \env{SENSOR_STALE_AFTER_MS} (60 detik) dan \texttt{MEDIA\_MAX\_INFLIGHT} (80\%) adalah pertimbangan desain dan belum dikalibrasi pada profil ujian.
+\item
+  Penghitung in-flight Client-Facing API bersifat lokal per instance, sehingga cadangan prioritas tidak dikoordinasikan antar instance.
+\item
+  \env{DATABASE_URL} Aggregator menunjuk Service \texttt{store}, sehingga \texttt{critical\_outbox}, \texttt{failed\_messages}, kursor sensor, dan pembacaan \texttt{COASTAL} mendarat di salah satu \textit{pod} penyimpanan per \textit{node}, bukan satu Canonical Store. Baris \textit{outbox} pada \textit{node} yang datanya dihapus ikut hilang, dan \texttt{/internal/audit/unprocessed} hanya melihat satu \textit{pod}, sehingga karantina pada \textit{pod} lain tidak terlihat. Ini sama dengan jalur baca \texttt{GET /hazards} pada Bab XI dan belum dipindah ke penyimpanan lintas \textit{shard}.
+\item
+  Lease, kursor sumber, dan token PVMBG ada pada \texttt{coordination-db}, satu replika pada volume lokal. \texttt{kill-store} dan \texttt{wipe-node} dari Tester Agent mengenai \textit{pod} itu karena berlabel \texttt{role=store}. Selama \textit{node}-nya mati tidak ada replika yang dapat memegang \textit{lease}, sehingga polling berhenti, dan volume yang terhapus menghilangkan token PVMBG (\texttt{doc/TESTER\_AGENT\_NOTES.md}).
+\item
+  SLI 2 adalah proksi karena tidak ada metrik permintaan per rute dan per peran. SLI 3 belum diukur.
+\item
+  Tidak ada Alertmanager, sehingga alert hanya terlihat pada Prometheus dan tidak mengirim notifikasi.
+\item
+  Prometheus menyimpan data 2 jam, sehingga \textit{error budget} 30 hari tidak dapat dievaluasi dan laporan memakai rentang \textit{game day}.
+\item
+  Aturan SLO diuji pada data sintetis dengan \texttt{promtool}, belum pada \textit{cluster} hidup.
+\end{itemize}
