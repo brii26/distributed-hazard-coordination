@@ -351,7 +351,7 @@ func TestSameBrokenPageParkedTwiceIsOneRow(t *testing.T) { //nolint:paralleltest
 		}
 	}
 
-	rows, _, err := s.listFailed(context.Background(), failedParked, "", 10)
+	rows, _, err := s.listFailed(context.Background(), only(failedParked), "", 10)
 	if err != nil || len(rows) != 1 || rows[0].Attempts != 1 {
 		t.Fatalf("rows %d err %v, want one row for the same page", len(rows), err)
 	}

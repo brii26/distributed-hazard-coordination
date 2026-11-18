@@ -38,6 +38,259 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ListFailedMessagesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"` // optional: retrying | parked | recovered; empty means all three
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`  // 0 means the default (50), capped at 100
+	Cursor        string                 `protobuf:"bytes,3,opt,name=cursor,proto3" json:"cursor,omitempty"` // opaque, from the previous page's next_cursor
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFailedMessagesRequest) Reset() {
+	*x = ListFailedMessagesRequest{}
+	mi := &file_aggregator_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFailedMessagesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFailedMessagesRequest) ProtoMessage() {}
+
+func (x *ListFailedMessagesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFailedMessagesRequest.ProtoReflect.Descriptor instead.
+func (*ListFailedMessagesRequest) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ListFailedMessagesRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ListFailedMessagesRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListFailedMessagesRequest) GetCursor() string {
+	if x != nil {
+		return x.Cursor
+	}
+	return ""
+}
+
+type ListFailedMessagesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []*FailedMessage       `protobuf:"bytes,1,rep,name=data,proto3" json:"data,omitempty"`
+	NextCursor    string                 `protobuf:"bytes,2,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"` // empty on the last page
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFailedMessagesResponse) Reset() {
+	*x = ListFailedMessagesResponse{}
+	mi := &file_aggregator_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFailedMessagesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFailedMessagesResponse) ProtoMessage() {}
+
+func (x *ListFailedMessagesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFailedMessagesResponse.ProtoReflect.Descriptor instead.
+func (*ListFailedMessagesResponse) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ListFailedMessagesResponse) GetData() []*FailedMessage {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *ListFailedMessagesResponse) GetNextCursor() string {
+	if x != nil {
+		return x.NextCursor
+	}
+	return ""
+}
+
+// One failed_messages row. payload is the whole body, or its first 64 KiB when oversize.
+type FailedMessage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Source        string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
+	ReceivedAt    *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	Retryable     bool                   `protobuf:"varint,5,opt,name=retryable,proto3" json:"retryable,omitempty"`
+	Attempts      int32                  `protobuf:"varint,6,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	Status        string                 `protobuf:"bytes,7,opt,name=status,proto3" json:"status,omitempty"`
+	LastErrorAt   *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=last_error_at,json=lastErrorAt,proto3" json:"last_error_at,omitempty"`
+	SourceRefId   string                 `protobuf:"bytes,9,opt,name=source_ref_id,json=sourceRefId,proto3" json:"source_ref_id,omitempty"` // empty when the source gave none
+	Payload       []byte                 `protobuf:"bytes,10,opt,name=payload,proto3" json:"payload,omitempty"`
+	PayloadSha256 []byte                 `protobuf:"bytes,11,opt,name=payload_sha256,json=payloadSha256,proto3" json:"payload_sha256,omitempty"`
+	PayloadSize   int32                  `protobuf:"varint,12,opt,name=payload_size,json=payloadSize,proto3" json:"payload_size,omitempty"` // size of the original body
+	Oversize      bool                   `protobuf:"varint,13,opt,name=oversize,proto3" json:"oversize,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FailedMessage) Reset() {
+	*x = FailedMessage{}
+	mi := &file_aggregator_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FailedMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FailedMessage) ProtoMessage() {}
+
+func (x *FailedMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FailedMessage.ProtoReflect.Descriptor instead.
+func (*FailedMessage) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *FailedMessage) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *FailedMessage) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *FailedMessage) GetReceivedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReceivedAt
+	}
+	return nil
+}
+
+func (x *FailedMessage) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *FailedMessage) GetRetryable() bool {
+	if x != nil {
+		return x.Retryable
+	}
+	return false
+}
+
+func (x *FailedMessage) GetAttempts() int32 {
+	if x != nil {
+		return x.Attempts
+	}
+	return 0
+}
+
+func (x *FailedMessage) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *FailedMessage) GetLastErrorAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastErrorAt
+	}
+	return nil
+}
+
+func (x *FailedMessage) GetSourceRefId() string {
+	if x != nil {
+		return x.SourceRefId
+	}
+	return ""
+}
+
+func (x *FailedMessage) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *FailedMessage) GetPayloadSha256() []byte {
+	if x != nil {
+		return x.PayloadSha256
+	}
+	return nil
+}
+
+func (x *FailedMessage) GetPayloadSize() int32 {
+	if x != nil {
+		return x.PayloadSize
+	}
+	return 0
+}
+
+func (x *FailedMessage) GetOversize() bool {
+	if x != nil {
+		return x.Oversize
+	}
+	return false
+}
+
 type GetHazardsRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	HazardType string                 `protobuf:"bytes,1,opt,name=hazard_type,json=hazardType,proto3" json:"hazard_type,omitempty"` // SEISMIC | VOLCANIC
@@ -52,7 +305,7 @@ type GetHazardsRequest struct {
 
 func (x *GetHazardsRequest) Reset() {
 	*x = GetHazardsRequest{}
-	mi := &file_aggregator_proto_msgTypes[0]
+	mi := &file_aggregator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -64,7 +317,7 @@ func (x *GetHazardsRequest) String() string {
 func (*GetHazardsRequest) ProtoMessage() {}
 
 func (x *GetHazardsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[0]
+	mi := &file_aggregator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -77,7 +330,7 @@ func (x *GetHazardsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardsRequest.ProtoReflect.Descriptor instead.
 func (*GetHazardsRequest) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{0}
+	return file_aggregator_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *GetHazardsRequest) GetHazardType() string {
@@ -126,7 +379,7 @@ type GetHazardsResponse struct {
 
 func (x *GetHazardsResponse) Reset() {
 	*x = GetHazardsResponse{}
-	mi := &file_aggregator_proto_msgTypes[1]
+	mi := &file_aggregator_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -138,7 +391,7 @@ func (x *GetHazardsResponse) String() string {
 func (*GetHazardsResponse) ProtoMessage() {}
 
 func (x *GetHazardsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[1]
+	mi := &file_aggregator_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -151,7 +404,7 @@ func (x *GetHazardsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardsResponse.ProtoReflect.Descriptor instead.
 func (*GetHazardsResponse) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{1}
+	return file_aggregator_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetHazardsResponse) GetData() []*HazardEvent {
@@ -185,7 +438,7 @@ type ListHazardsRequest struct {
 
 func (x *ListHazardsRequest) Reset() {
 	*x = ListHazardsRequest{}
-	mi := &file_aggregator_proto_msgTypes[2]
+	mi := &file_aggregator_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -197,7 +450,7 @@ func (x *ListHazardsRequest) String() string {
 func (*ListHazardsRequest) ProtoMessage() {}
 
 func (x *ListHazardsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[2]
+	mi := &file_aggregator_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -210,7 +463,7 @@ func (x *ListHazardsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHazardsRequest.ProtoReflect.Descriptor instead.
 func (*ListHazardsRequest) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{2}
+	return file_aggregator_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListHazardsRequest) GetLimit() int32 {
@@ -240,7 +493,7 @@ type ListHazardsResponse struct {
 
 func (x *ListHazardsResponse) Reset() {
 	*x = ListHazardsResponse{}
-	mi := &file_aggregator_proto_msgTypes[3]
+	mi := &file_aggregator_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -252,7 +505,7 @@ func (x *ListHazardsResponse) String() string {
 func (*ListHazardsResponse) ProtoMessage() {}
 
 func (x *ListHazardsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[3]
+	mi := &file_aggregator_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -265,7 +518,7 @@ func (x *ListHazardsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHazardsResponse.ProtoReflect.Descriptor instead.
 func (*ListHazardsResponse) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{3}
+	return file_aggregator_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListHazardsResponse) GetData() []*HazardEvent {
@@ -312,7 +565,7 @@ type GetHazardRequest struct {
 
 func (x *GetHazardRequest) Reset() {
 	*x = GetHazardRequest{}
-	mi := &file_aggregator_proto_msgTypes[4]
+	mi := &file_aggregator_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -324,7 +577,7 @@ func (x *GetHazardRequest) String() string {
 func (*GetHazardRequest) ProtoMessage() {}
 
 func (x *GetHazardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[4]
+	mi := &file_aggregator_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -337,7 +590,7 @@ func (x *GetHazardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardRequest.ProtoReflect.Descriptor instead.
 func (*GetHazardRequest) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{4}
+	return file_aggregator_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetHazardRequest) GetHazardId() string {
@@ -357,7 +610,7 @@ type GetHazardResponse struct {
 
 func (x *GetHazardResponse) Reset() {
 	*x = GetHazardResponse{}
-	mi := &file_aggregator_proto_msgTypes[5]
+	mi := &file_aggregator_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -369,7 +622,7 @@ func (x *GetHazardResponse) String() string {
 func (*GetHazardResponse) ProtoMessage() {}
 
 func (x *GetHazardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[5]
+	mi := &file_aggregator_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -382,7 +635,7 @@ func (x *GetHazardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardResponse.ProtoReflect.Descriptor instead.
 func (*GetHazardResponse) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{5}
+	return file_aggregator_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetHazardResponse) GetEvent() *HazardEvent {
@@ -420,7 +673,7 @@ type HazardEvent struct {
 
 func (x *HazardEvent) Reset() {
 	*x = HazardEvent{}
-	mi := &file_aggregator_proto_msgTypes[6]
+	mi := &file_aggregator_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -432,7 +685,7 @@ func (x *HazardEvent) String() string {
 func (*HazardEvent) ProtoMessage() {}
 
 func (x *HazardEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[6]
+	mi := &file_aggregator_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -445,7 +698,7 @@ func (x *HazardEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HazardEvent.ProtoReflect.Descriptor instead.
 func (*HazardEvent) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{6}
+	return file_aggregator_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HazardEvent) GetHazardId() string {
@@ -538,7 +791,7 @@ type ResponseMeta struct {
 
 func (x *ResponseMeta) Reset() {
 	*x = ResponseMeta{}
-	mi := &file_aggregator_proto_msgTypes[7]
+	mi := &file_aggregator_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -550,7 +803,7 @@ func (x *ResponseMeta) String() string {
 func (*ResponseMeta) ProtoMessage() {}
 
 func (x *ResponseMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[7]
+	mi := &file_aggregator_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -563,7 +816,7 @@ func (x *ResponseMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResponseMeta.ProtoReflect.Descriptor instead.
 func (*ResponseMeta) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{7}
+	return file_aggregator_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ResponseMeta) GetSource() string {
@@ -606,7 +859,7 @@ type HealthStatus struct {
 
 func (x *HealthStatus) Reset() {
 	*x = HealthStatus{}
-	mi := &file_aggregator_proto_msgTypes[8]
+	mi := &file_aggregator_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -618,7 +871,7 @@ func (x *HealthStatus) String() string {
 func (*HealthStatus) ProtoMessage() {}
 
 func (x *HealthStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[8]
+	mi := &file_aggregator_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -631,7 +884,7 @@ func (x *HealthStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthStatus.ProtoReflect.Descriptor instead.
 func (*HealthStatus) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{8}
+	return file_aggregator_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *HealthStatus) GetStatus() string {
@@ -666,7 +919,32 @@ var File_aggregator_proto protoreflect.FileDescriptor
 
 const file_aggregator_proto_rawDesc = "" +
 	"\n" +
-	"\x10aggregator.proto\x12\raggregator.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x94\x01\n" +
+	"\x10aggregator.proto\x12\raggregator.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"a\n" +
+	"\x19ListFailedMessagesRequest\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"o\n" +
+	"\x1aListFailedMessagesResponse\x120\n" +
+	"\x04data\x18\x01 \x03(\v2\x1c.aggregator.v1.FailedMessageR\x04data\x12\x1f\n" +
+	"\vnext_cursor\x18\x02 \x01(\tR\n" +
+	"nextCursor\"\xd1\x03\n" +
+	"\rFailedMessage\x12\x1d\n" +
+	"\n" +
+	"message_id\x18\x01 \x01(\tR\tmessageId\x12\x16\n" +
+	"\x06source\x18\x02 \x01(\tR\x06source\x12;\n" +
+	"\vreceived_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"receivedAt\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x1c\n" +
+	"\tretryable\x18\x05 \x01(\bR\tretryable\x12\x1a\n" +
+	"\battempts\x18\x06 \x01(\x05R\battempts\x12\x16\n" +
+	"\x06status\x18\a \x01(\tR\x06status\x12>\n" +
+	"\rlast_error_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vlastErrorAt\x12\"\n" +
+	"\rsource_ref_id\x18\t \x01(\tR\vsourceRefId\x12\x18\n" +
+	"\apayload\x18\n" +
+	" \x01(\fR\apayload\x12%\n" +
+	"\x0epayload_sha256\x18\v \x01(\fR\rpayloadSha256\x12!\n" +
+	"\fpayload_size\x18\f \x01(\x05R\vpayloadSize\x12\x1a\n" +
+	"\boversize\x18\r \x01(\bR\boversize\"\x94\x01\n" +
 	"\x11GetHazardsRequest\x12\x1f\n" +
 	"\vhazard_type\x18\x01 \x01(\tR\n" +
 	"hazardType\x12\x14\n" +
@@ -727,14 +1005,15 @@ const file_aggregator_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x125\n" +
 	"\asources\x18\x02 \x03(\v2\x1b.aggregator.v1.ResponseMetaR\asources\x12-\n" +
 	"\x12database_connected\x18\x03 \x01(\bR\x11databaseConnected\x12-\n" +
-	"\x12rabbitmq_connected\x18\x04 \x01(\bR\x11rabbitmqConnected2\xc7\x02\n" +
+	"\x12rabbitmq_connected\x18\x04 \x01(\bR\x11rabbitmqConnected2\xb2\x03\n" +
 	"\n" +
 	"Aggregator\x12Q\n" +
 	"\n" +
 	"GetHazards\x12 .aggregator.v1.GetHazardsRequest\x1a!.aggregator.v1.GetHazardsResponse\x12T\n" +
 	"\vListHazards\x12!.aggregator.v1.ListHazardsRequest\x1a\".aggregator.v1.ListHazardsResponse\x12N\n" +
 	"\tGetHazard\x12\x1f.aggregator.v1.GetHazardRequest\x1a .aggregator.v1.GetHazardResponse\x12@\n" +
-	"\tGetHealth\x12\x16.google.protobuf.Empty\x1a\x1b.aggregator.v1.HealthStatusB[ZYgithub.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpbb\x06proto3"
+	"\tGetHealth\x12\x16.google.protobuf.Empty\x1a\x1b.aggregator.v1.HealthStatus\x12i\n" +
+	"\x12ListFailedMessages\x12(.aggregator.v1.ListFailedMessagesRequest\x1a).aggregator.v1.ListFailedMessagesResponseB[ZYgithub.com/brii26/distributed-hazard-coordination/services/client-facing-api/aggregatorpbb\x06proto3"
 
 var (
 	file_aggregator_proto_rawDescOnce sync.Once
@@ -748,45 +1027,53 @@ func file_aggregator_proto_rawDescGZIP() []byte {
 	return file_aggregator_proto_rawDescData
 }
 
-var file_aggregator_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_aggregator_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_aggregator_proto_goTypes = []any{
-	(*GetHazardsRequest)(nil),     // 0: aggregator.v1.GetHazardsRequest
-	(*GetHazardsResponse)(nil),    // 1: aggregator.v1.GetHazardsResponse
-	(*ListHazardsRequest)(nil),    // 2: aggregator.v1.ListHazardsRequest
-	(*ListHazardsResponse)(nil),   // 3: aggregator.v1.ListHazardsResponse
-	(*GetHazardRequest)(nil),      // 4: aggregator.v1.GetHazardRequest
-	(*GetHazardResponse)(nil),     // 5: aggregator.v1.GetHazardResponse
-	(*HazardEvent)(nil),           // 6: aggregator.v1.HazardEvent
-	(*ResponseMeta)(nil),          // 7: aggregator.v1.ResponseMeta
-	(*HealthStatus)(nil),          // 8: aggregator.v1.HealthStatus
-	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),       // 10: google.protobuf.Struct
-	(*emptypb.Empty)(nil),         // 11: google.protobuf.Empty
+	(*ListFailedMessagesRequest)(nil),  // 0: aggregator.v1.ListFailedMessagesRequest
+	(*ListFailedMessagesResponse)(nil), // 1: aggregator.v1.ListFailedMessagesResponse
+	(*FailedMessage)(nil),              // 2: aggregator.v1.FailedMessage
+	(*GetHazardsRequest)(nil),          // 3: aggregator.v1.GetHazardsRequest
+	(*GetHazardsResponse)(nil),         // 4: aggregator.v1.GetHazardsResponse
+	(*ListHazardsRequest)(nil),         // 5: aggregator.v1.ListHazardsRequest
+	(*ListHazardsResponse)(nil),        // 6: aggregator.v1.ListHazardsResponse
+	(*GetHazardRequest)(nil),           // 7: aggregator.v1.GetHazardRequest
+	(*GetHazardResponse)(nil),          // 8: aggregator.v1.GetHazardResponse
+	(*HazardEvent)(nil),                // 9: aggregator.v1.HazardEvent
+	(*ResponseMeta)(nil),               // 10: aggregator.v1.ResponseMeta
+	(*HealthStatus)(nil),               // 11: aggregator.v1.HealthStatus
+	(*timestamppb.Timestamp)(nil),      // 12: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),            // 13: google.protobuf.Struct
+	(*emptypb.Empty)(nil),              // 14: google.protobuf.Empty
 }
 var file_aggregator_proto_depIdxs = []int32{
-	6,  // 0: aggregator.v1.GetHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
-	7,  // 1: aggregator.v1.GetHazardsResponse.meta:type_name -> aggregator.v1.ResponseMeta
-	6,  // 2: aggregator.v1.ListHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
-	6,  // 3: aggregator.v1.GetHazardResponse.event:type_name -> aggregator.v1.HazardEvent
-	9,  // 4: aggregator.v1.HazardEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	9,  // 5: aggregator.v1.HazardEvent.ingested_at:type_name -> google.protobuf.Timestamp
-	10, // 6: aggregator.v1.HazardEvent.attributes:type_name -> google.protobuf.Struct
-	9,  // 7: aggregator.v1.ResponseMeta.last_success_at:type_name -> google.protobuf.Timestamp
-	9,  // 8: aggregator.v1.ResponseMeta.stale_since:type_name -> google.protobuf.Timestamp
-	7,  // 9: aggregator.v1.HealthStatus.sources:type_name -> aggregator.v1.ResponseMeta
-	0,  // 10: aggregator.v1.Aggregator.GetHazards:input_type -> aggregator.v1.GetHazardsRequest
-	2,  // 11: aggregator.v1.Aggregator.ListHazards:input_type -> aggregator.v1.ListHazardsRequest
-	4,  // 12: aggregator.v1.Aggregator.GetHazard:input_type -> aggregator.v1.GetHazardRequest
-	11, // 13: aggregator.v1.Aggregator.GetHealth:input_type -> google.protobuf.Empty
-	1,  // 14: aggregator.v1.Aggregator.GetHazards:output_type -> aggregator.v1.GetHazardsResponse
-	3,  // 15: aggregator.v1.Aggregator.ListHazards:output_type -> aggregator.v1.ListHazardsResponse
-	5,  // 16: aggregator.v1.Aggregator.GetHazard:output_type -> aggregator.v1.GetHazardResponse
-	8,  // 17: aggregator.v1.Aggregator.GetHealth:output_type -> aggregator.v1.HealthStatus
-	14, // [14:18] is the sub-list for method output_type
-	10, // [10:14] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	2,  // 0: aggregator.v1.ListFailedMessagesResponse.data:type_name -> aggregator.v1.FailedMessage
+	12, // 1: aggregator.v1.FailedMessage.received_at:type_name -> google.protobuf.Timestamp
+	12, // 2: aggregator.v1.FailedMessage.last_error_at:type_name -> google.protobuf.Timestamp
+	9,  // 3: aggregator.v1.GetHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
+	10, // 4: aggregator.v1.GetHazardsResponse.meta:type_name -> aggregator.v1.ResponseMeta
+	9,  // 5: aggregator.v1.ListHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
+	9,  // 6: aggregator.v1.GetHazardResponse.event:type_name -> aggregator.v1.HazardEvent
+	12, // 7: aggregator.v1.HazardEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	12, // 8: aggregator.v1.HazardEvent.ingested_at:type_name -> google.protobuf.Timestamp
+	13, // 9: aggregator.v1.HazardEvent.attributes:type_name -> google.protobuf.Struct
+	12, // 10: aggregator.v1.ResponseMeta.last_success_at:type_name -> google.protobuf.Timestamp
+	12, // 11: aggregator.v1.ResponseMeta.stale_since:type_name -> google.protobuf.Timestamp
+	10, // 12: aggregator.v1.HealthStatus.sources:type_name -> aggregator.v1.ResponseMeta
+	3,  // 13: aggregator.v1.Aggregator.GetHazards:input_type -> aggregator.v1.GetHazardsRequest
+	5,  // 14: aggregator.v1.Aggregator.ListHazards:input_type -> aggregator.v1.ListHazardsRequest
+	7,  // 15: aggregator.v1.Aggregator.GetHazard:input_type -> aggregator.v1.GetHazardRequest
+	14, // 16: aggregator.v1.Aggregator.GetHealth:input_type -> google.protobuf.Empty
+	0,  // 17: aggregator.v1.Aggregator.ListFailedMessages:input_type -> aggregator.v1.ListFailedMessagesRequest
+	4,  // 18: aggregator.v1.Aggregator.GetHazards:output_type -> aggregator.v1.GetHazardsResponse
+	6,  // 19: aggregator.v1.Aggregator.ListHazards:output_type -> aggregator.v1.ListHazardsResponse
+	8,  // 20: aggregator.v1.Aggregator.GetHazard:output_type -> aggregator.v1.GetHazardResponse
+	11, // 21: aggregator.v1.Aggregator.GetHealth:output_type -> aggregator.v1.HealthStatus
+	1,  // 22: aggregator.v1.Aggregator.ListFailedMessages:output_type -> aggregator.v1.ListFailedMessagesResponse
+	18, // [18:23] is the sub-list for method output_type
+	13, // [13:18] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_aggregator_proto_init() }
@@ -794,14 +1081,14 @@ func file_aggregator_proto_init() {
 	if File_aggregator_proto != nil {
 		return
 	}
-	file_aggregator_proto_msgTypes[6].OneofWrappers = []any{}
+	file_aggregator_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_aggregator_proto_rawDesc), len(file_aggregator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

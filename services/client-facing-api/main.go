@@ -198,6 +198,7 @@ func main() {
 	hazards := hazardsAPI{agg: health.aggregator, timeout: health.timeout, readTimeout: time.Duration(readMS) * time.Millisecond}
 	mux.Handle("GET /hazards", auth.verifier.require(hazards))
 	mux.Handle("GET /hazards/{id}", auth.verifier.require(http.HandlerFunc(hazards.serveOne)))
+	mux.Handle("GET /admin/failed-messages", auth.verifier.require(requireOperator(failedMessagesAPI{agg: health.aggregator, timeout: health.timeout})))
 
 	if upstream := os.Getenv("DASHBOARD_UPDATER_URL"); upstream != "" {
 		mux.Handle("GET /hazards/stream", auth.verifier.require(newStreamAPI(upstream)))

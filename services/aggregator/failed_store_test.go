@@ -83,7 +83,7 @@ func TestFailedStoreRoundTripBytes(t *testing.T) { //nolint:paralleltest // shar
 		}
 	}
 
-	rows, _, err := s.listFailed(ctx, failedParked, "", 10)
+	rows, _, err := s.listFailed(ctx, only(failedParked), "", 10)
 	if err != nil || len(rows) != 5 {
 		t.Fatalf("rows=%d err=%v", len(rows), err)
 	}
@@ -98,7 +98,7 @@ func TestFailedStoreRoundTripBytes(t *testing.T) { //nolint:paralleltest // shar
 	}
 }
 
-func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest // shares one truncated table
+func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest,gocyclo // shares one truncated table; one row walks through its whole life
 	s := testFailedStore(t)
 	ctx := context.Background()
 	m := newFailedMessage("BMKG", []byte("same"), "bad", false, time.Now())
@@ -109,7 +109,7 @@ func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest //
 		}
 	}
 
-	rows, _, _ := s.listFailed(ctx, failedParked, "", 10)
+	rows, _, _ := s.listFailed(ctx, only(failedParked), "", 10)
 	if len(rows) != 1 || rows[0].Attempts != 1 {
 		t.Fatalf("a re-poll must not duplicate or bump: rows=%d", len(rows))
 	}
@@ -126,7 +126,7 @@ func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest //
 		t.Fatalf("recover: %v %v", ok, err)
 	}
 
-	if rows, _, _ = s.listFailed(ctx, failedParked, "", 10); len(rows) != 0 {
+	if rows, _, _ = s.listFailed(ctx, only(failedParked), "", 10); len(rows) != 0 {
 		t.Fatal("recovered row must leave the parked list")
 	}
 
@@ -135,7 +135,7 @@ func TestFailedStoreIdempotentAndReopen(t *testing.T) { //nolint:paralleltest //
 		t.Fatal(err)
 	}
 
-	rows, _, _ = s.listFailed(ctx, failedParked, "", 10)
+	rows, _, _ = s.listFailed(ctx, only(failedParked), "", 10)
 	if len(rows) != 1 || rows[0].Attempts != 2 || !rows[0].LastErrorAt.Equal(m.LastErrorAt.Truncate(time.Microsecond)) {
 		t.Fatalf("regression must reopen the row: %+v", rows)
 	}
@@ -157,7 +157,7 @@ func TestFailedStorePagination(t *testing.T) { //nolint:paralleltest // shares o
 	seen, pages, cursor := map[string]bool{}, 0, ""
 
 	for {
-		rows, next, err := s.listFailed(ctx, failedParked, cursor, 100)
+		rows, next, err := s.listFailed(ctx, only(failedParked), cursor, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func TestFailedStoreParallelAttempts(t *testing.T) { //nolint:paralleltest // sh
 
 	wg.Wait()
 
-	if rows, _, _ := s.listFailed(ctx, failedParked, "", 10); len(rows) != 1 || rows[0].Attempts != 21 {
+	if rows, _, _ := s.listFailed(ctx, only(failedParked), "", 10); len(rows) != 1 || rows[0].Attempts != 21 {
 		t.Fatalf("attempts must be 21 (1 + 20): %+v", rows)
 	}
 }
@@ -212,7 +212,7 @@ func TestListFailedRejectsNonPositiveLimit(t *testing.T) {
 	s := &store{} // validation runs before any DB access
 
 	for _, limit := range []int{0, -1} {
-		if _, _, err := s.listFailed(context.Background(), failedParked, "", limit); err == nil {
+		if _, _, err := s.listFailed(context.Background(), only(failedParked), "", limit); err == nil {
 			t.Fatalf("limit %d must return an error", limit)
 		}
 	}
