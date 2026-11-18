@@ -14,6 +14,7 @@ const (
 	statusUp       = "UP"
 	statusDegraded = "DEGRADED"
 	statusDown     = "DOWN"
+	statusStale    = "STALE"
 )
 
 type breakerState int
@@ -51,6 +52,8 @@ type breaker struct {
 	lastSuccess     time.Time
 	staleSince      time.Time
 	openedAt        time.Time
+	stale           bool
+	freshAt         time.Time
 }
 
 func newBreaker(name string, threshold int, openFor time.Duration) *breaker {
@@ -125,6 +128,22 @@ func (b *breaker) failure() {
 	}
 }
 
+// Marks the source stale: it answers, but its data stopped moving. freshAt is when the data last moved.
+func (b *breaker) setStale(stale bool, freshAt time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.stale, b.freshAt = stale, freshAt
+}
+
+// The state now, for metrics.
+func (b *breaker) currentState() breakerState {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	return b.state
+}
+
 // Consistent copy of the status for the read API and /health. DEGRADED means polls fail but the breaker hasn't tripped yet.
 func (b *breaker) snapshot() sourceStatus {
 	b.mu.RLock()
@@ -137,6 +156,8 @@ func (b *breaker) snapshot() sourceStatus {
 		s.Status = statusDown
 	case b.consecutiveFail > 0:
 		s.Status = statusDegraded
+	case b.stale:
+		s.Status = statusStale
 	}
 
 	if !b.lastSuccess.IsZero() {
@@ -144,8 +165,12 @@ func (b *breaker) snapshot() sourceStatus {
 		s.LastSuccessAt = &t
 	}
 
-	if !b.staleSince.IsZero() {
+	switch {
+	case !b.staleSince.IsZero():
 		t := b.staleSince
+		s.StaleSince = &t
+	case s.Status == statusStale && !b.freshAt.IsZero():
+		t := b.freshAt
 		s.StaleSince = &t
 	}
 

@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-func TestMigration007RunsTwice(t *testing.T) { //nolint:paralleltest // shares one truncated table
+func TestMigration010RunsTwice(t *testing.T) { //nolint:paralleltest // shares one truncated table
 	s := testFailedStore(t)
 
-	ddl, err := os.ReadFile("migrations/007_failed_retry.sql")
+	ddl, err := os.ReadFile("migrations/010_failed_retry.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

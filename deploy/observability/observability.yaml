@@ -122,6 +122,9 @@ data:
       - job_name: aggregated-trace-metrics
         static_configs:
           - targets: ['jaeger:8889']
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ['kube-state-metrics:8080']
   rules.yml: |
     groups:
       - name: service-traffic

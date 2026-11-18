@@ -1,0 +1,86 @@
+{
+  "uid": "hazard-overview",
+  "title": "Hazard Coordination Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "15s",
+  "time": {"from": "now-30m", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Request rate (req/s)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "targets": [{"refId": "A", "legendFormat": "{{service_name}}",
+        "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m]))"}]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Error rate (share of requests)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}, "overrides": []},
+      "targets": [{"refId": "A", "legendFormat": "{{service_name}}",
+        "expr": "(sum by (service_name) (rate(traces_span_metrics_calls_total{span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\", status_code=\"STATUS_CODE_ERROR\"}[1m])) / sum by (service_name) (rate(traces_span_metrics_calls_total{span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m]))) or (0 * sum by (service_name) (rate(traces_span_metrics_calls_total{span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[1m])))"}]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Latency p50 (ms)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "targets": [{"refId": "A", "legendFormat": "{{service_name}}",
+        "expr": "histogram_quantile(0.5, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[5m])))"}]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Latency p95 (ms)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "targets": [{"refId": "A", "legendFormat": "{{service_name}}",
+        "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_milliseconds_bucket{span_kind=~\"SPAN_KIND_SERVER|SPAN_KIND_CONSUMER\"}[5m])))"}]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Service alive (spans in the last minute)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+      "targets": [{"refId": "A", "legendFormat": "{{service_name}}",
+        "expr": "sum by (service_name) (increase(traces_span_metrics_calls_total[1m]))"}]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Pod restarts",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+      "targets": [{"refId": "A", "legendFormat": "{{pod}}",
+        "expr": "sum by (pod) (kube_pod_container_status_restarts_total)"}]
+    },
+    {
+      "id": 7, "type": "state-timeline", "title": "Pod ready",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+      "fieldConfig": {
+        "defaults": {
+          "min": 0, "max": 1,
+          "mappings": [{"type": "value", "options": {"0": {"text": "not ready", "color": "red"}, "1": {"text": "ready", "color": "green"}}}],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+        },
+        "overrides": []
+      },
+      "targets": [{"refId": "A", "legendFormat": "{{pod}}",
+        "expr": "kube_pod_status_ready{condition=\"true\"}"}]
+    },
+    {
+      "id": 12, "type": "stat", "title": "Deployments short of desired replicas (red = scaled down or failing)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 24},
+      "options": {"colorMode": "background", "textMode": "value_and_name", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"min": 0, "decimals": 0, "unit": "short",
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "targets": [{"refId": "A", "legendFormat": "{{deployment}}",
+        "expr": "kube_deployment_spec_replicas - kube_deployment_status_replicas_available"}]
+    },
+    {"id": 8, "type": "row", "title": "Lag", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 30}, "panels": []},
+    {"id": 9, "type": "row", "title": "Breaker", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31}, "panels": []},
+    {"id": 10, "type": "row", "title": "Shards", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}, "panels": []},
+    {"id": 11, "type": "row", "title": "Replicas", "collapsed": true, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}, "panels": []}
+  ]
+}

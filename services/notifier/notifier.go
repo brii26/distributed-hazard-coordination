@@ -20,6 +20,8 @@ type HazardEvent struct {
 	Attributes  map[string]any `json:"attributes"`
 }
 
+const sourceSensorPantai = "SENSOR_PANTAI"
+
 func orDash(s *string) string {
 	if s == nil || *s == "" {
 		return "-"
@@ -47,6 +49,13 @@ func (n *notifier) handle(m message) outcome {
 		withID(m.correlationID).Warn("message received", "result", "rejected", "reason", "malformed")
 
 		return drop
+	}
+
+	// A critical observation is alerted from the critical-alerts queue, so the fan-out copy is not alerted twice.
+	if c, _ := e.Attributes["critical"].(bool); c && e.Source == sourceSensorPantai {
+		withID(m.correlationID).Info("message processed", "hazard_id", e.HazardID, "result", "skipped", "reason", "critical-queue")
+
+		return ack
 	}
 
 	k := dedupKey{e.HazardID, orDash(e.Severity)}

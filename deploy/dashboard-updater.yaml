@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: dashboard-updater
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dashboard-updater
+  template:
+    metadata:
+      labels:
+        role: consumer
+        app: dashboard-updater
+    spec:
+      containers:
+        - name: dashboard-updater
+          image: dashboard-updater
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: bnpb-config
+          env:
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: user
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_URL
+              value: amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq:5672/
+            - name: QUEUE_NAME
+              value: dashboard-updater
+            - name: HEALTH_PORT
+              value: "8093"
+          ports:
+            - name: health
+              containerPort: 8093
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
