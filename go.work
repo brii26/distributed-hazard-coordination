@@ -9,5 +9,6 @@ use (
 	./services/dashboard-updater
 	./services/notifier
 	./services/pvmbg-mock
+	./services/satellite-ingest
 	./tools/feedprobe
 )
