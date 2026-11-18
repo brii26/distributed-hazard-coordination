@@ -154,6 +154,20 @@
         {"refId": "B", "legendFormat": "late", "expr": "(sum(increase(critical_alert_latency_seconds_count[$__range])) - sum(increase(critical_alert_latency_seconds_bucket{le=\"5\"}[$__range]))) or on() vector(0)"},
         {"refId": "C", "legendFormat": "undelivered", "expr": "slo:critical_alert_undelivered:count10m"}
       ]
+    },
+    {
+      "id": 28, "type": "timeseries", "title": "Aggregator replicas (HPA current, desired, min and max)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 53},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0, "custom": {"lineInterpolation": "stepAfter"}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "ready pods", "expr": "kube_deployment_status_replicas_available{deployment=\"aggregator\"}"},
+        {"refId": "B", "legendFormat": "current", "expr": "kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=\"aggregator\"}"},
+        {"refId": "C", "legendFormat": "desired", "expr": "kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler=\"aggregator\"}"},
+        {"refId": "D", "legendFormat": "min", "expr": "kube_horizontalpodautoscaler_spec_min_replicas{horizontalpodautoscaler=\"aggregator\"}"},
+        {"refId": "E", "legendFormat": "max", "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=\"aggregator\"}"}
+      ]
     }
 
   ]

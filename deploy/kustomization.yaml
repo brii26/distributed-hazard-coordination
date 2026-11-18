@@ -5,6 +5,7 @@ resources:
   - configmap.yaml
   - store.yaml
   - aggregator.yaml
+  - aggregator-hpa.yaml
   - bmkg-mock.yaml
   - pvmbg-mock.yaml
   - user-db.yaml
