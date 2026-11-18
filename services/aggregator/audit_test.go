@@ -471,3 +471,238 @@ func TestAuditIDsAreByteOrderedOnRealDB(t *testing.T) { //nolint:paralleltest //
 		}
 	}
 }
+
+const locPrimary = "primary"
+
+type locResp struct {
+	HazardID  string          `json:"hazard_id"`
+	Locations []auditLocation `json:"locations"`
+	Partial   bool            `json:"partial"`
+
+	UnavailableUnits []string `json:"unavailable_units"`
+}
+
+// Seeds one hazard on a 3 node fake and returns it with its two owners.
+func locSetup(t *testing.T) (*fakeStore, *readAPI, string, []copyRef) {
+	t.Helper()
+
+	f := newFake()
+	c := f.cluster("a", "b", "c")
+	h := hz("LOC1")
+
+	if _, err := c.upsert(t.Context(), h); err != nil {
+		t.Fatal(err)
+	}
+
+	return f, auditAPIOf(c), h.HazardID, owners(shardOf(h.HazardID), c.live())
+}
+
+func locGet(t *testing.T, a *readAPI, id string) (int, locResp, string) {
+	t.Helper()
+
+	code, body := auditGet(t, a, "/internal/audit/location?hazard_id="+url.QueryEscape(id), testAuditToken)
+
+	var r locResp
+
+	if code == http.StatusOK {
+		if err := json.Unmarshal([]byte(body), &r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return code, r, body
+}
+
+func TestAuditLocationBothCopies(t *testing.T) {
+	t.Parallel()
+
+	_, a, id, own := locSetup(t)
+
+	code, r, body := locGet(t, a, id)
+	if code != http.StatusOK || r.Partial || r.HazardID != id || len(r.Locations) != 2 {
+		t.Fatalf("%d %s", code, body)
+	}
+
+	shard := shardOf(id)
+	want := []auditLocation{
+		{Node: own[0].node.name, Unit: "shard-" + strconv.Itoa(shard), Role: locPrimary},
+		{Node: own[1].node.name, Unit: "shard-" + strconv.Itoa(shard) + "-r1", Role: "replica"},
+	}
+
+	if !slices.Equal(r.Locations, want) || r.Locations[0].Node == r.Locations[1].Node {
+		t.Fatalf("got %+v want %+v", r.Locations, want)
+	}
+
+	if !strings.Contains(body, `"locations":[{"node":`) || !strings.Contains(body, `"partial":false`) || !strings.Contains(body, `"unavailable_units":[]`) {
+		t.Fatalf("shape: %s", body)
+	}
+}
+
+func TestAuditLocationUnknownAndBadIDs(t *testing.T) {
+	t.Parallel()
+
+	f, a, _, _ := locSetup(t)
+	want := `{"error":{"code":"not_found","message":"hazard_id tidak ditemukan"}}` + "\n"
+
+	code, _, body := locGet(t, a, hazardID("BMKG", "nothing"))
+	if code != http.StatusNotFound || body != want {
+		t.Fatalf("unknown uuid: %d %q", code, body)
+	}
+
+	before := f.hits["a"] + f.hits["b"] + f.hits["c"]
+
+	for _, id := range []string{"hz-7f3a91", "not-a-uuid", "'; drop table x;--"} {
+		if code, _, body := locGet(t, a, id); code != http.StatusNotFound || body != want {
+			t.Fatalf("%q: %d %q", id, code, body)
+		}
+	}
+
+	if after := f.hits["a"] + f.hits["b"] + f.hits["c"]; after != before {
+		t.Fatalf("bad ids touched nodes: %d -> %d", before, after)
+	}
+
+	if code, _ := auditGet(t, a, "/internal/audit/location", testAuditToken); code != http.StatusBadRequest {
+		t.Fatalf("missing param: %d", code)
+	}
+}
+
+func TestAuditLocationSilentCopiesArePartialNeverAnError(t *testing.T) {
+	t.Parallel()
+
+	f, a, id, own := locSetup(t)
+	shard := "shard-" + strconv.Itoa(shardOf(id))
+
+	f.down[own[1].node.name] = true
+
+	code, r, body := locGet(t, a, id)
+	if code != http.StatusOK || !r.Partial || len(r.Locations) != 1 || r.Locations[0].Role != locPrimary || !slices.Equal(r.UnavailableUnits, []string{shard + "-r1"}) {
+		t.Fatalf("replica down: %d %s", code, body)
+	}
+
+	f.down[own[1].node.name], f.down[own[0].node.name] = false, true
+
+	code, r, body = locGet(t, a, id)
+	if code != http.StatusOK || !r.Partial || len(r.Locations) != 1 || r.Locations[0].Role != "replica" || !slices.Equal(r.UnavailableUnits, []string{shard}) {
+		t.Fatalf("primary down: %d %s", code, body)
+	}
+}
+
+func TestAuditLocationBothSilentIsEmptyPartialNotAnError(t *testing.T) {
+	t.Parallel()
+
+	f, a, id, own := locSetup(t)
+	shard := "shard-" + strconv.Itoa(shardOf(id))
+
+	f.down[own[0].node.name], f.down[own[1].node.name] = true, true
+
+	code, r, body := locGet(t, a, id)
+	if code != http.StatusOK || !r.Partial || len(r.Locations) != 0 || !slices.Equal(r.UnavailableUnits, []string{shard, shard + "-r1"}) ||
+		!strings.Contains(body, `"locations":[]`) {
+		t.Fatalf("both down: %d %s", code, body)
+	}
+}
+
+func TestAuditLocationUnknownIDWithOneSilentCopyIsPartial(t *testing.T) {
+	t.Parallel()
+
+	f, a, _, _ := locSetup(t)
+	other := hazardID("BMKG", "other")
+	oown := owners(shardOf(other), a.cl.live())
+	f.down[oown[0].node.name] = true
+
+	code, r, body := locGet(t, a, other)
+	if code != http.StatusOK || !r.Partial || len(r.Locations) != 0 || len(r.UnavailableUnits) != 1 || r.UnavailableUnits[0] != oown[0].unit {
+		t.Fatalf("unknown with one silent: %d %s", code, body)
+	}
+}
+
+func TestAuditLocationCopyMissingRowIsOmittedNotPartial(t *testing.T) {
+	t.Parallel()
+
+	f, a, id, own := locSetup(t)
+
+	delete(f.rows[own[1].node.name], id)
+
+	code, r, body := locGet(t, a, id)
+	if code != http.StatusOK || r.Partial || len(r.Locations) != 1 || r.Locations[0].Node != own[0].node.name {
+		t.Fatalf("%d %s", code, body)
+	}
+}
+
+func TestAuditLocationOneLiveNodeAndSlowNode(t *testing.T) {
+	t.Parallel()
+
+	f := newFake()
+	one := f.cluster("a")
+	h := hz("LOC2")
+
+	if _, err := one.upsert(t.Context(), h); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, r, body := locGet(t, auditAPIOf(one), h.HazardID); code != http.StatusOK || r.Partial || len(r.Locations) != 1 || r.Locations[0].Role != locPrimary {
+		t.Fatalf("one node: %d %s", code, body)
+	}
+
+	f2, a, id, own := locSetup(t)
+	f2.slow[own[0].node.name] = true
+
+	start := time.Now()
+
+	code, r, _ := locGet(t, a, id)
+	if code != http.StatusOK || !r.Partial || time.Since(start) > 2*copyTimeout {
+		t.Fatalf("slow: %d partial=%v took %v", code, r.Partial, time.Since(start))
+	}
+}
+
+func TestAuditLocationTokenRules(t *testing.T) {
+	t.Parallel()
+
+	_, a, id, _ := locSetup(t)
+	p := "/internal/audit/location?hazard_id=" + id
+	want := `{"error":{"code":"unauthorized","message":"token tidak valid"}}` + "\n"
+
+	for _, tok := range []string{"-", "wrong", ""} {
+		if code, body := auditGet(t, a, p, tok); code != http.StatusUnauthorized || body != want {
+			t.Fatalf("token %q: %d %q", tok, code, body)
+		}
+	}
+
+	empty := &readAPI{cl: a.cl}
+	if code, body := auditGet(t, empty, p, "anything"); code != http.StatusServiceUnavailable || !strings.Contains(body, "audit not configured") {
+		t.Fatalf("empty token: %d %s", code, body)
+	}
+
+	if code, body := auditGet(t, &readAPI{auditTok: testAuditToken}, p, testAuditToken); code != http.StatusServiceUnavailable {
+		t.Fatalf("no cluster: %d %s", code, body)
+	}
+}
+
+// Real SQL: the location route finds a row through the real read on two nodes sharing one database, and a non-uuid string would be a Postgres error. Skips without CANONICAL_DB_TEST_URL.
+func TestAuditLocationOnRealDB(t *testing.T) { //nolint:paralleltest // shared database
+	s := testStore(t, 2)
+	h := hazard(sourcePVMBG, ref(t, s))
+
+	if _, err := s.upsert(t.Context(), h); err != nil {
+		t.Fatal(err)
+	}
+
+	c := newCluster(func() []*node { return []*node{{name: "a", db: s.db}, {name: "b", db: s.db}} })
+	a := auditAPIOf(c)
+
+	if code, r, body := locGet(t, a, h.HazardID); code != http.StatusOK || r.Partial || len(r.Locations) != 2 {
+		t.Fatalf("known: %d %s", code, body)
+	}
+
+	if code, _, body := locGet(t, a, hazardID("BMKG", "real-db-missing")); code != http.StatusNotFound {
+		t.Fatalf("unknown uuid: %d %s", code, body)
+	}
+
+	if _, err := getOn(t.Context(), s.db, "hz-7f3a91"); err == nil {
+		t.Fatal("a non-uuid id should be a database error, which is why the handler checks the format first")
+	}
+
+	if code, _, _ := locGet(t, a, "hz-7f3a91"); code != http.StatusNotFound {
+		t.Fatalf("non-uuid: %d", code)
+	}
+}

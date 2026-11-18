@@ -187,3 +187,36 @@ func (c *cluster) get(ctx context.Context, id string) (*HazardEvent, []copyRef, 
 
 	return nil, own, nil
 }
+
+// Asks every owner of the hazard's shard at once, each with copyTimeout, and returns the copies that really hold the row, primary first. silent names the units of the copies that errored or timed out; asked is how many owners there were.
+func (c *cluster) locate(ctx context.Context, id string) (found []copyRef, silent []string, asked int) {
+	own := owners(shardOf(id), c.live())
+	has := make([]bool, len(own))
+	ok := make([]bool, len(own))
+
+	var wg sync.WaitGroup
+
+	for i, o := range own {
+		wg.Go(func() {
+			cctx, cancel := context.WithTimeout(ctx, copyTimeout)
+			defer cancel()
+
+			h, err := c.read(cctx, o.node, id)
+			ok[i], has[i] = err == nil, err == nil && h != nil
+		})
+	}
+
+	wg.Wait()
+
+	for i, o := range own {
+		if !ok[i] {
+			silent = append(silent, o.unit)
+		}
+
+		if has[i] {
+			found = append(found, o)
+		}
+	}
+
+	return found, silent, len(own)
+}

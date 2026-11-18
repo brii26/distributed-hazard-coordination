@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -217,4 +218,57 @@ func (a *readAPI) auditChecksum(w http.ResponseWriter, r *http.Request) {
 		Partial:          len(unavailable) > 0,
 		UnavailableUnits: nonNil(unavailable),
 	})
+}
+
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+type auditLocation struct {
+	Node string `json:"node"`
+	Unit string `json:"unit"`
+	Role string `json:"role"`
+}
+
+type auditLocationResponse struct {
+	HazardID  string          `json:"hazard_id"`
+	Locations []auditLocation `json:"locations"`
+	Partial   bool            `json:"partial"`
+
+	UnavailableUnits []string `json:"unavailable_units"`
+}
+
+// GET /internal/audit/location: asks both owners of the shard which of them holds the row. An id that is not a UUID cannot exist, so it is 404 without touching a database. 404 only when every owner answered and none has the row. Any silent owner gives 200 with partial true and its unit in unavailable_units, even when nothing was found, because the answer is never an error. No live store node at all is 503.
+func (a *readAPI) auditLocation(w http.ResponseWriter, r *http.Request) {
+	if !a.auditGate(w, r) {
+		return
+	}
+
+	id := r.URL.Query().Get("hazard_id")
+	if id == "" {
+		writeAuditError(w, http.StatusBadRequest, "bad_request", "hazard_id wajib diisi")
+
+		return
+	}
+
+	if !uuidRE.MatchString(id) {
+		writeAuditError(w, http.StatusNotFound, "not_found", "hazard_id tidak ditemukan")
+
+		return
+	}
+
+	id = strings.ToLower(id)
+	found, silent, asked := a.cl.locate(r.Context(), id)
+
+	switch {
+	case asked == 0:
+		writeAuditError(w, http.StatusServiceUnavailable, "unavailable", "tidak ada node store yang hidup")
+	case len(found) == 0 && len(silent) == 0:
+		writeAuditError(w, http.StatusNotFound, "not_found", "hazard_id tidak ditemukan")
+	default:
+		resp := auditLocationResponse{HazardID: id, Locations: []auditLocation{}, Partial: len(silent) > 0, UnavailableUnits: nonNil(silent)}
+		for _, o := range found {
+			resp.Locations = append(resp.Locations, auditLocation{Node: o.node.name, Unit: o.unit, Role: o.role})
+		}
+
+		writeJSON(w, http.StatusOK, resp)
+	}
 }
