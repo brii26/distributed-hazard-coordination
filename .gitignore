@@ -53,3 +53,6 @@ tests/load/results/
 # signature images stay local, only the folder is tracked
 doc/latex/figures/ttd/*
 !doc/latex/figures/ttd/.gitkeep
+
+# feedprobe raw captures (#308): may hold feed data, never committed
+tools/feedprobe/out/
