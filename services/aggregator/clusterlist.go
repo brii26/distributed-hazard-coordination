@@ -163,7 +163,7 @@ func (c *cluster) list(ctx context.Context, limit int, after *listPos, f listFil
 
 	for s := range numShards {
 		wg.Go(func() {
-			for _, o := range owners(s, live) {
+			for _, o := range c.syncedFirst(s, owners(s, live)) {
 				cctx, cancel := context.WithTimeout(ctx, copyTimeout)
 				rows, err := c.listShard(cctx, o.node, s, after, limit+1, f)
 
@@ -194,6 +194,41 @@ func (c *cluster) list(ctx context.Context, limit int, after *listPos, f listFil
 	}
 
 	return merged, false, unavailable
+}
+
+// Writes a page of copied rows to one node in one transaction. DO NOTHING keeps whatever is there: a copied old page never overwrites a newer live write.
+func copyOn(ctx context.Context, db *sql.DB, rows []HazardEvent) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = tx.Rollback() }()
+
+	for _, h := range rows {
+		attrs := h.Attributes
+		if attrs == nil {
+			attrs = map[string]any{}
+		}
+
+		raw, err := json.Marshal(attrs)
+		if err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO hazard_events
+    (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+     latitude, longitude, occurred_at, ingested_at, attributes, shard)
+VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::jsonb, $12::smallint)
+ON CONFLICT DO NOTHING`,
+			h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
+			h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID)); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // One shard's source_ref_id values from one node for a source, in byte order. COLLATE "C" matters: the default collation is not byte order.
