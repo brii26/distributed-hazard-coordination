@@ -48,6 +48,8 @@ type readAPI struct {
 	breakers map[string]*breaker // by source name
 	cl       *cluster            // nil without STORE_SERVICE; ListHazards, GetHazard and the audit routes need it
 	auditTok string              // bearer token for the audit routes
+	adminTok string              // bearer token for the admin routes
+	replay   *replayer
 
 	sem      chan struct{}
 	draining atomic.Bool    // set on SIGTERM, readiness is off from then on

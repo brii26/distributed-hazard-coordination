@@ -19,8 +19,8 @@ const dbQueryTimeout = 2 * time.Second
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-     latitude, longitude, occurred_at, ingested_at, attributes, shard)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
+     latitude, longitude, occurred_at, ingested_at, attributes, shard, source_received_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::timestamptz)
 ON CONFLICT (source, source_ref_id) DO UPDATE SET
     hazard_type = EXCLUDED.hazard_type,
     severity    = EXCLUDED.severity,
@@ -29,6 +29,7 @@ ON CONFLICT (source, source_ref_id) DO UPDATE SET
     longitude   = EXCLUDED.longitude,
     occurred_at = EXCLUDED.occurred_at,
     attributes  = EXCLUDED.attributes,
+    source_received_at = EXCLUDED.source_received_at,
     updated_at  = now()
 WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_name,
        hazard_events.latitude, hazard_events.longitude, hazard_events.occurred_at,
@@ -39,10 +40,30 @@ WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_nam
        EXCLUDED.attributes)
 RETURNING hazard_id, (xmax = 0) AS inserted`
 
-// The retry path's upsert: the same statement, but it writes nothing when the stored row was last written after $13 (the failure time), so an old record never overwrites a newer one.
-var guardedUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND hazard_events.updated_at <= $13::timestamptz\nRETURNING", 1)
+// The retry path's upsert: the same statement, but it writes nothing when the stored row was last written after $14 (the failure time), so an old record never overwrites a newer one.
+var guardedUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND hazard_events.updated_at <= $14::timestamptz\nRETURNING", 1)
+
+// The replay path's upsert: writes nothing when the stored row has a later source time, or the same source time and a later received time of the message that wrote it ($13 is the received time of the replayed message).
+var replayUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND (EXCLUDED.occurred_at, EXCLUDED.source_received_at) >= (hazard_events.occurred_at, hazard_events.source_received_at)\nRETURNING", 1)
 
 var errSuperseded = errors.New("a newer write exists")
+
+type replayAtKey struct{}
+
+// Makes upserts under ctx use the replay guard, with receivedAt as the write time of the replayed message.
+func withReplayAt(ctx context.Context, receivedAt time.Time) context.Context {
+	return context.WithValue(ctx, replayAtKey{}, receivedAt)
+}
+
+// Labels a skipped replay upsert as superseded when the stored row is newer by source time, or by write time on a tie.
+func storedIsNewerReplay(ctx context.Context, tx *sql.Tx, h HazardEvent, receivedAt time.Time) bool {
+	var newer bool
+
+	err := tx.QueryRowContext(ctx, `SELECT (occurred_at, source_received_at) > ($3::timestamptz, $4::timestamptz) FROM hazard_events WHERE source = $1 AND source_ref_id = $2`,
+		h.Source, h.SourceRefID, h.OccurredAt, receivedAt).Scan(&newer)
+
+	return err == nil && newer
+}
 
 type notNewerThanKey struct{}
 
@@ -176,15 +197,31 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 		inserted bool
 	)
 
+	// The received time of the message: replay and retry carry the time it was parked, a live write is received now.
+	guard, guarded := ctx.Value(notNewerThanKey{}).(time.Time)
+	replayAt, replaying := ctx.Value(replayAtKey{}).(time.Time)
+
+	receivedAt := time.Now()
+
+	switch {
+	case replaying:
+		receivedAt = replayAt
+	case guarded:
+		receivedAt = guard
+	}
+
 	query := upsertSQL
 	args := []any{
 		h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
-		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID),
+		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID), receivedAt,
 	}
 
-	guard, guarded := ctx.Value(notNewerThanKey{}).(time.Time)
 	if guarded {
 		query, args = guardedUpsertSQL, append(args, guard)
+	}
+
+	if replaying {
+		query, args = replayUpsertSQL, args[:13]
 	}
 
 	err = tx.QueryRowContext(ctx, query, args...).Scan(&id, &inserted)
@@ -194,7 +231,7 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 		return false, err
 	}
 
-	if guarded && !changed && storedIsNewer(ctx, tx, h, guard) {
+	if !changed && (guarded && storedIsNewer(ctx, tx, h, guard) || replaying && storedIsNewerReplay(ctx, tx, h, replayAt)) {
 		return false, errSuperseded
 	}
 

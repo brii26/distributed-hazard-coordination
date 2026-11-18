@@ -33,6 +33,7 @@ func newMux(api *readAPI) *http.ServeMux {
 	mux.HandleFunc("GET /health", api.healthHandler)
 	mux.HandleFunc("GET /internal/audit/events", api.auditEvents)
 	mux.HandleFunc("GET /internal/audit/checksum", api.auditChecksum)
+	mux.HandleFunc("POST /internal/admin/replay", api.adminReplay)
 
 	return mux
 }
@@ -388,6 +389,19 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		log.Print("WARNING: AUDIT_TOKEN is empty, every audit request will be refused")
 	}
 
+	api.adminTok = os.Getenv("ADMIN_TOKEN")
+
+	if api.adminTok == "" {
+		log.Print("WARNING: ADMIN_TOKEN is empty, every admin request will be refused")
+	}
+
+	batch, err := envPositiveInt("REPLAY_BATCH", replayDefaultBatch)
+	if err != nil {
+		return err
+	}
+
+	api.replay = &replayer{q: db, m: newMapper(), upsert: upsert, publish: pub.publish, batch: batch}
+
 	go api.watchStore(ctx, storeWatchEvery)
 
 	go func() {
@@ -404,6 +418,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		leaseMetrics(w, r)
 		relay.writeMetrics(w)
 		failed.write(r.Context(), w)
+		api.replay.writeMetrics(w)
 
 		if rb != nil {
 			rb.writeMetrics(w, rbLease.isLeader.Load() == 1)
