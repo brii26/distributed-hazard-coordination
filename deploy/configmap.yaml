@@ -38,6 +38,18 @@ data:
   UPSTREAM_TIMEOUT_MS: "1000"
   READ_TIMEOUT_MS: "3000"
   COOKIE_SECURE: "true"
+  # Situation Summarizer (the API key is Secret llm-credentials, never here)
+  AI_ENABLED: "false"
+  LLM_API_URL: ""
+  LLM_MODEL: default
+  LLM_TIMEOUT_MS: "3000"
+  LLM_CB_FAILURE_THRESHOLD: "3"
+  LLM_CB_OPEN_MS: "30000"
+  SUMMARY_INTERVAL_S: "30"
+  SUMMARY_WINDOW_S: "300"
+  SUMMARY_STALE_AFTER_S: "120"
+  ANOMALY_Z_THRESHOLD: "3"
+  SITUATION_TIMEOUT_MS: "200"
   # Web frontend
   FRONTEND_POLL_INTERVAL_MS: "5000"
   # Sensor Pantai (exam: deploy/overlays/exam)

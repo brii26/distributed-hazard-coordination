@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake curl for the self test: the login prints nothing, GET /situation answers fast (or slow with FAKE_SITUATION_SECONDS).
+case "$*" in
+  *"-w"*) echo "200 ${FAKE_SITUATION_SECONDS:-0.012}" ;;
+esac
