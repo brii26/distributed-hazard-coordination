@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,6 +45,20 @@ func TestMapFireMatchesTheAuditShape(t *testing.T) {
 
 	if string(got) != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The audit API answers in the Lampiran A shape, which has no version or withdrawn_at: the audit item leaves both out, also for a fire.
+func TestAuditItemKeepsTheLampiranShapeForFires(t *testing.T) {
+	t.Parallel()
+
+	got, err := json.Marshal(newAuditItem(mapFire(lampiranFire(), time.Unix(1, 0))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if s := string(got); strings.Contains(s, `"version"`) || strings.Contains(s, `"withdrawn_at"`) || !strings.Contains(s, `"detection_count":3`) {
+		t.Fatalf("audit item %s, want the attributes and no version or withdrawn_at", s)
 	}
 }
 

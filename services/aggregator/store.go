@@ -284,6 +284,7 @@ func (s *store) listByType(ctx context.Context, q listQuery) (_ []HazardEvent, _
 SELECT `+hazardColumns+`
 FROM hazard_events
 WHERE hazard_type = $1
+  AND withdrawn_at IS NULL
   AND ($2::text = '' OR severity = $2::text)
   AND ($3::text = '' OR area_name ILIKE '%' || $3::text || '%' ESCAPE '\')
 ORDER BY occurred_at DESC, hazard_id
