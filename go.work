@@ -7,6 +7,7 @@ use (
 	./services/bmkg-mock
 	./services/client-facing-api
 	./services/dashboard-updater
+	./services/field-report-processor
 	./services/notifier
 	./services/pvmbg-mock
 	./services/satellite-ingest

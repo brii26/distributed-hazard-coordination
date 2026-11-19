@@ -39,6 +39,7 @@ const (
 	Aggregator_GetHazard_FullMethodName          = "/aggregator.v1.Aggregator/GetHazard"
 	Aggregator_GetAnalytics_FullMethodName       = "/aggregator.v1.Aggregator/GetAnalytics"
 	Aggregator_GetHealth_FullMethodName          = "/aggregator.v1.Aggregator/GetHealth"
+	Aggregator_SaveFieldReport_FullMethodName    = "/aggregator.v1.Aggregator/SaveFieldReport"
 	Aggregator_ListFailedMessages_FullMethodName = "/aggregator.v1.Aggregator/ListFailedMessages"
 )
 
@@ -59,6 +60,10 @@ type AggregatorClient interface {
 	// with no reachable copy sets partial. INVALID_ARGUMENT for an unknown range.
 	GetAnalytics(ctx context.Context, in *GetAnalyticsRequest, opts ...grpc.CallOption) (*GetAnalyticsResponse, error)
 	GetHealth(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthStatus, error)
+	// Saves one field report once. result is STORED, DUPLICATE or PARKED; all three mean
+	// the report is durable and the queue message can be acked. UNAVAILABLE when no copy
+	// could commit. A non-empty park_reason makes the server park the body as is.
+	SaveFieldReport(ctx context.Context, in *SaveFieldReportRequest, opts ...grpc.CallOption) (*SaveFieldReportResponse, error)
 	// Rejected messages with their raw payload, oldest first, for the Operator.
 	// INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
 	// database does not answer.
@@ -123,6 +128,16 @@ func (c *aggregatorClient) GetHealth(ctx context.Context, in *emptypb.Empty, opt
 	return out, nil
 }
 
+func (c *aggregatorClient) SaveFieldReport(ctx context.Context, in *SaveFieldReportRequest, opts ...grpc.CallOption) (*SaveFieldReportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SaveFieldReportResponse)
+	err := c.cc.Invoke(ctx, Aggregator_SaveFieldReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *aggregatorClient) ListFailedMessages(ctx context.Context, in *ListFailedMessagesRequest, opts ...grpc.CallOption) (*ListFailedMessagesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListFailedMessagesResponse)
@@ -150,6 +165,10 @@ type AggregatorServer interface {
 	// with no reachable copy sets partial. INVALID_ARGUMENT for an unknown range.
 	GetAnalytics(context.Context, *GetAnalyticsRequest) (*GetAnalyticsResponse, error)
 	GetHealth(context.Context, *emptypb.Empty) (*HealthStatus, error)
+	// Saves one field report once. result is STORED, DUPLICATE or PARKED; all three mean
+	// the report is durable and the queue message can be acked. UNAVAILABLE when no copy
+	// could commit. A non-empty park_reason makes the server park the body as is.
+	SaveFieldReport(context.Context, *SaveFieldReportRequest) (*SaveFieldReportResponse, error)
 	// Rejected messages with their raw payload, oldest first, for the Operator.
 	// INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
 	// database does not answer.
@@ -178,6 +197,9 @@ func (UnimplementedAggregatorServer) GetAnalytics(context.Context, *GetAnalytics
 }
 func (UnimplementedAggregatorServer) GetHealth(context.Context, *emptypb.Empty) (*HealthStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetHealth not implemented")
+}
+func (UnimplementedAggregatorServer) SaveFieldReport(context.Context, *SaveFieldReportRequest) (*SaveFieldReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveFieldReport not implemented")
 }
 func (UnimplementedAggregatorServer) ListFailedMessages(context.Context, *ListFailedMessagesRequest) (*ListFailedMessagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFailedMessages not implemented")
@@ -293,6 +315,24 @@ func _Aggregator_GetHealth_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Aggregator_SaveFieldReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveFieldReportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServer).SaveFieldReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Aggregator_SaveFieldReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServer).SaveFieldReport(ctx, req.(*SaveFieldReportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Aggregator_ListFailedMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListFailedMessagesRequest)
 	if err := dec(in); err != nil {
@@ -337,6 +377,10 @@ var Aggregator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetHealth",
 			Handler:    _Aggregator_GetHealth_Handler,
+		},
+		{
+			MethodName: "SaveFieldReport",
+			Handler:    _Aggregator_SaveFieldReport_Handler,
 		},
 		{
 			MethodName: "ListFailedMessages",
