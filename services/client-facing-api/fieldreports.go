@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,6 +115,15 @@ func uuidV5(ns [16]byte, name string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
+// True when any text holds a NUL. It is valid JSON and valid UTF-8, but Postgres refuses it in text, so the report could never be saved.
+func hasNUL(texts ...string) bool {
+	return slices.ContainsFunc(texts, func(s string) bool { return strings.ContainsRune(s, 0) })
+}
+
+func outOfRange(in reportEnvelope) bool {
+	return in.Latitude != nil && in.Longitude != nil && (*in.Latitude < -90 || *in.Latitude > 90 || *in.Longitude < -180 || *in.Longitude > 180)
+}
+
 // Decodes and checks the body, nothing is touched before it is valid.
 func parseReport(r *http.Request, w http.ResponseWriter) (reportEnvelope, []byte, string) {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxReportBody))
@@ -132,13 +142,15 @@ func parseReport(r *http.Request, w http.ResponseWriter) (reportEnvelope, []byte
 	}
 
 	switch {
+	case hasNUL(in.Description, in.Kind):
+		return in, nil, "text must not contain a NUL character"
 	case strings.TrimSpace(in.Description) == "":
 		return in, nil, "description is required"
 	case len(in.Description) > maxDescription:
 		return in, nil, "description is longer than 4096 bytes"
 	case (in.Latitude == nil) != (in.Longitude == nil):
 		return in, nil, "latitude and longitude go together"
-	case in.Latitude != nil && (*in.Latitude < -90 || *in.Latitude > 90 || *in.Longitude < -180 || *in.Longitude > 180):
+	case outOfRange(in):
 		return in, nil, "latitude or longitude out of range"
 	case utf8.RuneCountInString(in.Kind) > maxKind:
 		return in, nil, "kind is longer than 64 characters"

@@ -80,10 +80,13 @@ func newCluster(live func() []*node) *cluster {
 	}
 }
 
-// Writes h to every owner of its shard at once, each with its own timeout. One commit is enough; a copy that missed marks the shard dirty. True if any copy was new or changed.
+// Writes h to every owner of its shard, see fanout.
 func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
-	shard := shardOf(h.HazardID)
+	return c.fanout(ctx, shardOf(h.HazardID), func(ctx context.Context, n *node) (bool, error) { return c.write(ctx, n, h) })
+}
 
+// Runs write on every owner of the shard at once, each with its own timeout. One commit is enough; a copy that missed marks the shard dirty. True if any copy was new or changed.
+func (c *cluster) fanout(ctx context.Context, shard int, write func(context.Context, *node) (bool, error)) (bool, error) {
 	own := owners(shard, c.live())
 	if len(own) == 0 {
 		return false, errNoNodes
@@ -103,7 +106,7 @@ func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 			cctx, cancel := context.WithTimeout(ctx, copyTimeout)
 			defer cancel()
 
-			res[i].changed, res[i].err = c.write(cctx, o.node, h)
+			res[i].changed, res[i].err = write(cctx, o.node)
 		})
 	}
 

@@ -17,6 +17,7 @@ resources:
   - dashboard-updater.yaml
   - notifier.yaml
   - audit-logger.yaml
+  - field-report-processor.yaml
   - networkpolicy.yaml
   - sensor-pantai
   - observability/observability.yaml
@@ -64,4 +65,7 @@ images:
     newTag: "0.1.0"
   - name: audit-logger
     newName: 10.77.0.11:5000/audit-logger
+    newTag: "0.1.0"
+  - name: field-report-processor
+    newName: 10.77.0.11:5000/field-report-processor
     newTag: "0.1.0"

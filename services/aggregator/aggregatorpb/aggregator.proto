@@ -35,6 +35,10 @@ service Aggregator {
   // with no reachable copy sets partial. INVALID_ARGUMENT for an unknown range.
   rpc GetAnalytics(GetAnalyticsRequest) returns (GetAnalyticsResponse);
   rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
+  // Saves one field report once. result is STORED, DUPLICATE or PARKED; all three mean
+  // the report is durable and the queue message can be acked. UNAVAILABLE when no copy
+  // could commit. A non-empty park_reason makes the server park the body as is.
+  rpc SaveFieldReport(SaveFieldReportRequest) returns (SaveFieldReportResponse);
   // Rejected messages with their raw payload, oldest first, for the Operator.
   // INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
   // database does not answer.
@@ -67,6 +71,16 @@ message FailedMessage {
   bytes payload_sha256 = 11;
   int32 payload_size = 12; // size of the original body
   bool oversize = 13;
+}
+
+message SaveFieldReportRequest {
+  string message_id = 1; // AMQP MessageId, must equal report_id in the body
+  bytes body = 2;        // the raw queue body
+  string park_reason = 3;
+}
+
+message SaveFieldReportResponse {
+  string result = 1; // STORED | DUPLICATE | PARKED
 }
 
 message GetHazardsRequest {
