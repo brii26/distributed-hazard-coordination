@@ -1,0 +1,216 @@
+% sumber: doc/IF4031 - Tugas Besar - M2.pdf (bagian Bonus), issue #325, #326, #327, deploy/aggregator-hpa.yaml,
+% docs/DEPLOY.md (bagian Autoscaling the Aggregator), tests/scenarios/autoscale.sh
+% Kode bonus fisik (\#325) dan AI (\#326) belum ada di main saat bab ini ditulis, jadi dua bagian itu memakai rancangan dari issue.
+% Setiap \ph{...} dan \buktiph adalah placeholder yang diganti setelah bukti diambil.
+\chapter[MILESTONE 2: BONUS]{Milestone 2: Bonus, Host Fisik, Komponen AI, dan Autoscaling}
+
+Spesifikasi Milestone 2 memberi tiga bonus masing-masing lima poin, dengan nilai akhir dibatasi 110. Bonus hanya dinilai bila dijelaskan di laporan dan diimplementasikan di kode, jadi tiap bagian bab ini menyebut skrip, manifest, atau komponen yang menjadi pasangannya di repository. Bagian host fisik dan komponen AI ditulis dari rancangan pada issue \#325 dan \#326 karena kodenya belum digabung ke \textit{branch} utama. Bagian autoscaling memakai manifest dan dokumen yang sudah ada. Semua angka hasil ukur masih placeholder merah.
+
+\section{Bonus Node pada Host Fisik Berbeda}\label{sec:bonus-fisik}
+
+\subsection{Yang Diminta Spesifikasi}
+
+Bukti yang diminta ada tiga: tampilan tiap host saat demo, pengukuran latensi dan keterlambatan data antar node pada jaringan nyata, dan pemutusan jaringan sungguhan (mencabut kabel atau mematikan Wi-Fi) beserta perilaku sistem saat itu. Node B, dan Node A bila memungkinkan, dijalankan di mesin fisik lain, misalnya dua laptop pada satu LAN. Cluster default memakai tiga VM pada satu mesin dengan NAT Network \texttt{10.77.0.0/24} (\texttt{doc/TOPOLOGY.md}), sehingga bonus ini berarti satu node bergabung dari mesin kedua lewat jaringan sungguhan.
+
+\subsection{Rencana Implementasi}
+
+Pasangan kodenya adalah skrip \texttt{tests/bonus/net-latency.sh} dan satu panel dashboard. Skrip mengukur latensi antar node dengan \texttt{ping} dan \texttt{iperf3}, lalu mengukur satu metrik keterlambatan data antar node, yaitu replication lag atau selisih waktu sebuah tulisan terlihat di node lain. Skrip tidak boleh mengubah routing host, prioritas interface, atau route metric, karena mengubahnya dapat memutus akses mesin ke jaringan lain. Prosedur dan hasil ditulis di \texttt{doc/BONUS\_PHYSICAL\_HOSTS.md}, dan \texttt{doc/TOPOLOGY.md} mendaftar host fisiknya. Node yang bergabung dari mesin kedua baru dapat dicoba setelah cluster dasar jadi (\#275), jadi semua bukti di bawah menunggu issue itu dan ketersediaan mesin kedua.
+
+\subsection{Batasan yang Disadari}
+
+\begin{itemize}
+\tightlist
+\item
+  Mesin kedua harus dipesan lebih dulu, dan hasilnya hanya berlaku untuk jaringan yang dipakai pada hari pengukuran.
+\item
+  Dua laptop pada satu LAN memberi latensi yang rendah, sehingga angkanya tidak menggambarkan jaringan antar lokasi.
+\item
+  Pemutusan jaringan sungguhan dilatih sekali sebelum demo. Perilaku yang dicatat adalah perilaku pada satu percobaan itu.
+\item
+  Canonical Store memakai \textit{replication factor} 2 dengan 16 \textit{shard}, seperti dibahas pada Bab~XII. Pemutusan satu node mengubah replika yang terjangkau, dan perilakunya hanya bisa diklaim setelah diamati.
+\end{itemize}
+
+\subsection{Bukti}
+
+Setiap kotak merah di bawah menyebut apa yang harus dilampirkan. Tidak ada angka yang ditulis sebelum diukur.
+
+\buktiph{bonus-fisik-nodes.png}{Daftar node dari mesin fisik berbeda}{output \texttt{kubectl get nodes -o wide} dengan kolom INTERNAL-IP dari dua mesin fisik.}{\texttt{kubectl get nodes -o wide} setelah node dari mesin kedua bergabung (menunggu \#275 dan \#325).}
+
+\buktiph{bonus-fisik-host-a.png}{Tampilan host pertama}{output \texttt{hostnamectl}, \texttt{lscpu}, dan \texttt{free -h} dari mesin pertama.}{terminal mesin pertama saat demo (menunggu \#325).}
+
+\buktiph{bonus-fisik-host-b.png}{Tampilan host kedua}{output \texttt{hostnamectl}, \texttt{lscpu}, dan \texttt{free -h} dari mesin kedua.}{terminal mesin kedua saat demo (menunggu \#325).}
+
+\buktiph{bonus-fisik-latensi.png}{Hasil pengukuran latensi dan keterlambatan data}{output \texttt{tests/bonus/net-latency.sh}: hasil \texttt{ping}, \texttt{iperf3}, dan metrik keterlambatan data antar node.}{jalankan skrip pada kedua mesin, simpan outputnya (menunggu \#325).}
+
+Tabel berikut diisi dari output skrip yang sama dengan gambar di atas.
+
+\begin{table}[H]
+\caption{Hasil pengukuran antar node pada jaringan nyata}
+\centering\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|c|}
+\hline
+\rowcolor{gray!25}\textbf{Ukuran} & \textbf{Hasil} \\
+\hline
+Latensi \texttt{ping} rata-rata & \ph{belum diukur} \\
+\hline
+Throughput \texttt{iperf3} & \ph{belum diukur} \\
+\hline
+Keterlambatan data antar node & \ph{belum diukur} \\
+\hline
+\end{tabular}
+\vspace{-12pt}
+\end{table}
+
+\buktiph{bonus-fisik-putus.png}{Perilaku sistem saat jaringan diputus sungguhan}{rekaman atau log dengan waktu: kabel dicabut atau Wi-Fi dimatikan saat ada beban, status node dan pod, respons API, dan pemulihan setelah jaringan kembali.}{satu latihan pemutusan sungguhan dengan beban berjalan, dicatat juga di \texttt{doc/BONUS\_PHYSICAL\_HOSTS.md} (menunggu \#325).}
+
+\section{Bonus Komponen AI yang Tidak Mengganggu Jalur Peringatan}\label{sec:bonus-ai}
+
+\subsection{Yang Diminta Spesifikasi}
+
+Komponen berbasis LLM atau ML, misalnya ringkasan situasi atau deteksi anomali, yang tidak mengganggu jalur peringatan ketika lambat, salah, atau mati. Issue \#326 menambahkan tiga syarat pengukuran: dengan LLM palsu yang tidur 60 detik, dengan LLM palsu yang mengembalikan JSON tidak valid, dan dengan pod dimatikan, p95 latensi peringatan kritis harus sama dengan baseline, dan \texttt{GET /situation} harus menjawab di bawah 300 ms.
+
+\subsection{Rancangan}
+
+Komponennya adalah service \texttt{situation-summarizer} (label pod \texttt{role: consumer}, memory request 128Mi dan limit 256Mi). Service ini mengonsumsi \textit{fan-out exchange} pada antrean miliknya sendiri, lalu secara berkala membuat ringkasan singkat dari HazardEvent terbaru. Ia juga dapat menandai anomali, misalnya z-score dari laju event per area.
+
+\begin{itemize}
+\tightlist
+\item
+  Bila \env{AI_ENABLED} bernilai true dan API key tersedia dari Secret, ringkasan dibuat oleh LLM. Bila tidak, ringkasan dibuat dengan aturan biasa tanpa model.
+\item
+  Panggilan ke LLM punya \textit{hard timeout} dan \textit{circuit breaker}. Jawaban yang bukan JSON valid dibuang dan dihitung sebagai kegagalan.
+\item
+  Hasil dibaca lewat \texttt{GET /situation} pada Client-Facing API, hanya baca. Bila hasilnya basi atau komponennya mati, endpoint menjawab \texttt{unavailable} dengan cepat dan tidak menunggu.
+\item
+  Tidak ada panggilan sinkron dari jalur peringatan atau jalur ingest ke komponen ini. Ia hanya menerima salinan event dari antrean sendiri, jadi antrean yang menumpuk atau konsumen yang mati tidak menahan Notifier.
+\item
+  Tidak ada credential di repository. API key dibaca dari Secret Kubernetes.
+\end{itemize}
+
+\subsection{Cara Pengujian}
+
+Tiga kondisi diuji dengan satu skenario yang sama. Pertama baseline tanpa gangguan, lalu LLM palsu yang tidur 60 detik, LLM palsu yang mengembalikan JSON tidak valid, dan pod \texttt{situation-summarizer} dimatikan. Pada tiap kondisi dua hal diukur: p95 latensi peringatan kritis dengan skenario peringatan kritis yang sudah ada (\texttt{tests/scenarios/critical-alerts.sh}), dan waktu jawab \texttt{GET /situation}. Tidak boleh ada selisih p95 yang bermakna terhadap baseline, dan semua jawaban \texttt{/situation} harus kurang dari 300 ms dengan penanda \texttt{unavailable} atau stale bila perlu.
+
+\subsection{Batasan yang Disadari}
+
+\begin{itemize}
+\tightlist
+\item
+  LLM dapat salah. Karena itu ringkasan hanya informasi tambahan dan tidak pernah dipakai untuk memutuskan peringatan atau severity.
+\item
+  Pengujian memakai LLM palsu. Perilaku penyedia LLM sungguhan (batas laju, pesan galat) tidak diuji.
+\item
+  Ringkasan hasil aturan biasa lebih sederhana daripada ringkasan LLM, dan kualitasnya tidak diukur.
+\item
+  Bagian ini ditulis dari rancangan. Nama skrip uji, metrik, dan ambang akan diselaraskan dengan kode setelah \#326 digabung.
+\end{itemize}
+
+\subsection{Bukti}
+
+\buktiph{bonus-ai-baseline.png}{p95 latensi peringatan kritis tanpa gangguan}{output skenario peringatan kritis dengan p95, tanpa LLM palsu.}{jalankan skenario peringatan kritis sebagai baseline (menunggu \#326).}
+
+\buktiph{bonus-ai-lambat.png}{LLM palsu yang tidur 60 detik}{p95 peringatan kritis dan waktu jawab \texttt{GET /situation} selama LLM palsu tidur 60 detik.}{skenario yang sama dengan LLM palsu lambat aktif (menunggu \#326).}
+
+\buktiph{bonus-ai-salah.png}{LLM palsu yang mengembalikan JSON tidak valid}{p95 peringatan kritis dan waktu jawab \texttt{GET /situation} dengan jawaban LLM tidak valid, beserta metrik kegagalan dan status breaker.}{skenario yang sama dengan LLM palsu salah aktif (menunggu \#326).}
+
+\buktiph{bonus-ai-mati.png}{Pod situation-summarizer dimatikan}{p95 peringatan kritis dan waktu jawab \texttt{GET /situation} setelah pod dihapus, dengan penanda \texttt{unavailable}.}{\texttt{kubectl delete pod} pada komponen lalu skenario yang sama (menunggu \#326).}
+
+\begin{table}[H]
+\caption{Hasil pengujian komponen AI}
+\centering\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|c|c|}
+\hline
+\rowcolor{gray!25}\textbf{Kondisi} & \textbf{p95 peringatan kritis} & \textbf{\texttt{/situation}} \\
+\hline
+Baseline & \ph{belum diukur} & \ph{belum diukur} \\
+\hline
+LLM lambat (60 detik) & \ph{belum diukur} & \ph{belum diukur} \\
+\hline
+LLM salah (JSON tidak valid) & \ph{belum diukur} & \ph{belum diukur} \\
+\hline
+Pod mati & \ph{belum diukur} & \ph{belum diukur} \\
+\hline
+\end{tabular}
+\vspace{-12pt}
+\end{table}
+
+\section{Bonus Autoscaling Aggregator}\label{sec:bonus-autoscaling}
+
+\subsection{Yang Diminta Spesifikasi}
+
+Jumlah instance bertambah dan berkurang sendiri mengikuti beban, dibuktikan saat beban naik dan turun. Issue \#327 menambahkan minimum 3 replika karena Problem 2 membutuhkan paling sedikit tiga, maksimum 5, \textit{stabilization window} yang mencegah flapping, lease dan fencing yang tetap benar saat scaling, dan panel Grafana jumlah replika.
+
+\subsection{Konfigurasi}
+
+\texttt{deploy/aggregator-hpa.yaml} adalah HorizontalPodAutoscaler \texttt{autoscaling/v2} pada Deployment \texttt{aggregator}, dengan metrik CPU dari metrics-server bawaan k3s.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.3\linewidth}|>{\raggedright\arraybackslash}p{0.62\linewidth}|}
+\hline
+\textbf{Pengaturan} & \textbf{Nilai} \\
+\hline
+\endfirsthead
+\hline
+\endhead
+Replika & minimum 3, maksimum 5 \\
+\hline
+Target & CPU rata-rata 60\% dari CPU request \\
+\hline
+Scale up & stabilization 30 detik, satu pod per 60 detik \\
+\hline
+Scale down & stabilization 300 detik, satu pod per 120 detik \\
+\hline
+\end{longtable}
+
+CPU request Aggregator adalah 200m, jadi target 60\% berarti 120m per pod. Memory tetap 256Mi request dan 512Mi limit sehingga \texttt{deploy/check.sh} tidak berubah. Nilai 200m dipilih dari pengukuran pada cluster: dengan request 100m rata-rata CPU sudah melewati target tanpa lalu lintas pengguna dan HPA naik sendiri ke 4 replika, karena pod pemegang lease polling memakai 100m sampai 200m sendirian. Dengan request 200m HPA kembali ke 3 dan bertahan di sana. Jendela turun yang panjang (300 detik) membuat jeda singkat pada beban tidak membuat jumlah replika naik turun.
+
+Deployment tidak memiliki field \texttt{replicas}, sehingga \texttt{kubectl apply -k deploy/} tidak mengembalikan jumlah yang dipilih HPA. Skrip yang mengatur jumlah replika dengan tangan (\texttt{tests/load/p2-k8s.sh}, \texttt{tests/load/p2-ratio.sh}) bentrok dengan HPA, jadi harus menjeda HPA lebih dulu dan memulihkannya lewat \textit{trap}. \texttt{kube-state-metrics} membaca HPA dan mengisi panel dashboard \textit{Aggregator replicas}.
+
+\subsection{Alasan Maksimum 5}
+
+Issue memintanya, dan load test Problem 2 (kriteria 6) memakai urutan 3, 5, 2 replika sehingga lima pod harus muat. Request semua pod lain di namespace berjumlah 4608Mi, yaitu 3 store, \texttt{user-db}, \texttt{coordination-db}, dan RabbitMQ masing-masing 512Mi, ditambah 11 pod 128Mi dan 2 mock 64Mi. Tiga node masing-masing 2048Mi memberi 6144Mi, sehingga di atas kertas tersisa 1536Mi, tepat enam Aggregator. Kernel, k3s, CoreDNS, dan pod tanpa request (traefik, metrics-server, provisioner) memakai sebagian, sedangkan lima pod butuh 1280Mi, jadi selisihnya tipis. Apakah lima pod benar-benar berjalan belum diukur: hasil \texttt{kubectl scale deployment/aggregator --replicas=5} masih ditunggu dari pemelihara cluster (\texttt{docs/DEPLOY.md}). \ph{jumlah pod Running atau Pending pada 5 replika, dari \#327 dan \#285}
+
+\subsection{Cara Pengujian}
+
+\texttt{tests/scenarios/autoscale.sh} memakai HPA yang aktif dan menolak jalan bila HPA hilang atau terkunci (minimum sama dengan maksimum). Skrip menaikkan \env{ACCESS_TOKEN_TTL_S} dan \env{RATE_LIMIT_RPS} pada \texttt{bnpb-config} selama pengujian dan memulihkannya saat selesai, karena token 60 detik kedaluwarsa di tengah jalan dan batas 50 rps per akun menahan semua VU satu login jauh di bawah target CPU. Urutannya:
+
+\begin{enumerate}
+\tightlist
+\item
+  Fase idle (default 180 detik) yang mengharuskan jumlah replika tetap di minimum, supaya HPA yang flapping terlihat sebagai FAIL.
+\item
+  Ramp k6: satu menit sampai sepertiga \env{PEAK_VUS}, dua menit sampai puncak, tahan di puncak (\env{HOLD}, default 4 menit), satu menit turun. Jumlah replika dan CPU dicetak tiap 15 detik.
+\item
+  Menunggu replika kembali ke minimum setelah beban berhenti.
+\item
+  Audit API (lewat \texttt{port-forward}) untuk BMKG, PVMBG, dan SENSOR\_PANTAI: tidak ada id event ganda, dan checksum sama dengan sha256 independen.
+\end{enumerate}
+
+Hasilnya PASS bila replika bertahan di minimum saat idle, naik di atas minimum saat beban, kembali ke minimum sesudahnya, galat k6 di bawah 1\% (429 tidak dihitung), dan audit bersih.
+
+\subsection{Batasan yang Disadari}
+
+\begin{itemize}
+\tightlist
+\item
+  Skrip lolos \textit{shellcheck} dan cek sintaks, tetapi belum dijalankan pada cluster karena VM belum tersedia saat dokumen ini ditulis.
+\item
+  Skala berdasarkan CPU saja. Skala berdasarkan laju permintaan membutuhkan metrik dari \#279 dan tidak dipakai.
+\item
+  Maksimum 5 belum terbukti muat pada dua atau tiga node 2048Mi, lihat bagian sebelumnya.
+\item
+  Jendela turun 300 detik dan satu pod per 120 detik berarti penurunan dari lima ke tiga replika dimulai paling cepat 300 detik setelah beban berhenti, lalu satu pod per 120 detik, dan waktu tunggu skrip (\env{SETTLE_TIMEOUT}, default 900 detik) harus cukup untuk itu.
+\item
+  Kebenaran lease dan fencing saat scaling dibuktikan lewat audit tanpa duplikat dan tidak lewat uji terpisah.
+\end{itemize}
+
+\subsection{Bukti}
+
+\buktiph{bonus-hpa-config.png}{HPA Aggregator pada cluster}{output \texttt{kubectl get hpa aggregator -o yaml} yang menunjukkan minimum 3, maksimum 5, target CPU 60\%, dan behavior.}{\texttt{kubectl -n sistem-informasi-kebencanaan-bnpb get hpa aggregator -o yaml} (menunggu \#327).}
+
+\buktiph{bonus-hpa-ramp.png}{Replika naik saat ramp k6}{output \texttt{kubectl get hpa -w} atau log \texttt{autoscale.sh} yang menunjukkan jumlah replika naik di atas 3 selama beban.}{jalankan \texttt{tests/scenarios/autoscale.sh} (menunggu \#285 dan \#327).}
+
+\buktiph{bonus-hpa-turun.png}{Replika kembali ke minimum setelah beban}{bagian akhir log yang sama, jumlah replika kembali ke 3 beserta baris PASS.}{log \texttt{autoscale.sh} sampai baris RESULT (menunggu \#327).}
+
+\buktiph{bonus-hpa-panel.png}{Panel Aggregator replicas pada Grafana}{panel dengan rentang waktu yang memuat naik dan turun.}{Grafana pada rentang waktu pengujian (menunggu \#327).}
+
+\buktiph{bonus-hpa-audit.png}{Audit API setelah scaling}{baris PASS untuk id ganda dan checksum pada tiga sumber, dan angka galat k6 di bawah 1\%.}{bagian akhir log \texttt{autoscale.sh} (menunggu \#327).}
