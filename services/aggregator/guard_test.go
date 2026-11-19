@@ -330,6 +330,52 @@ func TestDecodeObservationsDeepItemKeepsCursor(t *testing.T) {
 	}
 }
 
+func TestSetAsideFloodParksAtMostCapPlusOneRow(t *testing.T) {
+	t.Parallel()
+
+	const n = 2_000_000
+
+	body := []byte("[" + strings.Repeat("1,", n-1) + "1]")
+
+	_, _, bad, err := decodeRecords(body, false)
+	if err != nil || len(bad) != n {
+		t.Fatalf("bad %d err %v, want %d set aside", len(bad), err, n)
+	}
+
+	var rows []failedMessage
+
+	in := &ingest{name: sourceBMKG, fail: func(_ context.Context, m failedMessage) error {
+		rows = append(rows, m)
+
+		return nil
+	}}
+
+	if !in.keepSetAside(context.Background(), pollResult{rejected: bad}) {
+		t.Fatal("batch not clean")
+	}
+
+	if len(rows) != maxSetAsideParked+1 {
+		t.Fatalf("%d upserts, want %d", len(rows), maxSetAsideParked+1)
+	}
+
+	if last := rows[len(rows)-1]; !strings.Contains(last.Reason, "1999900 more set aside in this batch") {
+		t.Fatalf("summary reason %q", last.Reason)
+	}
+}
+
+func TestDecodeRecordsTrailingGarbageIsOneRow(t *testing.T) {
+	t.Parallel()
+
+	recs, _, bad, err := decodeRecords([]byte("[{\"id\":1}] \n xyz [2]"), false)
+	if err != nil || len(recs) != 1 || len(bad) != 1 || !errors.Is(bad[0].err, errTrailing) || string(bad[0].raw) != "xyz [2]" {
+		t.Fatalf("recs %d bad %+v err %v", len(recs), bad, err)
+	}
+
+	if _, _, bad, _ = decodeRecords([]byte("[{\"id\":1}] \n"), false); len(bad) != 0 {
+		t.Fatalf("trailing whitespace parked %d", len(bad))
+	}
+}
+
 func TestSetAsideWithoutFailedStoreIsNotSilent(t *testing.T) {
 	t.Parallel()
 

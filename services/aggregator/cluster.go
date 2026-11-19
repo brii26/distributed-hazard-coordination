@@ -22,11 +22,21 @@ type cluster struct {
 	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error)
 	idsShard  func(ctx context.Context, n *node, shard int, source string) ([]string, error)
 
+	analyticsShard func(ctx context.Context, n *node, shard int, sp analyticsSpec) (*analytics, error)
+
 	// Whether a node holds a shard in full (shard_state). Nil means every copy counts as synced.
 	isSynced func(name string, shard int) bool
 
+	// How many store nodes the cluster should have (STORE_EXPECTED_NODES). 0 means not set.
+	expectedNodes int
+
 	mu    sync.Mutex
 	dirty map[int]bool
+}
+
+// How many expected store nodes are missing from the live list. Membership drops a dead node after its grace period, so this is what keeps a lost node visible afterwards. 0 when expectedNodes is not set.
+func (c *cluster) missingNodes() int {
+	return max(0, c.expectedNodes-len(c.live()))
 }
 
 // Owners with synced copies first, so a joined node that is still empty answers only as a last resort. The original order is kept inside each group.
@@ -63,14 +73,20 @@ func newCluster(live func() []*node) *cluster {
 		idsShard: func(ctx context.Context, n *node, shard int, source string) ([]string, error) {
 			return idsShardOn(ctx, n.db, shard, source)
 		},
+		analyticsShard: func(ctx context.Context, n *node, shard int, sp analyticsSpec) (*analytics, error) {
+			return analyticsShardOn(ctx, n.db, shard, sp)
+		},
 		dirty: map[int]bool{},
 	}
 }
 
-// Writes h to every owner of its shard at once, each with its own timeout. One commit is enough; a copy that missed marks the shard dirty. True if any copy was new or changed.
+// Writes h to every owner of its shard, see fanout.
 func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
-	shard := shardOf(h.HazardID)
+	return c.fanout(ctx, shardOf(h.HazardID), func(ctx context.Context, n *node) (bool, error) { return c.write(ctx, n, h) })
+}
 
+// Runs write on every owner of the shard at once, each with its own timeout. One commit is enough; a copy that missed marks the shard dirty. True if any copy was new or changed.
+func (c *cluster) fanout(ctx context.Context, shard int, write func(context.Context, *node) (bool, error)) (bool, error) {
 	own := owners(shard, c.live())
 	if len(own) == 0 {
 		return false, errNoNodes
@@ -90,7 +106,7 @@ func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
 			cctx, cancel := context.WithTimeout(ctx, copyTimeout)
 			defer cancel()
 
-			res[i].changed, res[i].err = c.write(cctx, o.node, h)
+			res[i].changed, res[i].err = write(cctx, o.node)
 		})
 	}
 

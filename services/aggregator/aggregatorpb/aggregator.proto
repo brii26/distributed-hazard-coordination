@@ -31,7 +31,14 @@ service Aggregator {
   // One hazard by id: primary copy, then the replica. NOT_FOUND when neither has
   // it, UNAVAILABLE when no copy could be reached.
   rpc GetHazard(GetHazardRequest) returns (GetHazardResponse);
+  // Event counts over a recent window, summed across shards. Always OK; a shard
+  // with no reachable copy sets partial. INVALID_ARGUMENT for an unknown range.
+  rpc GetAnalytics(GetAnalyticsRequest) returns (GetAnalyticsResponse);
   rpc GetHealth(google.protobuf.Empty) returns (HealthStatus);
+  // Saves one field report once. result is STORED, DUPLICATE or PARKED; all three mean
+  // the report is durable and the queue message can be acked. UNAVAILABLE when no copy
+  // could commit. A non-empty park_reason makes the server park the body as is.
+  rpc SaveFieldReport(SaveFieldReportRequest) returns (SaveFieldReportResponse);
   // Rejected messages with their raw payload, oldest first, for the Operator.
   // INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
   // database does not answer.
@@ -66,6 +73,16 @@ message FailedMessage {
   bool oversize = 13;
 }
 
+message SaveFieldReportRequest {
+  string message_id = 1; // AMQP MessageId, must equal report_id in the body
+  bytes body = 2;        // the raw queue body
+  string park_reason = 3;
+}
+
+message SaveFieldReportResponse {
+  string result = 1; // STORED | DUPLICATE | PARKED
+}
+
 message GetHazardsRequest {
   string hazard_type = 1; // SEISMIC | VOLCANIC
   // Paging, newest first. limit 0 means the server default; it is capped server-side.
@@ -92,6 +109,38 @@ message ListHazardsResponse {
   bool has_more = 3;
   bool partial = 4;                      // some records may be missing
   repeated string unavailable_units = 5; // units with no reachable copy, e.g. "shard-3"
+}
+
+message GetAnalyticsRequest {
+  string range = 1; // 1h | 6h | 24h | 7d
+}
+
+message GetAnalyticsResponse {
+  google.protobuf.Timestamp as_of = 1; // every count is for ingested_at <= as_of
+  int32 bucket_seconds = 2;
+  repeated SeriesCount series = 3;
+  repeated KeyCount by_severity = 4; // key "" is events without a severity
+  repeated KeyCount by_area = 5;     // key "" is events without an area_name
+  repeated KeyCount by_source = 6;
+  bool partial = 7;
+  repeated string unavailable_units = 8;
+  // Some copy did not answer, even if every shard did (a replica may also lag
+  // after a resync), so the numbers may be incomplete. partial implies degraded.
+  bool degraded = 9;
+  int32 unreachable_copies = 10;
+}
+
+// Events of one category in the time bucket that starts at bucket_start (unix seconds).
+// category is earthquake | tsunami | volcano | wildfire | coastal, each event in exactly one.
+message SeriesCount {
+  int64 bucket_start = 1;
+  string category = 2;
+  int64 count = 3;
+}
+
+message KeyCount {
+  string key = 1;
+  int64 count = 2;
 }
 
 message GetHazardRequest {

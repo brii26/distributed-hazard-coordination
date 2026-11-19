@@ -292,6 +292,20 @@ services:
     volumes:
       - notifier_dedup_data:/var/lib/notifier
 
+  field-report-processor:
+    restart: unless-stopped
+    mem_limit: 256m
+    build: ./services/field-report-processor
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      aggregator:
+        condition: service_healthy
+    environment:
+      HEALTH_PORT: 8096
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      AGGREGATOR_ADDR: aggregator:9091
+
   audit-logger:
     restart: unless-stopped
     mem_limit: 256m

@@ -78,6 +78,8 @@ func oneEvent(t *testing.T) *aggregatorpb.GetHazardsResponse {
 }
 
 // Calls GET /hazards through the JWT middleware as a caller with role.
+//
+//nolint:dupl // same shape as getAnalytics, a different handler and fake
 func getHazards(t *testing.T, f fakeHazards, role, query string) (*httptest.ResponseRecorder, map[string]any) {
 	t.Helper()
 

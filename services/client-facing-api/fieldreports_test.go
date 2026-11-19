@@ -93,6 +93,8 @@ func TestInvalidRequestsAre400AndPublishNothing(t *testing.T) {
 		"4097 bytes":          {"", `{"description":"` + strings.Repeat("a", 4097) + `"}`},
 		"bad utf8":            {"", "{\"description\":\"\xff\xfe\"}"},
 		"wrong type":          {"", `{"description":5}`},
+		"NUL in description":  {"", `{"description":"banjir \u0000 x"}`},
+		"NUL in kind":         {"", `{"description":"x","kind":"a\u0000b"}`},
 		"latitude only":       {"", `{"description":"x","latitude":1}`},
 		"latitude 91":         {"", `{"description":"x","latitude":91,"longitude":1}`},
 		"longitude 181":       {"", `{"description":"x","latitude":1,"longitude":181}`},

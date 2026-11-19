@@ -184,8 +184,14 @@ func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardE
 		}
 	}()
 
+	expected, err := envPositiveInt("STORE_EXPECTED_NODES", 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	cl := newCluster(m.live)
 	cl.isSynced = m.isSynced
+	cl.expectedNodes = expected
 
 	return cl.upsert, cl, nil
 }
@@ -385,6 +391,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	}
 
 	api.cl = cl
+	api.fields = newFieldReports(db, cl)
 	api.auditTok = os.Getenv("AUDIT_TOKEN")
 
 	if api.auditTok == "" {
@@ -419,6 +426,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		leaseMetrics(w, r)
 		relay.writeMetrics(w)
+		api.fields.writeMetrics(w)
 		failed.write(r.Context(), w)
 		api.replay.writeMetrics(w)
 
