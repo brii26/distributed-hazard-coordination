@@ -556,6 +556,282 @@ func (x *ListHazardsResponse) GetUnavailableUnits() []string {
 	return nil
 }
 
+type GetAnalyticsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Range         string                 `protobuf:"bytes,1,opt,name=range,proto3" json:"range,omitempty"` // 1h | 6h | 24h | 7d
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAnalyticsRequest) Reset() {
+	*x = GetAnalyticsRequest{}
+	mi := &file_aggregator_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAnalyticsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAnalyticsRequest) ProtoMessage() {}
+
+func (x *GetAnalyticsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAnalyticsRequest.ProtoReflect.Descriptor instead.
+func (*GetAnalyticsRequest) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GetAnalyticsRequest) GetRange() string {
+	if x != nil {
+		return x.Range
+	}
+	return ""
+}
+
+type GetAnalyticsResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	AsOf             *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=as_of,json=asOf,proto3" json:"as_of,omitempty"` // every count is for ingested_at <= as_of
+	BucketSeconds    int32                  `protobuf:"varint,2,opt,name=bucket_seconds,json=bucketSeconds,proto3" json:"bucket_seconds,omitempty"`
+	Series           []*SeriesCount         `protobuf:"bytes,3,rep,name=series,proto3" json:"series,omitempty"`
+	BySeverity       []*KeyCount            `protobuf:"bytes,4,rep,name=by_severity,json=bySeverity,proto3" json:"by_severity,omitempty"` // key "" is events without a severity
+	ByArea           []*KeyCount            `protobuf:"bytes,5,rep,name=by_area,json=byArea,proto3" json:"by_area,omitempty"`             // key "" is events without an area_name
+	BySource         []*KeyCount            `protobuf:"bytes,6,rep,name=by_source,json=bySource,proto3" json:"by_source,omitempty"`
+	Partial          bool                   `protobuf:"varint,7,opt,name=partial,proto3" json:"partial,omitempty"`
+	UnavailableUnits []string               `protobuf:"bytes,8,rep,name=unavailable_units,json=unavailableUnits,proto3" json:"unavailable_units,omitempty"`
+	// Some copy did not answer, even if every shard did (a replica may also lag
+	// after a resync), so the numbers may be incomplete. partial implies degraded.
+	Degraded          bool  `protobuf:"varint,9,opt,name=degraded,proto3" json:"degraded,omitempty"`
+	UnreachableCopies int32 `protobuf:"varint,10,opt,name=unreachable_copies,json=unreachableCopies,proto3" json:"unreachable_copies,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *GetAnalyticsResponse) Reset() {
+	*x = GetAnalyticsResponse{}
+	mi := &file_aggregator_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAnalyticsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAnalyticsResponse) ProtoMessage() {}
+
+func (x *GetAnalyticsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAnalyticsResponse.ProtoReflect.Descriptor instead.
+func (*GetAnalyticsResponse) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetAnalyticsResponse) GetAsOf() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AsOf
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetBucketSeconds() int32 {
+	if x != nil {
+		return x.BucketSeconds
+	}
+	return 0
+}
+
+func (x *GetAnalyticsResponse) GetSeries() []*SeriesCount {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetBySeverity() []*KeyCount {
+	if x != nil {
+		return x.BySeverity
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetByArea() []*KeyCount {
+	if x != nil {
+		return x.ByArea
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetBySource() []*KeyCount {
+	if x != nil {
+		return x.BySource
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetPartial() bool {
+	if x != nil {
+		return x.Partial
+	}
+	return false
+}
+
+func (x *GetAnalyticsResponse) GetUnavailableUnits() []string {
+	if x != nil {
+		return x.UnavailableUnits
+	}
+	return nil
+}
+
+func (x *GetAnalyticsResponse) GetDegraded() bool {
+	if x != nil {
+		return x.Degraded
+	}
+	return false
+}
+
+func (x *GetAnalyticsResponse) GetUnreachableCopies() int32 {
+	if x != nil {
+		return x.UnreachableCopies
+	}
+	return 0
+}
+
+// Events of one category in the time bucket that starts at bucket_start (unix seconds).
+// category is earthquake | tsunami | volcano | wildfire | coastal, each event in exactly one.
+type SeriesCount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BucketStart   int64                  `protobuf:"varint,1,opt,name=bucket_start,json=bucketStart,proto3" json:"bucket_start,omitempty"`
+	Category      string                 `protobuf:"bytes,2,opt,name=category,proto3" json:"category,omitempty"`
+	Count         int64                  `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SeriesCount) Reset() {
+	*x = SeriesCount{}
+	mi := &file_aggregator_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SeriesCount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SeriesCount) ProtoMessage() {}
+
+func (x *SeriesCount) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SeriesCount.ProtoReflect.Descriptor instead.
+func (*SeriesCount) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SeriesCount) GetBucketStart() int64 {
+	if x != nil {
+		return x.BucketStart
+	}
+	return 0
+}
+
+func (x *SeriesCount) GetCategory() string {
+	if x != nil {
+		return x.Category
+	}
+	return ""
+}
+
+func (x *SeriesCount) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type KeyCount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KeyCount) Reset() {
+	*x = KeyCount{}
+	mi := &file_aggregator_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyCount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyCount) ProtoMessage() {}
+
+func (x *KeyCount) ProtoReflect() protoreflect.Message {
+	mi := &file_aggregator_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyCount.ProtoReflect.Descriptor instead.
+func (*KeyCount) Descriptor() ([]byte, []int) {
+	return file_aggregator_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *KeyCount) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *KeyCount) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
 type GetHazardRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	HazardId      string                 `protobuf:"bytes,1,opt,name=hazard_id,json=hazardId,proto3" json:"hazard_id,omitempty"`
@@ -565,7 +841,7 @@ type GetHazardRequest struct {
 
 func (x *GetHazardRequest) Reset() {
 	*x = GetHazardRequest{}
-	mi := &file_aggregator_proto_msgTypes[7]
+	mi := &file_aggregator_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -577,7 +853,7 @@ func (x *GetHazardRequest) String() string {
 func (*GetHazardRequest) ProtoMessage() {}
 
 func (x *GetHazardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[7]
+	mi := &file_aggregator_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -590,7 +866,7 @@ func (x *GetHazardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardRequest.ProtoReflect.Descriptor instead.
 func (*GetHazardRequest) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{7}
+	return file_aggregator_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetHazardRequest) GetHazardId() string {
@@ -610,7 +886,7 @@ type GetHazardResponse struct {
 
 func (x *GetHazardResponse) Reset() {
 	*x = GetHazardResponse{}
-	mi := &file_aggregator_proto_msgTypes[8]
+	mi := &file_aggregator_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -622,7 +898,7 @@ func (x *GetHazardResponse) String() string {
 func (*GetHazardResponse) ProtoMessage() {}
 
 func (x *GetHazardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[8]
+	mi := &file_aggregator_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -635,7 +911,7 @@ func (x *GetHazardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetHazardResponse.ProtoReflect.Descriptor instead.
 func (*GetHazardResponse) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{8}
+	return file_aggregator_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetHazardResponse) GetEvent() *HazardEvent {
@@ -673,7 +949,7 @@ type HazardEvent struct {
 
 func (x *HazardEvent) Reset() {
 	*x = HazardEvent{}
-	mi := &file_aggregator_proto_msgTypes[9]
+	mi := &file_aggregator_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -685,7 +961,7 @@ func (x *HazardEvent) String() string {
 func (*HazardEvent) ProtoMessage() {}
 
 func (x *HazardEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[9]
+	mi := &file_aggregator_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -698,7 +974,7 @@ func (x *HazardEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HazardEvent.ProtoReflect.Descriptor instead.
 func (*HazardEvent) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{9}
+	return file_aggregator_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *HazardEvent) GetHazardId() string {
@@ -791,7 +1067,7 @@ type ResponseMeta struct {
 
 func (x *ResponseMeta) Reset() {
 	*x = ResponseMeta{}
-	mi := &file_aggregator_proto_msgTypes[10]
+	mi := &file_aggregator_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -803,7 +1079,7 @@ func (x *ResponseMeta) String() string {
 func (*ResponseMeta) ProtoMessage() {}
 
 func (x *ResponseMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[10]
+	mi := &file_aggregator_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -816,7 +1092,7 @@ func (x *ResponseMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResponseMeta.ProtoReflect.Descriptor instead.
 func (*ResponseMeta) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{10}
+	return file_aggregator_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ResponseMeta) GetSource() string {
@@ -859,7 +1135,7 @@ type HealthStatus struct {
 
 func (x *HealthStatus) Reset() {
 	*x = HealthStatus{}
-	mi := &file_aggregator_proto_msgTypes[11]
+	mi := &file_aggregator_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -871,7 +1147,7 @@ func (x *HealthStatus) String() string {
 func (*HealthStatus) ProtoMessage() {}
 
 func (x *HealthStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_aggregator_proto_msgTypes[11]
+	mi := &file_aggregator_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -884,7 +1160,7 @@ func (x *HealthStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthStatus.ProtoReflect.Descriptor instead.
 func (*HealthStatus) Descriptor() ([]byte, []int) {
-	return file_aggregator_proto_rawDescGZIP(), []int{11}
+	return file_aggregator_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *HealthStatus) GetStatus() string {
@@ -965,7 +1241,29 @@ const file_aggregator_proto_rawDesc = "" +
 	"nextCursor\x12\x19\n" +
 	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x12\x18\n" +
 	"\apartial\x18\x04 \x01(\bR\apartial\x12+\n" +
-	"\x11unavailable_units\x18\x05 \x03(\tR\x10unavailableUnits\"/\n" +
+	"\x11unavailable_units\x18\x05 \x03(\tR\x10unavailableUnits\"+\n" +
+	"\x13GetAnalyticsRequest\x12\x14\n" +
+	"\x05range\x18\x01 \x01(\tR\x05range\"\xd6\x03\n" +
+	"\x14GetAnalyticsResponse\x12/\n" +
+	"\x05as_of\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04asOf\x12%\n" +
+	"\x0ebucket_seconds\x18\x02 \x01(\x05R\rbucketSeconds\x122\n" +
+	"\x06series\x18\x03 \x03(\v2\x1a.aggregator.v1.SeriesCountR\x06series\x128\n" +
+	"\vby_severity\x18\x04 \x03(\v2\x17.aggregator.v1.KeyCountR\n" +
+	"bySeverity\x120\n" +
+	"\aby_area\x18\x05 \x03(\v2\x17.aggregator.v1.KeyCountR\x06byArea\x124\n" +
+	"\tby_source\x18\x06 \x03(\v2\x17.aggregator.v1.KeyCountR\bbySource\x12\x18\n" +
+	"\apartial\x18\a \x01(\bR\apartial\x12+\n" +
+	"\x11unavailable_units\x18\b \x03(\tR\x10unavailableUnits\x12\x1a\n" +
+	"\bdegraded\x18\t \x01(\bR\bdegraded\x12-\n" +
+	"\x12unreachable_copies\x18\n" +
+	" \x01(\x05R\x11unreachableCopies\"b\n" +
+	"\vSeriesCount\x12!\n" +
+	"\fbucket_start\x18\x01 \x01(\x03R\vbucketStart\x12\x1a\n" +
+	"\bcategory\x18\x02 \x01(\tR\bcategory\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\x03R\x05count\"2\n" +
+	"\bKeyCount\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\"/\n" +
 	"\x10GetHazardRequest\x12\x1b\n" +
 	"\thazard_id\x18\x01 \x01(\tR\bhazardId\"c\n" +
 	"\x11GetHazardResponse\x120\n" +
@@ -1005,13 +1303,14 @@ const file_aggregator_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x125\n" +
 	"\asources\x18\x02 \x03(\v2\x1b.aggregator.v1.ResponseMetaR\asources\x12-\n" +
 	"\x12database_connected\x18\x03 \x01(\bR\x11databaseConnected\x12-\n" +
-	"\x12rabbitmq_connected\x18\x04 \x01(\bR\x11rabbitmqConnected2\xb2\x03\n" +
+	"\x12rabbitmq_connected\x18\x04 \x01(\bR\x11rabbitmqConnected2\x8b\x04\n" +
 	"\n" +
 	"Aggregator\x12Q\n" +
 	"\n" +
 	"GetHazards\x12 .aggregator.v1.GetHazardsRequest\x1a!.aggregator.v1.GetHazardsResponse\x12T\n" +
 	"\vListHazards\x12!.aggregator.v1.ListHazardsRequest\x1a\".aggregator.v1.ListHazardsResponse\x12N\n" +
-	"\tGetHazard\x12\x1f.aggregator.v1.GetHazardRequest\x1a .aggregator.v1.GetHazardResponse\x12@\n" +
+	"\tGetHazard\x12\x1f.aggregator.v1.GetHazardRequest\x1a .aggregator.v1.GetHazardResponse\x12W\n" +
+	"\fGetAnalytics\x12\".aggregator.v1.GetAnalyticsRequest\x1a#.aggregator.v1.GetAnalyticsResponse\x12@\n" +
 	"\tGetHealth\x12\x16.google.protobuf.Empty\x1a\x1b.aggregator.v1.HealthStatus\x12i\n" +
 	"\x12ListFailedMessages\x12(.aggregator.v1.ListFailedMessagesRequest\x1a).aggregator.v1.ListFailedMessagesResponseBTZRgithub.com/brii26/distributed-hazard-coordination/services/aggregator/aggregatorpbb\x06proto3"
 
@@ -1027,7 +1326,7 @@ func file_aggregator_proto_rawDescGZIP() []byte {
 	return file_aggregator_proto_rawDescData
 }
 
-var file_aggregator_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_aggregator_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_aggregator_proto_goTypes = []any{
 	(*ListFailedMessagesRequest)(nil),  // 0: aggregator.v1.ListFailedMessagesRequest
 	(*ListFailedMessagesResponse)(nil), // 1: aggregator.v1.ListFailedMessagesResponse
@@ -1036,44 +1335,55 @@ var file_aggregator_proto_goTypes = []any{
 	(*GetHazardsResponse)(nil),         // 4: aggregator.v1.GetHazardsResponse
 	(*ListHazardsRequest)(nil),         // 5: aggregator.v1.ListHazardsRequest
 	(*ListHazardsResponse)(nil),        // 6: aggregator.v1.ListHazardsResponse
-	(*GetHazardRequest)(nil),           // 7: aggregator.v1.GetHazardRequest
-	(*GetHazardResponse)(nil),          // 8: aggregator.v1.GetHazardResponse
-	(*HazardEvent)(nil),                // 9: aggregator.v1.HazardEvent
-	(*ResponseMeta)(nil),               // 10: aggregator.v1.ResponseMeta
-	(*HealthStatus)(nil),               // 11: aggregator.v1.HealthStatus
-	(*timestamppb.Timestamp)(nil),      // 12: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),            // 13: google.protobuf.Struct
-	(*emptypb.Empty)(nil),              // 14: google.protobuf.Empty
+	(*GetAnalyticsRequest)(nil),        // 7: aggregator.v1.GetAnalyticsRequest
+	(*GetAnalyticsResponse)(nil),       // 8: aggregator.v1.GetAnalyticsResponse
+	(*SeriesCount)(nil),                // 9: aggregator.v1.SeriesCount
+	(*KeyCount)(nil),                   // 10: aggregator.v1.KeyCount
+	(*GetHazardRequest)(nil),           // 11: aggregator.v1.GetHazardRequest
+	(*GetHazardResponse)(nil),          // 12: aggregator.v1.GetHazardResponse
+	(*HazardEvent)(nil),                // 13: aggregator.v1.HazardEvent
+	(*ResponseMeta)(nil),               // 14: aggregator.v1.ResponseMeta
+	(*HealthStatus)(nil),               // 15: aggregator.v1.HealthStatus
+	(*timestamppb.Timestamp)(nil),      // 16: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),            // 17: google.protobuf.Struct
+	(*emptypb.Empty)(nil),              // 18: google.protobuf.Empty
 }
 var file_aggregator_proto_depIdxs = []int32{
 	2,  // 0: aggregator.v1.ListFailedMessagesResponse.data:type_name -> aggregator.v1.FailedMessage
-	12, // 1: aggregator.v1.FailedMessage.received_at:type_name -> google.protobuf.Timestamp
-	12, // 2: aggregator.v1.FailedMessage.last_error_at:type_name -> google.protobuf.Timestamp
-	9,  // 3: aggregator.v1.GetHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
-	10, // 4: aggregator.v1.GetHazardsResponse.meta:type_name -> aggregator.v1.ResponseMeta
-	9,  // 5: aggregator.v1.ListHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
-	9,  // 6: aggregator.v1.GetHazardResponse.event:type_name -> aggregator.v1.HazardEvent
-	12, // 7: aggregator.v1.HazardEvent.occurred_at:type_name -> google.protobuf.Timestamp
-	12, // 8: aggregator.v1.HazardEvent.ingested_at:type_name -> google.protobuf.Timestamp
-	13, // 9: aggregator.v1.HazardEvent.attributes:type_name -> google.protobuf.Struct
-	12, // 10: aggregator.v1.ResponseMeta.last_success_at:type_name -> google.protobuf.Timestamp
-	12, // 11: aggregator.v1.ResponseMeta.stale_since:type_name -> google.protobuf.Timestamp
-	10, // 12: aggregator.v1.HealthStatus.sources:type_name -> aggregator.v1.ResponseMeta
-	3,  // 13: aggregator.v1.Aggregator.GetHazards:input_type -> aggregator.v1.GetHazardsRequest
-	5,  // 14: aggregator.v1.Aggregator.ListHazards:input_type -> aggregator.v1.ListHazardsRequest
-	7,  // 15: aggregator.v1.Aggregator.GetHazard:input_type -> aggregator.v1.GetHazardRequest
-	14, // 16: aggregator.v1.Aggregator.GetHealth:input_type -> google.protobuf.Empty
-	0,  // 17: aggregator.v1.Aggregator.ListFailedMessages:input_type -> aggregator.v1.ListFailedMessagesRequest
-	4,  // 18: aggregator.v1.Aggregator.GetHazards:output_type -> aggregator.v1.GetHazardsResponse
-	6,  // 19: aggregator.v1.Aggregator.ListHazards:output_type -> aggregator.v1.ListHazardsResponse
-	8,  // 20: aggregator.v1.Aggregator.GetHazard:output_type -> aggregator.v1.GetHazardResponse
-	11, // 21: aggregator.v1.Aggregator.GetHealth:output_type -> aggregator.v1.HealthStatus
-	1,  // 22: aggregator.v1.Aggregator.ListFailedMessages:output_type -> aggregator.v1.ListFailedMessagesResponse
-	18, // [18:23] is the sub-list for method output_type
-	13, // [13:18] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	16, // 1: aggregator.v1.FailedMessage.received_at:type_name -> google.protobuf.Timestamp
+	16, // 2: aggregator.v1.FailedMessage.last_error_at:type_name -> google.protobuf.Timestamp
+	13, // 3: aggregator.v1.GetHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
+	14, // 4: aggregator.v1.GetHazardsResponse.meta:type_name -> aggregator.v1.ResponseMeta
+	13, // 5: aggregator.v1.ListHazardsResponse.data:type_name -> aggregator.v1.HazardEvent
+	16, // 6: aggregator.v1.GetAnalyticsResponse.as_of:type_name -> google.protobuf.Timestamp
+	9,  // 7: aggregator.v1.GetAnalyticsResponse.series:type_name -> aggregator.v1.SeriesCount
+	10, // 8: aggregator.v1.GetAnalyticsResponse.by_severity:type_name -> aggregator.v1.KeyCount
+	10, // 9: aggregator.v1.GetAnalyticsResponse.by_area:type_name -> aggregator.v1.KeyCount
+	10, // 10: aggregator.v1.GetAnalyticsResponse.by_source:type_name -> aggregator.v1.KeyCount
+	13, // 11: aggregator.v1.GetHazardResponse.event:type_name -> aggregator.v1.HazardEvent
+	16, // 12: aggregator.v1.HazardEvent.occurred_at:type_name -> google.protobuf.Timestamp
+	16, // 13: aggregator.v1.HazardEvent.ingested_at:type_name -> google.protobuf.Timestamp
+	17, // 14: aggregator.v1.HazardEvent.attributes:type_name -> google.protobuf.Struct
+	16, // 15: aggregator.v1.ResponseMeta.last_success_at:type_name -> google.protobuf.Timestamp
+	16, // 16: aggregator.v1.ResponseMeta.stale_since:type_name -> google.protobuf.Timestamp
+	14, // 17: aggregator.v1.HealthStatus.sources:type_name -> aggregator.v1.ResponseMeta
+	3,  // 18: aggregator.v1.Aggregator.GetHazards:input_type -> aggregator.v1.GetHazardsRequest
+	5,  // 19: aggregator.v1.Aggregator.ListHazards:input_type -> aggregator.v1.ListHazardsRequest
+	11, // 20: aggregator.v1.Aggregator.GetHazard:input_type -> aggregator.v1.GetHazardRequest
+	7,  // 21: aggregator.v1.Aggregator.GetAnalytics:input_type -> aggregator.v1.GetAnalyticsRequest
+	18, // 22: aggregator.v1.Aggregator.GetHealth:input_type -> google.protobuf.Empty
+	0,  // 23: aggregator.v1.Aggregator.ListFailedMessages:input_type -> aggregator.v1.ListFailedMessagesRequest
+	4,  // 24: aggregator.v1.Aggregator.GetHazards:output_type -> aggregator.v1.GetHazardsResponse
+	6,  // 25: aggregator.v1.Aggregator.ListHazards:output_type -> aggregator.v1.ListHazardsResponse
+	12, // 26: aggregator.v1.Aggregator.GetHazard:output_type -> aggregator.v1.GetHazardResponse
+	8,  // 27: aggregator.v1.Aggregator.GetAnalytics:output_type -> aggregator.v1.GetAnalyticsResponse
+	15, // 28: aggregator.v1.Aggregator.GetHealth:output_type -> aggregator.v1.HealthStatus
+	1,  // 29: aggregator.v1.Aggregator.ListFailedMessages:output_type -> aggregator.v1.ListFailedMessagesResponse
+	24, // [24:30] is the sub-list for method output_type
+	18, // [18:24] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_aggregator_proto_init() }
@@ -1081,14 +1391,14 @@ func file_aggregator_proto_init() {
 	if File_aggregator_proto != nil {
 		return
 	}
-	file_aggregator_proto_msgTypes[9].OneofWrappers = []any{}
+	file_aggregator_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_aggregator_proto_rawDesc), len(file_aggregator_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

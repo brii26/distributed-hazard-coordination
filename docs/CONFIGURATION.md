@@ -50,6 +50,7 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `RETRY_MAX_ATTEMPTS` | aggregator | 8 | The failure that reaches this number parks the record (no more automatic retries) |
 | `RETRY_POLL` | aggregator | 5s | How often the retry worker looks for due records |
 | `LEASE_TTL` / `LEASE_RENEW_INTERVAL` | aggregator (Kubernetes) | 15s / 3s | How long the polling lease lasts and how often the holder renews it. Read by the Aggregator on Kubernetes, the lease rows live in `coordination-db` |
+| `STORE_EXPECTED_NODES` | aggregator (compose cluster overlay sets 3; Kubernetes: set it to the node count if wanted) | unset | How many store nodes the cluster should have. With fewer live nodes, `GET /analytics` sets `degraded` even after membership has dropped the dead node |
 | `STORE_REBALANCE_INTERVAL` | aggregator (Kubernetes) | 30s | Time between rebalance rounds, which copy missing rows to the shard owners |
 | `REBALANCE_PAGE_PAUSE` | aggregator (Kubernetes) | 100ms | Pause between copy pages, so a round does not starve live traffic |
 | `REBALANCE_DELETE` | aggregator (Kubernetes) | false | Also delete shards from nodes that no longer own them. The rebalance lease lives in `coordination-db`, so one replica runs a round at a time |

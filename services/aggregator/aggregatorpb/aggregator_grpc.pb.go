@@ -37,6 +37,7 @@ const (
 	Aggregator_GetHazards_FullMethodName         = "/aggregator.v1.Aggregator/GetHazards"
 	Aggregator_ListHazards_FullMethodName        = "/aggregator.v1.Aggregator/ListHazards"
 	Aggregator_GetHazard_FullMethodName          = "/aggregator.v1.Aggregator/GetHazard"
+	Aggregator_GetAnalytics_FullMethodName       = "/aggregator.v1.Aggregator/GetAnalytics"
 	Aggregator_GetHealth_FullMethodName          = "/aggregator.v1.Aggregator/GetHealth"
 	Aggregator_ListFailedMessages_FullMethodName = "/aggregator.v1.Aggregator/ListFailedMessages"
 )
@@ -54,6 +55,9 @@ type AggregatorClient interface {
 	// One hazard by id: primary copy, then the replica. NOT_FOUND when neither has
 	// it, UNAVAILABLE when no copy could be reached.
 	GetHazard(ctx context.Context, in *GetHazardRequest, opts ...grpc.CallOption) (*GetHazardResponse, error)
+	// Event counts over a recent window, summed across shards. Always OK; a shard
+	// with no reachable copy sets partial. INVALID_ARGUMENT for an unknown range.
+	GetAnalytics(ctx context.Context, in *GetAnalyticsRequest, opts ...grpc.CallOption) (*GetAnalyticsResponse, error)
 	GetHealth(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthStatus, error)
 	// Rejected messages with their raw payload, oldest first, for the Operator.
 	// INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
@@ -99,6 +103,16 @@ func (c *aggregatorClient) GetHazard(ctx context.Context, in *GetHazardRequest, 
 	return out, nil
 }
 
+func (c *aggregatorClient) GetAnalytics(ctx context.Context, in *GetAnalyticsRequest, opts ...grpc.CallOption) (*GetAnalyticsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAnalyticsResponse)
+	err := c.cc.Invoke(ctx, Aggregator_GetAnalytics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *aggregatorClient) GetHealth(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthStatus, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthStatus)
@@ -132,6 +146,9 @@ type AggregatorServer interface {
 	// One hazard by id: primary copy, then the replica. NOT_FOUND when neither has
 	// it, UNAVAILABLE when no copy could be reached.
 	GetHazard(context.Context, *GetHazardRequest) (*GetHazardResponse, error)
+	// Event counts over a recent window, summed across shards. Always OK; a shard
+	// with no reachable copy sets partial. INVALID_ARGUMENT for an unknown range.
+	GetAnalytics(context.Context, *GetAnalyticsRequest) (*GetAnalyticsResponse, error)
 	GetHealth(context.Context, *emptypb.Empty) (*HealthStatus, error)
 	// Rejected messages with their raw payload, oldest first, for the Operator.
 	// INVALID_ARGUMENT for a bad status, limit or cursor, UNAVAILABLE when the
@@ -155,6 +172,9 @@ func (UnimplementedAggregatorServer) ListHazards(context.Context, *ListHazardsRe
 }
 func (UnimplementedAggregatorServer) GetHazard(context.Context, *GetHazardRequest) (*GetHazardResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetHazard not implemented")
+}
+func (UnimplementedAggregatorServer) GetAnalytics(context.Context, *GetAnalyticsRequest) (*GetAnalyticsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAnalytics not implemented")
 }
 func (UnimplementedAggregatorServer) GetHealth(context.Context, *emptypb.Empty) (*HealthStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetHealth not implemented")
@@ -237,6 +257,24 @@ func _Aggregator_GetHazard_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Aggregator_GetAnalytics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAnalyticsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AggregatorServer).GetAnalytics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Aggregator_GetAnalytics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AggregatorServer).GetAnalytics(ctx, req.(*GetAnalyticsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Aggregator_GetHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -291,6 +329,10 @@ var Aggregator_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetHazard",
 			Handler:    _Aggregator_GetHazard_Handler,
+		},
+		{
+			MethodName: "GetAnalytics",
+			Handler:    _Aggregator_GetAnalytics_Handler,
 		},
 		{
 			MethodName: "GetHealth",
