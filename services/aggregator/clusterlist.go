@@ -124,8 +124,7 @@ func listShardOn(ctx context.Context, db *sql.DB, shard int, after *listPos, lim
 	}
 
 	rows, err := db.QueryContext(ctx, `
-SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-       latitude, longitude, occurred_at, ingested_at, attributes
+SELECT `+hazardColumns+`
 FROM hazard_events
 WHERE shard = $1
   AND ($2::timestamptz IS NULL OR (ingested_at, hazard_id) `+op+` ($2::timestamptz, $3::uuid))

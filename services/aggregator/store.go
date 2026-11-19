@@ -16,11 +16,13 @@ import (
 const dbQueryTimeout = 2 * time.Second
 
 // Upserts by (source, source_ref_id) and returns a row only when something is new or changed, flagging which. hazard_id and ingested_at stay out of the UPDATE so the id is stable and a repeat never looks changed. updated_at is set to now() on every real change, so the retry guard sees updates too.
+// version only moves forward: a write with a lower version than the stored one changes nothing (satellite fires; other sources write 0).
 const upsertSQL = `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-     latitude, longitude, occurred_at, ingested_at, attributes, shard, source_received_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::timestamptz)
+     latitude, longitude, occurred_at, ingested_at, attributes, shard, source_received_at,
+     version, withdrawn_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::timestamptz, $14, $15::timestamptz)
 ON CONFLICT (source, source_ref_id) DO UPDATE SET
     hazard_type = EXCLUDED.hazard_type,
     severity    = EXCLUDED.severity,
@@ -30,21 +32,24 @@ ON CONFLICT (source, source_ref_id) DO UPDATE SET
     occurred_at = EXCLUDED.occurred_at,
     attributes  = EXCLUDED.attributes,
     source_received_at = EXCLUDED.source_received_at,
+    version      = EXCLUDED.version,
+    withdrawn_at = EXCLUDED.withdrawn_at,
     updated_at  = now()
 WHERE (hazard_events.hazard_type, hazard_events.severity, hazard_events.area_name,
        hazard_events.latitude, hazard_events.longitude, hazard_events.occurred_at,
-       hazard_events.attributes)
+       hazard_events.attributes, hazard_events.version, hazard_events.withdrawn_at)
       IS DISTINCT FROM
       (EXCLUDED.hazard_type, EXCLUDED.severity, EXCLUDED.area_name,
        EXCLUDED.latitude, EXCLUDED.longitude, EXCLUDED.occurred_at,
-       EXCLUDED.attributes)
+       EXCLUDED.attributes, EXCLUDED.version, EXCLUDED.withdrawn_at)
+      AND EXCLUDED.version >= hazard_events.version
 RETURNING hazard_id, (xmax = 0) AS inserted`
 
-// The retry path's upsert: the same statement, but it writes nothing when the stored row was last written after $14 (the failure time), so an old record never overwrites a newer one.
-var guardedUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND hazard_events.updated_at <= $14::timestamptz\nRETURNING", 1)
+// The retry path's upsert: the same statement, but it writes nothing when the stored row was last written after $16 (the failure time), so an old record never overwrites a newer one.
+var guardedUpsertSQL = strings.Replace(upsertSQL, "\nRETURNING", "\n      AND hazard_events.updated_at <= $16::timestamptz\nRETURNING", 1)
 
 // The replay path's upsert: writes nothing when the stored row has a later source time, or the same source time and a later received time of the message that wrote it ($13 is the received time of the replayed message).
-var replayUpsertSQL = strings.Replace(upsertSQL, "EXCLUDED.attributes)\nRETURNING", "EXCLUDED.attributes)\n      AND (EXCLUDED.occurred_at, EXCLUDED.source_received_at) >= (hazard_events.occurred_at, hazard_events.source_received_at)\nRETURNING", 1)
+var replayUpsertSQL = strings.Replace(upsertSQL, "\nRETURNING", "\n      AND (EXCLUDED.occurred_at, EXCLUDED.source_received_at) >= (hazard_events.occurred_at, hazard_events.source_received_at)\nRETURNING", 1)
 
 var errSuperseded = errors.New("a newer write exists")
 
@@ -214,6 +219,7 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 	args := []any{
 		h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
 		h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID), receivedAt,
+		h.Version, h.WithdrawnAt,
 	}
 
 	if guarded {
@@ -221,7 +227,7 @@ func upsertOn(ctx context.Context, db *sql.DB, h HazardEvent) (_ bool, err error
 	}
 
 	if replaying {
-		query, args = replayUpsertSQL, args[:13]
+		query, args = replayUpsertSQL, args[:15]
 	}
 
 	err = tx.QueryRowContext(ctx, query, args...).Scan(&id, &inserted)
@@ -275,8 +281,7 @@ func (s *store) listByType(ctx context.Context, q listQuery) (_ []HazardEvent, _
 	defer cancel()
 
 	rows, err := s.db.QueryContext(ctx, `
-SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-       latitude, longitude, occurred_at, ingested_at, attributes
+SELECT `+hazardColumns+`
 FROM hazard_events
 WHERE hazard_type = $1
   AND ($2::text = '' OR severity = $2::text)
@@ -323,19 +328,28 @@ func (s *store) ping(ctx context.Context) (err error) {
 	return s.db.PingContext(ctx)
 }
 
+// The columns scanHazard reads, in its order. Every SELECT that feeds scanHazard uses this list.
+const hazardColumns = `hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+       latitude, longitude, occurred_at, ingested_at, attributes, version, withdrawn_at`
+
 // Reads one hazard row from a row or rows, turning NULLs into nil pointers.
 func scanHazard(sc interface{ Scan(...any) error }) (HazardEvent, error) {
 	var (
-		h        HazardEvent
-		severity sql.NullString
-		area     sql.NullString
-		lat, lon sql.NullFloat64
-		attrs    []byte
+		h         HazardEvent
+		severity  sql.NullString
+		area      sql.NullString
+		lat, lon  sql.NullFloat64
+		attrs     []byte
+		withdrawn sql.NullTime
 	)
 
 	if err := sc.Scan(&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &severity, &area,
-		&lat, &lon, &h.OccurredAt, &h.IngestedAt, &attrs); err != nil {
+		&lat, &lon, &h.OccurredAt, &h.IngestedAt, &attrs, &h.Version, &withdrawn); err != nil {
 		return h, err
+	}
+
+	if withdrawn.Valid {
+		h.WithdrawnAt = &withdrawn.Time
 	}
 
 	if severity.Valid {
@@ -371,8 +385,7 @@ func getOn(ctx context.Context, db *sql.DB, id string) (*HazardEvent, error) {
 	defer cancel()
 
 	h, err := scanHazard(db.QueryRowContext(ctx, `
-SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-       latitude, longitude, occurred_at, ingested_at, attributes
+SELECT `+hazardColumns+`
 FROM hazard_events WHERE hazard_id = $1`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil //nolint:nilnil // not found is an answer, not an error
