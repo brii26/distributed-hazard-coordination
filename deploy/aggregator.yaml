@@ -135,6 +135,11 @@ spec:
                 secretKeyRef:
                   name: admin-token
                   key: token
+            - name: SATELLITE_GROUP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: satellite-token
+                  key: token
             - name: PVMBG_BASE_URL
               value: http://pvmbg-mock:8082
             - name: PVMBG_OAUTH_CLIENT_ID
