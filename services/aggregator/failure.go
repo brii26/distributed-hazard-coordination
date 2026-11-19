@@ -65,7 +65,7 @@ func classifyFailure(err error) (retryable bool, code string) { //nolint:gocyclo
 		return false, codeTooDeep
 	case errors.Is(err, errOversize):
 		return false, codeTooLarge
-	case errors.As(err, &syn), errors.Is(err, errNotArray):
+	case errors.As(err, &syn), errors.Is(err, errNotArray), errors.Is(err, errTrailing):
 		return false, codeMalformedJSON
 	case errors.As(err, &typ), errors.Is(err, errBadEvent):
 		return false, codeMalformed
