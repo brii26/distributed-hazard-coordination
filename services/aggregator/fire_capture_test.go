@@ -153,6 +153,30 @@ func TestFireEngineOnCapture(t *testing.T) { //nolint:paralleltest // measures t
 	t.Logf("counts %+v, open singles %d, parks %v", first.counts, first.openSingles, first.parks)
 	t.Logf("peak dots in memory %d, peak heap %.1f MiB", first.peakDots, first.peakHeapMB)
 
+	severity := map[string]int{}
+
+	for _, s := range first.saved {
+		if !s.Withdrawn {
+			severity[*mapFire(s, time.Time{}).Severity]++
+		}
+	}
+
+	t.Logf("live fires by severity %v", severity)
+
+	var sizes []int
+
+	for _, s := range first.saved {
+		if !s.Withdrawn {
+			sizes = append(sizes, len(s.Dots))
+		}
+	}
+
+	slices.Sort(sizes)
+
+	if n := len(sizes); n > 0 {
+		t.Logf("detections per live fire: min %d, p50 %d, p90 %d, max %d", sizes[0], sizes[n/2], sizes[n*9/10], sizes[n-1])
+	}
+
 	if sum != sum2 {
 		t.Fatalf("two runs gave different fires: %s vs %s", sum, sum2)
 	}
