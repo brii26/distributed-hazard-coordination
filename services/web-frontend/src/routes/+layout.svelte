@@ -25,6 +25,7 @@
     <nav aria-label="Main">
       {#if session.loggedIn}
         <a href="/hazards" aria-current={current('/hazards')}>Hazards</a>
+        <a href="/analytics" aria-current={current('/analytics')}>Analytics</a>
         {#if session.role === 'Operator'}
           <a href="/accounts" aria-current={current('/accounts')}>Accounts</a>
         {/if}

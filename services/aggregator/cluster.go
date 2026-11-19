@@ -22,11 +22,21 @@ type cluster struct {
 	listShard func(ctx context.Context, n *node, shard int, after *listPos, limit int, f listFilter) ([]HazardEvent, error)
 	idsShard  func(ctx context.Context, n *node, shard int, source string) ([]string, error)
 
+	analyticsShard func(ctx context.Context, n *node, shard int, sp analyticsSpec) (*analytics, error)
+
 	// Whether a node holds a shard in full (shard_state). Nil means every copy counts as synced.
 	isSynced func(name string, shard int) bool
 
+	// How many store nodes the cluster should have (STORE_EXPECTED_NODES). 0 means not set.
+	expectedNodes int
+
 	mu    sync.Mutex
 	dirty map[int]bool
+}
+
+// How many expected store nodes are missing from the live list. Membership drops a dead node after its grace period, so this is what keeps a lost node visible afterwards. 0 when expectedNodes is not set.
+func (c *cluster) missingNodes() int {
+	return max(0, c.expectedNodes-len(c.live()))
 }
 
 // Owners with synced copies first, so a joined node that is still empty answers only as a last resort. The original order is kept inside each group.
@@ -62,6 +72,9 @@ func newCluster(live func() []*node) *cluster {
 		},
 		idsShard: func(ctx context.Context, n *node, shard int, source string) ([]string, error) {
 			return idsShardOn(ctx, n.db, shard, source)
+		},
+		analyticsShard: func(ctx context.Context, n *node, shard int, sp analyticsSpec) (*analytics, error) {
+			return analyticsShardOn(ctx, n.db, shard, sp)
 		},
 		dirty: map[int]bool{},
 	}

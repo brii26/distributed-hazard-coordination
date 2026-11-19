@@ -184,8 +184,14 @@ func chooseUpsert(ctx context.Context, db *store) (func(context.Context, HazardE
 		}
 	}()
 
+	expected, err := envPositiveInt("STORE_EXPECTED_NODES", 0)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	cl := newCluster(m.live)
 	cl.isSynced = m.isSynced
+	cl.expectedNodes = expected
 
 	return cl.upsert, cl, nil
 }
