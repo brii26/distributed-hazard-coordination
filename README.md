@@ -76,6 +76,7 @@ Every box except the client is its own container. The nginx container serves the
 | `client-facing-api` | Public REST API, JWT in HttpOnly cookies, transparent refresh, token-bucket rate limit, global concurrency cap, per-role field projection |
 | `rabbitmq` | Fanout exchange `hazard.events`, one durable queue per consumer |
 | `dashboard-updater`, `notifier`, `audit-logger` | Independent consumers, each with its own dedup store |
+| `situation-summarizer` | Bonus consumer with its own queue: periodic summary of recent events, LLM or rule based, read through `GET /situation` |
 | `web-frontend` | SvelteKit static app served by nginx, which also proxies `/api/*` |
 | `jaeger`, `prometheus` | Traces (the trace ID is the `correlation_id` in logs) and request metrics |
 | `grafana` (k8s only) | One dashboard of all services. `kubectl port-forward svc/grafana 3000`, then http://localhost:3000, login `admin`, password from `deploy/make-secrets.sh` (see [OBSERVABILITY.md](docs/OBSERVABILITY.md)) |

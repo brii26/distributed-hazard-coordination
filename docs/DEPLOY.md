@@ -166,6 +166,8 @@ docker push 127.0.0.1:5000/pvmbg-mock:0.1.0
 
 `deploy/dashboard-updater.yaml`, `notifier.yaml` and `audit-logger.yaml` are Deployments with `role: consumer`, 128Mi/256Mi memory and one replica each. They read `bnpb-config`, build `RABBITMQ_URL` from `rabbitmq-credentials` and set `QUEUE_NAME` and `HEALTH_PORT` (8093, 8094, 8095). Images come from the `images` block (`10.77.0.11:5000/<name>:0.1.0`, built and pushed like the Aggregator, from `services/<name>`). The notifier and the audit logger keep their dedup log (and the audit log) on an `emptyDir`: it survives a container restart but not a new pod, which then may process a redelivered message once more. The dashboard-updater keeps its state in memory.
 
+`deploy/situation-summarizer.yaml` is the bonus consumer (#326): `role: consumer`, 128Mi/256Mi, one replica, health and summary on 8097, its own queue `situation-summarizer`. The LLM key comes from Secret `llm-credentials` (created by `deploy/make-secrets.sh`, a placeholder unless `LLM_API_KEY` is set in `.env`) and `AI_ENABLED` is false in `bnpb-config`, so a fresh cluster uses the rule based summary. The alert latency comparison is run with `tests/bonus/ai-isolation.sh`, described in its header.
+
 ```bash
 kubectl exec -n sistem-informasi-kebencanaan-bnpb rabbitmq-0 -- rabbitmqctl list_queues name messages
 ```

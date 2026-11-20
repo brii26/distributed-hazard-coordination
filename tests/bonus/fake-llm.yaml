@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: fake-llm
+spec:
+  selector:
+    app: fake-llm
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: fake-llm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fake-llm
+  template:
+    metadata:
+      labels:
+        role: other
+        app: fake-llm
+    spec:
+      containers:
+        - name: fake-llm
+          image: FAKE_LLM_IMAGE
+          command: ["/fakellm"]
+          env:
+            - name: MODE
+              value: ok
+          ports:
+            - name: http
+              containerPort: 9000
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi

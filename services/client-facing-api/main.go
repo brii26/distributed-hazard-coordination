@@ -210,6 +210,15 @@ func main() {
 		mux.Handle("GET /alerts/stream", auth.verifier.require(newAlertsAPI(upstream)))
 	}
 
+	if upstream := os.Getenv("SITUATION_URL"); upstream != "" {
+		ms, err := envPositiveInt("SITUATION_TIMEOUT_MS", defaultSituationTimeoutMS)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		mux.Handle("GET /situation", auth.verifier.require(newSituationAPI(upstream, time.Duration(ms)*time.Millisecond)))
+	}
+
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
 		log.Fatal(err)
