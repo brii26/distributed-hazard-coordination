@@ -168,7 +168,68 @@
         {"refId": "D", "legendFormat": "min", "expr": "kube_horizontalpodautoscaler_spec_min_replicas{horizontalpodautoscaler=\"aggregator\"}"},
         {"refId": "E", "legendFormat": "max", "expr": "kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler=\"aggregator\"}"}
       ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Data delay between nodes (bonus, physical hosts): shards short of a copy, shards on the wrong node, repair rows per second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "description": "Real signals from the aggregator repair loop (doc/P1_STORAGE_DESIGN.md), exported by the lease holder only. A shard short of a copy is data that has not reached its second node yet, so it grows while a node is cut off and returns to 0 after the repair loop copies the rows. There is no per-row replication lag in seconds in the code, so none is shown.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "shards short of a copy",
+          "expr": "max(store_shards_underreplicated)"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "shards on the wrong node",
+          "expr": "max(store_shards_misplaced)"
+        },
+        {
+          "refId": "C",
+          "legendFormat": "repair rows per second",
+          "expr": "sum(rate(store_repair_rows_total[1m]))"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "text",
+      "title": "Inter-node latency (bonus, physical hosts): measured by tests/bonus/net-latency.sh",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Inter-node round trip time and throughput are not a Prometheus metric here. No exporter runs on the nodes and the cluster has no Pushgateway or node exporter, so a graph would need a metric nobody produces. `tests/bonus/net-latency.sh` measures every node pair with `ping` and `iperf3` over ssh and writes `tests/bonus/results/net-latency-<time>.txt` (evidence) and a `.prom` file with the same numbers. Read the numbers there and in `doc/BONUS_PHYSICAL_HOSTS.md`, then compare them with the data delay graph above during the network cut."
+      }
     }
-
   ]
 }
