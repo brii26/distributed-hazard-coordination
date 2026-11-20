@@ -1,4 +1,4 @@
-% sumber: doc/TRD_M1.md, docker-compose.yml, go.mod, services/web-frontend/package.json dan nginx.conf
+% sumber: doc/TRD_M1.md, deploy/, doc/P1_STORAGE_DESIGN.md, doc/P2_LEASE_DESIGN.md, go.mod, services/web-frontend/package.json dan nginx.conf
 \chapter{Daftar Teknologi Terpilih}
 
 \section{Bahasa dan \textit{Runtime}}
@@ -13,7 +13,7 @@ Pembaruan \textit{real-time} ke browser memakai SSE, singkatan dari \textit{Serv
 
 \section{Penyimpanan}
 
-Data disimpan di PostgreSQL 16. \textit{Canonical Store} memiliki kolom bertipe untuk sepuluh \textit{field} kanonik dan kolom JSONB \texttt{attributes} untuk atribut spesifik sumber, sehingga \textit{field} baru dapat tersimpan tanpa migrasi skema. User DB memakai PostgreSQL yang terpisah. Perbandingan dengan relasional kolom tetap, \textit{document store}, dan \textit{key-value store} dibahas pada Bab IX.
+Data disimpan di PostgreSQL 16 (\texttt{postgres:16-alpine}). Tabel \texttt{hazard\_events} memiliki kolom bertipe untuk sepuluh \textit{field} kanonik dan kolom JSONB \texttt{attributes} untuk atribut spesifik sumber, sehingga \textit{field} baru dapat tersimpan tanpa migrasi skema. Pada Milestone 2, satu pod PostgreSQL berjalan di tiap node dan data dibagi ke 16 shard dengan 2 salinan per shard. Pembagian dan penyalinan dilakukan sendiri oleh \textit{Aggregator} dengan library standar Go, tanpa produk basis data terdistribusi baru dan tanpa replikasi bawaan Postgres. Alasan dan alternatif yang ditolak ada di \texttt{doc/P1\_STORAGE\_DESIGN.md} dan Bab XI. \textit{Lease}, kursor \textit{polling}, dan token PVMBG disimpan di satu PostgreSQL terpisah, \textit{coordination-db}, yang dipilih karena memakai teknologi yang sudah ada dan waktu server basis data dapat menjadi sumber waktu (\texttt{doc/P2\_LEASE\_DESIGN.md}, bagian Alternatif dan keputusan, dan Bab XII). User DB memakai PostgreSQL yang terpisah. Perbandingan dengan relasional kolom tetap, \textit{document store}, dan \textit{key-value store} dibahas pada Bab IX.
 
 \section{\textit{Message Broker}}
 
@@ -31,11 +31,11 @@ nginx juga meneruskan \textit{path} \texttt{/api} ke Client-Facing API. Dengan c
 
 \section{Deployment dan \textit{Observability}}
 
-Seluruh \textit{container} dijalankan dengan Docker Compose, sesuai ketentuan spesifikasi. Setiap \textit{service} mengirim \textit{trace} lewat OpenTelemetry ke Jaeger 2.22, sehingga satu permintaan dapat dilacak melewati beberapa \textit{service}. Prometheus 3.6 menyediakan metrik laju permintaan, galat, dan latensi per \textit{service} yang ditampilkan pada tab Monitor Jaeger.
+Seluruh komponen dijalankan di Kubernetes distribusi k3s pada tiga VM VirtualBox, sesuai ketentuan Milestone 2 yang mewajibkan Kubernetes dengan minimal dua node berkernel terpisah. k3s dipilih karena disarankan spesifikasi dan ringan untuk VM berukuran 2 GiB (\texttt{doc/TOPOLOGY.md}). Manifest dikelola dengan Kustomize (\texttt{deploy/kustomization.yaml}) dan \textit{image} disimpan di \textit{registry} lokal di node-a. Docker Compose masih dipakai untuk pengembangan lokal. Setiap \textit{service} mengirim \textit{trace} lewat OpenTelemetry ke Jaeger 2.22, sehingga satu permintaan dapat dilacak melewati beberapa \textit{service}. Prometheus 3.6 menyediakan metrik laju permintaan, galat, dan latensi per \textit{service} yang ditampilkan pada tab Monitor Jaeger. Grafana 12.2 menampilkan metrik semua \textit{service} pada satu \textit{dashboard}, dan kube-state-metrics 2.17 menyediakan metrik pod (\texttt{deploy/observability/}). Seluruh versi ini tertera pada \texttt{image} di manifest tiap komponen.
 
 \section{Karakteristik Arsitektur yang Diprioritaskan}
 
-Pilihan teknologi di atas dan rancangan pada Bab VI sampai X mengikuti karakteristik arsitektur yang diprioritaskan kelompok. Karakteristik diurutkan dari spesifikasi tiap problem, dari batasan yang tercatat di tiap bab, dan dari isi repositori. Gambar \ref{fig:karakteristik} menghubungkan karakteristik itu dengan keputusan arsitektur, gaya arsitektur, dan komponen logis.
+Pilihan teknologi di atas dan rancangan pada Bab VI sampai XV mengikuti karakteristik arsitektur yang diprioritaskan kelompok. Karakteristik diurutkan dari spesifikasi tiap problem, dari batasan yang tercatat di tiap bab, dan dari isi repositori. Gambar \ref{fig:karakteristik} menghubungkan karakteristik itu dengan keputusan arsitektur, gaya arsitektur, dan komponen logis.
 
 \begin{figure}[H]
 \centering
@@ -59,22 +59,22 @@ Karakteristik & Prioritas & Wujud pada sistem & Bab \\
 \hline
 \textit{Agility} & Pendukung & Kolom JSONB menyerap atribut baru tanpa migrasi, dan \textit{consumer} baru cukup mengikat \textit{queue} ke \textit{exchange} tanpa mengubah \textit{producer}. & VI, IX, X \\
 \hline
-\textit{Recoverability} & Pendukung & \textit{Queue} durable, \textit{manual acknowledgement}, dan \texttt{restart: unless-stopped} pada \textit{container}. Tidak ada \textit{backup} dan retensi. & IV, IX, X \\
+\textit{Recoverability} & Pendukung & \textit{Queue} durable, \textit{manual acknowledgement}, pod yang dijadwalkan ulang Kubernetes, dan perbaikan salinan shard oleh \textit{repair loop}. Tidak ada \textit{backup} dan retensi. & IV, X, XI \\
 \hline
 \textit{Reliability} & Pendukung & Pengiriman \textit{at-least-once} dengan kunci deduplikasi di \textit{consumer}. Data bersifat \textit{eventual consistent}. & VII, X \\
 \hline
 \textit{Testability} & Pendukung & Tiap \textit{service} Go punya \textit{test} sendiri, kedua \textit{mock} menjadi pengganti sumber, dan skrip skenario per problem ada di \texttt{tests/scenarios}. & V \\
 \hline
-\textit{Deployability} & Pendukung & Satu Dockerfile per \textit{service} dan satu perintah \texttt{docker compose up}. Belum ada jalur \textit{upgrade}. & II, IV \\
+\textit{Deployability} & Pendukung & Satu Dockerfile per \textit{service} dan satu perintah \texttt{deploy/deploy.sh}. \textit{Rolling update} \textit{Aggregator} dengan \texttt{maxUnavailable} 0 (\texttt{docs/DEPLOY.md}). & II, V \\
 \hline
-\textit{Scalability} & Tidak dikejar & Fan-out memudahkan penambahan \textit{consumer}, tetapi tiap \textit{service} berjalan satu \textit{instance} dengan \textit{state} di memori dan satu Canonical Store. Menjalankan banyak \textit{instance} menjadi bahan Milestone 2. & I, VII, IX \\
+\textit{Scalability} & Pendukung & Data dibagi ke 16 shard di node yang dapat bertambah, dan \textit{Aggregator} berjalan 3 sampai 5 replika. \textit{Service} lain tetap satu replika. & XI, XII \\
 \hline
-\textit{Elasticity} & Tidak dikejar & Tidak ada replika atau penskalaan otomatis. Batas memori ditetapkan statis, yaitu 256 MB pada delapan \textit{container}. & IV \\
+\textit{Elasticity} & Pendukung & \textit{Autoscaler} CPU untuk \textit{Aggregator} (\texttt{deploy/aggregator-hpa.yaml}). Node yang bergabung mendapat pod \textit{store} otomatis karena DaemonSet. & XI, XII \\
 \hline
 \textit{Learnability} & Tidak dikejar & Go dan Svelte dipilih karena mudah dibaca, tetapi tidak ada rancangan khusus untuk anggota baru dan tidak ada pengukuran. & III \\
 \hline
 \end{longtable}
 
-\textit{Availability} dan \textit{fault tolerance} diutamakan karena spesifikasi meminta satu sumber yang lambat atau mati tidak mengganggu sumber lain. Karena itu \textit{scalability} dan \textit{elasticity} sengaja dikorbankan: sistem berjalan satu \textit{instance} per \textit{service} sehingga \textit{state} di memori, seperti hitungan \textit{rate limit} dan keadaan \textit{circuit breaker}, tidak perlu disinkronkan antar-\textit{instance}. Batas ini dicatat pada bagian Batasan yang Disadari di Bab VII dan IX.
+\textit{Availability} dan \textit{fault tolerance} diutamakan karena spesifikasi meminta satu sumber yang lambat atau mati tidak mengganggu sumber lain. Pada Milestone 1 \textit{scalability} dan \textit{elasticity} sengaja dikorbankan. Di Milestone 2 keduanya hanya dikejar pada \textit{Aggregator} dan \textit{store}, karena problem Milestone 2 menyentuh keduanya. \textit{State} di memori seperti hitungan \textit{rate limit} dan keadaan \textit{circuit breaker} pada \textit{service} lain tetap tidak disinkronkan antar-\textit{instance}, sehingga \textit{service} itu tetap satu replika. Batas ini dicatat pada bagian Batasan yang Disadari di Bab VII, IX, XI, dan XII. \ph{Konfirmasi dengan kelompok bahwa prioritas Scalability dan Elasticity menjadi Pendukung sudah sesuai, lalu selaraskan isi Gambar \ref{fig:karakteristik}}
 
-Gaya arsitektur yang dihasilkan adalah \textit{microservice} dengan penyimpanan di tiap \textit{service}, ditambah distribusi \textit{event} berpola \textit{publish-subscribe}. Kepercayaan antar-\textit{service} berada di perimeter, sesuai Bab IV.
+Gaya arsitektur yang dihasilkan adalah \textit{microservice} dengan penyimpanan di tiap \textit{service} dan, pada Milestone 2, penyimpanan yang dipartisi dan direplikasi serta pemilihan pemimpin berbasis \textit{lease} pada \textit{Aggregator}, ditambah distribusi \textit{event} berpola \textit{publish-subscribe}. Kepercayaan antar-\textit{service} berada di perimeter, sesuai Bab IV.

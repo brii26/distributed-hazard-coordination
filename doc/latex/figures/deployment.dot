@@ -1,0 +1,53 @@
+digraph deployment {
+  rankdir=LR;
+  compound=true;
+  nodesep=0.3;
+  ranksep=0.5;
+  fontname="TeX Gyre Termes";
+  node [fontname="TeX Gyre Termes", fontsize=14, shape=box, style="filled", fillcolor="#dbe8f5", margin="0.1,0.06"];
+  edge [fontname="TeX Gyre Termes", fontsize=12];
+
+  subgraph cluster_free {
+    label="Pod tanpa pin node, dijadwalkan k3s ke node mana pun (letak akhir: lihat hasil run)"; style=dashed; fontname="TeX Gyre Termes";
+    fe   [label="web-frontend, client-facing-api,\nauth-service, bmkg-mock,\npvmbg-mock, sensor-pantai", fillcolor="#d5ecd4"];
+    dbs  [label="coordination-db, user-db\n(StatefulSet, PVC local-path)", shape=cylinder, fillcolor="#fff2b3"];
+    mq   [label="rabbitmq (StatefulSet),\ndashboard-updater, notifier,\naudit-logger", fillcolor="#fbe0b5"];
+    obs  [label="jaeger, prometheus,\ngrafana, kube-state-metrics", fillcolor="#eeeeee"];
+  }
+  subgraph cluster_a {
+    label="node-a, VM, 10.77.0.11\ncontrol plane dan worker"; labeljust=c; style=solid; fontname="TeX Gyre Termes";
+    ka [label="k3s server + image registry :5000", fillcolor="#e8e8e8"];
+    aa [label="aggregator\n(replika)"];
+    sa [label="store (DaemonSet)\nPostgreSQL, hostPath", shape=cylinder, fillcolor="#fff2b3"];
+    ta [label="tester-agent\n(DaemonSet)", fillcolor="#e8e8e8"];
+    ka -> aa [style=invis]; aa -> sa [style=invis]; sa -> ta [style=invis];
+  }
+  subgraph cluster_b {
+    label="node-b, VM, 10.77.0.12\nworker"; labeljust=c; style=solid; fontname="TeX Gyre Termes";
+    kb [label="k3s agent", fillcolor="#e8e8e8"];
+    ab [label="aggregator\n(replika)"];
+    sb [label="store (DaemonSet)\nPostgreSQL, hostPath", shape=cylinder, fillcolor="#fff2b3"];
+    tb [label="tester-agent\n(DaemonSet)", fillcolor="#e8e8e8"];
+    kb -> ab [style=invis]; ab -> sb [style=invis]; sb -> tb [style=invis];
+  }
+  subgraph cluster_c {
+    label="node-c, VM, 10.77.0.13\nworker"; labeljust=c; style=solid; fontname="TeX Gyre Termes";
+    kc [label="k3s agent", fillcolor="#e8e8e8"];
+    ac [label="aggregator\n(replika)"];
+    sc [label="store (DaemonSet)\nPostgreSQL, hostPath", shape=cylinder, fillcolor="#fff2b3"];
+    tc [label="tester-agent\n(DaemonSet)", fillcolor="#e8e8e8"];
+    kc -> ac [style=invis]; ac -> sc [style=invis]; sc -> tc [style=invis];
+  }
+
+  fe -> aa [label="gRPC :9091\nround_robin", lhead=cluster_a];
+  fe -> ab [lhead=cluster_b];
+  fe -> ac [lhead=cluster_c];
+  dbs -> ab [dir=both, label="lease, cursor,\ntoken :5432", lhead=cluster_b, style=dashed];
+  mq -> ac [dir=both, label="AMQP :5672", lhead=cluster_c, style=dashed];
+  aa -> sa [constraint=false];
+  ab -> sb [constraint=false];
+  ac -> sc [constraint=false];
+  aa -> sb [constraint=false, color="#a04000", label="owner lain\n(RF 2)"];
+  ab -> sc [constraint=false, color="#a04000"];
+  ac -> sa [constraint=false, color="#a04000"];
+}
