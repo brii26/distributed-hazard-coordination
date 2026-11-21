@@ -39,6 +39,19 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `RABBITMQ_EXCHANGE` | aggregator, consumers | hazard.events | Fanout exchange name; must match `infra/rabbitmq/definitions.json` |
 | `CRITICAL_QUEUE_NAME` | aggregator, notifier | critical-alerts | Durable queue for critical alerts; must match `infra/rabbitmq/definitions.json.tpl` |
 | `NOTIFIER_URL` | client-facing-api | empty | Base URL of the Notifier. When set, `GET /alerts/stream` relays its alert stream to Lapangan and Operator, when empty the route is off. Compose and `deploy/client-facing-api.yaml` set `http://notifier:8094` |
+| `SITUATION_URL` | client-facing-api | empty | Base URL of the Situation Summarizer. When set, `GET /situation` (Lapangan and Operator) answers from its cached summary, when empty the route is off. Compose and `deploy/client-facing-api.yaml` set `http://situation-summarizer:8097` |
+| `SITUATION_TIMEOUT_MS` | client-facing-api | 200 | Hard cap of the call to the summarizer. On a timeout, an error or a body that is not a summary the API answers the last good copy marked `stale`, or 503 `unavailable` when it has none, so `GET /situation` stays under 300 ms |
+| `AI_ENABLED` | situation-summarizer | false | `true` lets the summarizer ask an LLM to word the summary. Anything else, or a missing URL or key, keeps the rule based summary. The alert and ingest paths never depend on it |
+| `LLM_API_URL` | situation-summarizer | empty | Endpoint called with `POST {"model","prompt"}` and a bearer key, expected to answer `{"summary":"..."}`. The fake LLM (`services/situation-summarizer/cmd/fakellm`, modes `ok`, `slow`, `invalid-json`, `dead`) speaks the same contract |
+| `LLM_API_KEY` | situation-summarizer, Kubernetes Secret `llm-credentials` | change-me-llm-key | API key of the LLM. A `change-me` value counts as no key. It is only read from the environment, never committed, logged or put in an error. Keep the real value in `.env` or the Secret |
+| `LLM_MODEL` | situation-summarizer | default | Model name sent in the request |
+| `LLM_TIMEOUT_MS` | situation-summarizer | 3000 | Hard timeout of one LLM call. After it the rule based summary is used |
+| `LLM_CB_FAILURE_THRESHOLD` / `LLM_CB_OPEN_MS` | situation-summarizer | 3 / 30000 | LLM failures in a row before the circuit breaker opens, and how long it stays open before one trial call |
+| `SUMMARY_INTERVAL_S` | situation-summarizer | 30 | Seconds between two summaries |
+| `SUMMARY_WINDOW_S` | situation-summarizer | 300 | How far back the summary looks |
+| `SUMMARY_STALE_AFTER_S` | situation-summarizer | 120 | A summary older than this is marked `stale` |
+| `ANOMALY_BUCKET_S` / `ANOMALY_HISTORY_BUCKETS` | situation-summarizer | 60 / 30 | Width of one count bucket and how many earlier buckets form the history of an area. At least 5 |
+| `ANOMALY_Z_THRESHOLD` / `ANOMALY_MIN_EVENTS` | situation-summarizer | 3 / 5 | An area is flagged when the events in its newest bucket are at least this many standard deviations above its history mean and at least this many events |
 | `POLL_INTERVAL_MS` | aggregator | 3000 | Poll interval per source |
 | `POLL_TIMEOUT_MS` | aggregator | 4000 | Timeout of one poll call |
 | `CB_FAILURE_THRESHOLD` | aggregator | 3 | Failed polls in a row before the circuit breaker opens |
@@ -92,5 +105,5 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `PANTAI_SPEED` | Sensor Pantai (ConfigMap) | 60 | Simulation speed, 1 to 100000 |
 | `PANTAI_KEY_FILE` | `deploy/make-secrets.sh` | empty | Path of the exam key file given by the assistants. Empty uses a placeholder for Secret `pantai-key` |
 
-Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8095), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default). On Kubernetes the same wiring sits in the manifests of `deploy/`, where the Aggregator also gets `COORDINATION_DATABASE_URL` (the lease database, `coordination-db`), `STORE_SERVICE` (`store`) and `STORE_DSN_TEMPLATE` (one DSN per store node), see [DEPLOY.md](DEPLOY.md).
+Fixed in `docker-compose.yml` rather than `.env`, because they only wire the containers together: internal ports (`PORT`, `GRPC_PORT` 9091/9092, `HEALTH_PORT` 8091-8097), the connection strings (`DATABASE_URL`, `USER_DB_URL`, `RABBITMQ_URL`, `BMKG_BASE_URL`, `PVMBG_BASE_URL`, `AGGREGATOR_GRPC_ADDR`, `AUTH_SERVICE_GRPC_ADDR`), each consumer's `QUEUE_NAME`, and the file paths on volumes (`PVMBG_TOKEN_VOLUME_PATH`, `DEDUP_STORE_PATH`; the Audit Logger also writes `/var/lib/audit-logger/audit.log`, its `AUDIT_LOG_PATH` default). On Kubernetes the same wiring sits in the manifests of `deploy/`, where the Aggregator also gets `COORDINATION_DATABASE_URL` (the lease database, `coordination-db`), `STORE_SERVICE` (`store`) and `STORE_DSN_TEMPLATE` (one DSN per store node), see [DEPLOY.md](DEPLOY.md).
 

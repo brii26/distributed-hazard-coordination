@@ -6,12 +6,12 @@ digraph karakteristik {
   node [fontname="TeX Gyre Termes", fontsize=14, shape=box, style="filled", fillcolor="#dbe8f5", margin="0.14,0.08"];
   edge [fontname="TeX Gyre Termes", fontsize=12];
 
-  kar [label="Karakteristik Arsitektur\n\nUtama: availability, fault tolerance, performance, security\nPendukung: agility, recoverability, reliability, testability, deployability\nTidak dikejar: scalability, elasticity, learnability", fillcolor="#f5e6c8"];
+  kar [label="Karakteristik Arsitektur\n\nUtama: availability, fault tolerance, performance, security\nPendukung: agility, recoverability, reliability, testability, deployability,\nscalability, elasticity (M2, hanya Aggregator dan store)\nTidak dikejar: learnability", fillcolor="#f5e6c8"];
 
-  kep [label="Keputusan Arsitektur\n\nPoller independen per sumber\nCircuit breaker dan respons stale\nLoad shedding dan token bucket\nToken ber-scope dan proyeksi field per role\nKolom JSONB untuk atribut sumber\nQueue durable per consumer, manual ack,\ndeduplikasi di consumer\nSatu container dan satu storage per service", fillcolor="#dbe8f5"];
-  gaya [label="Gaya Arsitektur\n\nMicroservice (database per service)\nEvent-driven (publish-subscribe)\nGateway berlapis di tepi\nKepercayaan di perimeter", fillcolor="#dcefd9"];
+  kep [label="Keputusan Arsitektur\n\nPoller independen per sumber\nCircuit breaker dan respons stale\nLoad shedding dan token bucket\nToken ber-scope dan proyeksi field per role\nKolom JSONB untuk atribut sumber\nQueue durable per consumer, manual ack,\ndeduplikasi di consumer\nSatu workload dan satu storage per service\nStore 16 shard, RF 2, router di Aggregator\nLease dan fencing untuk satu poller", fillcolor="#dbe8f5"];
+  gaya [label="Gaya Arsitektur\n\nMicroservice (database per service)\nEvent-driven (publish-subscribe)\nGateway berlapis di tepi\nPartisi dan replikasi data, leader terpilih\nKepercayaan di perimeter", fillcolor="#dcefd9"];
 
-  kom [label="Komponen Logis\n\nIngest: Aggregator (poller, mapper, Canonical Store, publisher)\nAkses: Client-Facing API\nIdentitas: Auth/Token Service dan User DB\nFan-out: Dashboard Updater, Notifier, Audit Logger\nPenyajian: Web Frontend (nginx)\nPemantauan: Jaeger dan Prometheus", fillcolor="#e8e8e8"];
+  kom [label="Komponen Logis\n\nIngest: Aggregator 3 replika (poller, mapper, router shard, publisher)\nPenyimpanan: store per node dan coordination-db\nAkses: Client-Facing API\nIdentitas: Auth/Token Service dan User DB\nFan-out: Dashboard Updater, Notifier, Audit Logger\nPenyajian: Web Frontend (nginx)\nPemantauan: Jaeger dan Prometheus", fillcolor="#e8e8e8"];
 
   kar -> kep;
   kar -> gaya;

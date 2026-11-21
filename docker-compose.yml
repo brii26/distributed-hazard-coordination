@@ -230,6 +230,8 @@ services:
       AUTH_SERVICE_GRPC_ADDR: auth-service:9092
       DASHBOARD_UPDATER_URL: http://dashboard-updater:8093
       NOTIFIER_URL: http://notifier:8094
+      SITUATION_URL: http://situation-summarizer:8097
+      SITUATION_TIMEOUT_MS: ${SITUATION_TIMEOUT_MS:-200}
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       JWT_SIGNING_SECRET: ${JWT_SIGNING_SECRET}
       MAX_INFLIGHT_REQUESTS: ${CLIENT_FACING_API_MAX_INFLIGHT_REQUESTS:-100}
@@ -309,6 +311,30 @@ services:
       HEALTH_PORT: 8096
       RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       AGGREGATOR_ADDR: aggregator:9091
+
+  situation-summarizer:
+    restart: unless-stopped
+    mem_limit: 256m
+    build: ./services/situation-summarizer
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      HEALTH_PORT: 8097
+      RABBITMQ_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/
+      RABBITMQ_EXCHANGE: ${RABBITMQ_EXCHANGE:-hazard.events}
+      QUEUE_NAME: situation-summarizer
+      AI_ENABLED: ${AI_ENABLED:-false}
+      LLM_API_URL: ${LLM_API_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-default}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-3000}
+      LLM_CB_FAILURE_THRESHOLD: ${LLM_CB_FAILURE_THRESHOLD:-3}
+      LLM_CB_OPEN_MS: ${LLM_CB_OPEN_MS:-30000}
+      SUMMARY_INTERVAL_S: ${SUMMARY_INTERVAL_S:-30}
+      SUMMARY_WINDOW_S: ${SUMMARY_WINDOW_S:-300}
+      SUMMARY_STALE_AFTER_S: ${SUMMARY_STALE_AFTER_S:-120}
+      ANOMALY_Z_THRESHOLD: ${ANOMALY_Z_THRESHOLD:-3}
 
   audit-logger:
     restart: unless-stopped
@@ -413,6 +439,9 @@ configs:
         - job_name: notifier
           static_configs:
             - targets: ['notifier:8094']
+        - job_name: situation-summarizer
+          static_configs:
+            - targets: ['situation-summarizer:8097']
         - job_name: aggregator
           static_configs:
             - targets: ['aggregator:8091']

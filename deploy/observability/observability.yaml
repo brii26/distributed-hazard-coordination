@@ -131,6 +131,9 @@ data:
       - job_name: notifier
         static_configs:
           - targets: ['notifier:8094']
+      - job_name: situation-summarizer
+        static_configs:
+          - targets: ['situation-summarizer:8097']
       - job_name: aggregator
         dns_sd_configs:
           - names: ['aggregator.sistem-informasi-kebencanaan-bnpb.svc.cluster.local']

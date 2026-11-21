@@ -56,3 +56,8 @@ doc/latex/figures/ttd/*
 
 # feedprobe raw captures (#308): may hold feed data, never committed
 tools/feedprobe/out/
+
+# Bonus network measurement output
+tests/bonus/results/*
+!tests/bonus/results/README.md
+tests/results/

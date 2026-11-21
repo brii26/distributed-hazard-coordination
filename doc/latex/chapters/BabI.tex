@@ -1,30 +1,79 @@
-% sumber: doc/IF4031 - Tugas Besar - M1.md, doc/IF4031 - Tugas Besar - Dokumen Terpusat.md, Bab II, Bab VI sampai X
+% sumber: doc/IF4031 - Tugas Besar - M1.md, doc/IF4031 - Tugas Besar - M2.pdf, doc/ARCHITECTURE.md, Bab II, Bab VI sampai XV
 \chapter{Deskripsi Umum Sistem}
 
 \section{Gambaran Ringkas Sistem}
 
-Platform Koordinasi Kebencanaan adalah sistem yang menjadikan BNPB simpul koordinasi bagi data kebencanaan dari dua instansi otonom, yaitu BMKG untuk gempa dan potensi tsunami, serta PVMBG untuk aktivitas gunung api. Sistem mengambil data dari kedua instansi, menyatukannya dalam satu format kanonik bernama \texttt{HazardEvent}, menyimpannya, lalu menyajikannya kepada pihak downstream sesuai hak aksesnya.
+Platform Koordinasi Kebencanaan menjadikan BNPB simpul koordinasi bagi data kebencanaan dari beberapa instansi otonom. Pada Milestone 1, sumbernya BMKG untuk gempa dan potensi tsunami, serta PVMBG untuk aktivitas gunung api. Sistem mengambil data dari sumber, menyatukannya dalam satu format kanonik bernama \texttt{HazardEvent}, menyimpannya, lalu menyajikannya kepada pihak downstream sesuai hak aksesnya.
 
-Sistem ini diperlukan karena kedua instansi dibangun dengan asumsi, format data, dan kecepatan yang berbeda, dan tidak saling berkomunikasi. BNPB yang menerima data dari keduanya harus menyamakan format sebelum data dapat dipakai bersama. Instansi sumber juga tidak berkoordinasi ketika mengubah skema, sehingga gateway tidak boleh bergantung pada bentuk data yang dianggap tetap. Selain itu, satu sumber yang lambat atau mati tidak boleh membuat data dari sumber lain ikut tidak tersedia.
+Sistem ini diperlukan karena tiap instansi dibangun dengan asumsi, format data, dan kecepatan yang berbeda, dan tidak saling berkoordinasi. Instansi juga mengubah skema tanpa pemberitahuan, sehingga gateway tidak boleh bergantung pada bentuk data yang dianggap tetap. Satu sumber yang lambat atau mati tidak boleh membuat data dari sumber lain ikut tidak tersedia.
 
-Alurnya dimulai dari \textit{Aggregator} yang melakukan \textit{polling} berkala ke BMKG dan PVMBG. Setiap rekaman dipetakan ke \texttt{HazardEvent}, disimpan ke \textit{Canonical Store}, lalu dipublikasikan ke \textit{message broker} yang menyalurkannya ke beberapa \textit{consumer} independen. Tiga jenis \textit{client} downstream, yaitu Media atau Pers, Tim Lapangan, dan BNPB Pusat atau Internal Ops, membaca data lewat \textit{Client-Facing API} dengan token yang dikeluarkan \textit{Auth/Token Service}. Media hanya menerima field berklasifikasi \textit{Ringkasan}, sedangkan dua \textit{client} lainnya menerima seluruh field termasuk yang \textit{Mentah}. Gambar arsitektur dan penjelasan tiap komponen ada di Bab II.
+Alurnya dimulai dari \textit{Aggregator} yang melakukan \textit{polling} berkala. Tiap rekaman dipetakan ke \texttt{HazardEvent}, disimpan ke \textit{store}, lalu dipublikasikan ke \textit{message broker} yang menyalurkannya ke beberapa \textit{consumer} independen. Tiga jenis \textit{client}, yaitu Media atau Pers, Tim Lapangan, dan BNPB Pusat atau Internal Ops, membaca data lewat \textit{Client-Facing API} dengan token dari \textit{Auth Service}. Media hanya menerima field berklasifikasi \textit{Ringkasan}, sedangkan dua \textit{client} lainnya menerima seluruh field termasuk yang \textit{Mentah}. Gambar arsitektur dan penjelasan tiap komponen ada di Bab II.
 
-Dua skenario menggambarkan kebutuhan ini. Pertama, PVMBG menambahkan field \texttt{confidence\_level} pada laporan saat sistem sedang berjalan, dan \textit{Aggregator} harus tetap menghasilkan \texttt{HazardEvent} yang valid tanpa \textit{restart}. Kedua, PVMBG berhenti merespons, dan permintaan data gempa dari BMKG harus tetap dilayani normal, sedangkan permintaan data vulkanik dijawab dengan data terakhir atau status ketidaktersediaan yang eksplisit.
+Milestone 2 menambah skala dan kegagalan pada sistem yang sama. Kebakaran hutan (\texttt{WILDFIRE}) dan kejadian pesisir (\texttt{COASTAL}) menjadi jenis bencana baru, dengan sumber satelit dan Sensor Pantai. Sistem berjalan di atas cluster Kubernetes berisi tiga node, datanya dibagi ke beberapa node dan disalin, dan \textit{Aggregator} berjalan sebagai tiga replika dengan satu pemegang \textit{lease} yang melakukan \textit{polling}. Spesifikasi menyatakan kegagalan akan dijalankan oleh Tester Agent tanpa diumumkan, jadi rancangan harus tetap benar saat node atau pod mati (\texttt{doc/TESTER\_AGENT\_NOTES.md}).
 
-BMKG dan PVMBG pada sistem ini adalah simulasi berupa \textit{mock service} yang dibangun kelompok sesuai kontrak pada spesifikasi, bukan sistem kedua instansi yang sebenarnya.
+BMKG, PVMBG, dan Sensor Pantai pada repositori ini adalah simulasi, bukan sistem instansi yang sebenarnya. BMKG dan PVMBG berupa \textit{mock service} buatan kelompok sesuai kontrak spesifikasi. Sensor Pantai memakai \textit{image} dari asisten (\texttt{deploy/sensor-pantai/sensor-pantai.yaml}).
 
-\section{Lingkup Milestone 1}
+\section{Lingkup Milestone 1 dan Milestone 2}
 
-Cakupan Milestone 1 dibatasi pada dua instansi sumber (BMKG dan PVMBG), dua jenis bencana (seismik dan vulkanik), dan BNPB sebagai simpul koordinasi. Seluruh \textit{client} bersifat \textit{read-only}. Lima problem pada spesifikasi dikerjakan di atas satu sistem yang sama:
+Milestone 1 mencakup dua instansi sumber, dua jenis bencana, BNPB sebagai simpul koordinasi, dan \textit{client} yang hanya membaca. Lima problem dikerjakan di atas satu sistem:
 
 \begin{itemize}
-\item Bab VI, Problem 1: arsitektur dan interoperabilitas data: pemetaan ke \texttt{HazardEvent} yang tetap bekerja ketika skema PVMBG berubah.
-\item Bab VII, Problem 2: \textit{concurrency}, \textit{availability}, dan \textit{graceful degradation}: sumber yang lambat atau mati tidak menahan permintaan lain.
-\item Bab VIII, Problem 3: autentikasi dan kepercayaan antar-\textit{service}: kredensial yang terpisah per instansi dan token ber-\textit{scope} untuk \textit{client}.
-\item Bab IX, Problem 4: arsitektur \textit{microservice} dan \textit{flexible storage}: tiap komponen berjalan sebagai \textit{container} sendiri dengan penyimpanan yang menerima atribut dinamis.
-\item Bab X, Problem 5: distribusi \textit{event} secara \textit{fan-out}: \textit{broker} yang menyalurkan \texttt{HazardEvent} ke banyak \textit{consumer}.
+\item Bab VI, Problem 1: pemetaan ke \texttt{HazardEvent} yang tetap bekerja ketika skema PVMBG berubah.
+\item Bab VII, Problem 2: \textit{concurrency}, \textit{availability}, dan \textit{graceful degradation}.
+\item Bab VIII, Problem 3: autentikasi dan kepercayaan antar-\textit{service}.
+\item Bab IX, Problem 4: arsitektur \textit{microservice} dan \textit{flexible storage}.
+\item Bab X, Problem 5: distribusi \textit{event} secara \textit{fan-out}.
 \end{itemize}
 
-Di luar lingkup Milestone 1 adalah jenis bencana lain (kebakaran hutan dan hidrometeorologi), jalur pelaporan dari lapangan ke BNPB, serta menjalankan sistem pada banyak \textit{instance} dan volume data yang melonjak, yang menjadi bahan Milestone 2.
+Milestone 2 membawa desain Milestone 1 ke cluster dan mengujinya kembali dengan kegagalan. Lima problem Milestone 2:
 
-Karakteristik arsitektur yang diprioritaskan dan gaya arsitektur yang dihasilkannya dirangkum pada Bab III.
+\begin{itemize}
+\item Bab XI, Problem 1: penyimpanan terdistribusi, yaitu 16 shard dengan \textit{replication factor} 2 dan perbaikan data saat node pergi atau datang.
+\item Bab XII, Problem 2: \textit{lease}, sumber kebenaran waktu, dan \textit{fencing} agar hanya satu replika \textit{Aggregator} yang melakukan \textit{polling}.
+\item Bab XIII, Problem 3: kebijakan skema, penanganan pesan gagal, dan laporan Tim Lapangan.
+\item Bab XIV, Problem 4: pengolahan aliran data satelit.
+\item Bab XV, Problem 5: Sensor Pantai yang tidak dapat dipercaya, ketahanan, dan target keandalan.
+\end{itemize}
+
+Di luar lingkup adalah hal yang spesifikasi tidak minta, misalnya jenis bencana selain seismik, vulkanik, kebakaran hutan, dan pesisir, serta kontrol akses per wilayah. Batasan tiap problem ada pada subbab Batasan yang Disadari di bab masing-masing, dan asumsi umum di Bab IV. Karakteristik arsitektur yang diprioritaskan dan gaya arsitekturnya dirangkum di Bab III.
+
+\section{Perubahan dari Milestone 1}
+
+Spesifikasi mengizinkan revisi hasil Milestone 1. Tabel berikut mencatat tiap keputusan Milestone 1 yang dipertahankan, diubah, atau dibatalkan, beserta alasan dan buktinya di repositori. Penjelasan lebih rinci dari tiap perubahan ada di bab problem yang disebut pada kolom bukti.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.2\linewidth}|>{\raggedright\arraybackslash}p{0.11\linewidth}|>{\raggedright\arraybackslash}p{0.33\linewidth}|>{\raggedright\arraybackslash}p{0.27\linewidth}|}
+\hline
+\textbf{Keputusan Milestone 1} & \textbf{Status} & \textbf{Alasan dan keadaan sekarang} & \textbf{Bukti} \\
+\hline
+\endhead
+Docker Compose sebagai platform & Diubah & Spesifikasi mewajibkan Kubernetes dengan minimal 2 node berkernel terpisah dan satu perintah deploy. Seluruh komponen kini berupa manifest Kubernetes. \texttt{docker-compose.yml} tetap ada untuk pengembangan lokal. & \texttt{deploy/}, \texttt{deploy/deploy.sh}, \texttt{doc/TOPOLOGY.md} \\
+\hline
+Satu Canonical Store PostgreSQL & Diubah & Satu \textit{store} menjadi titik kegagalan tunggal dan tidak menyebarkan data. Kini satu PostgreSQL per node, 16 shard, tiap shard di 2 node, dengan pembacaan lintas shard yang menandai jawaban \texttt{partial}. & \texttt{doc/P1\_STORAGE\_DESIGN.md}, \texttt{deploy/store.yaml}, Bab XI \\
+\hline
+ID \texttt{HazardEvent} acak & Diubah & ID harus sama di semua replika agar penyalinan dan duplikat dapat dikenali. Kini UUID v5 dari sumber dan ID rekaman sumber. & \texttt{doc/P1\_STORAGE\_DESIGN.md}, bagian Shard key and placement \\
+\hline
+Satu \textit{Aggregator} dengan \textit{state} di memori (kursor, token, status polling) & Diubah & Tiga replika menjalankan \textit{lease} per sumber di \textit{coordination-db}. Kursor \textit{polling} dan pasangan token PVMBG dipindahkan ke tabel di basis data yang sama agar pemegang baru melanjutkan, dan tulisan dari epoch lama ditolak lewat \textit{fencing}. & \texttt{doc/P2\_LEASE\_DESIGN.md}, \texttt{deploy/coordination-db.yaml}, Bab XII \\
+\hline
+Satu \textit{instance} untuk semua \textit{service} & Sebagian & Hanya \textit{Aggregator}, dengan 3 sampai 5 replika, dan \textit{store}, satu per node, yang berlipat. Client-Facing API, Auth Service, RabbitMQ, ketiga \textit{consumer}, dan basis data lain tetap satu replika karena spesifikasi tidak meminta lebih. & \texttt{deploy/aggregator-hpa.yaml}, \texttt{replicas} pada \texttt{deploy/*.yaml} \\
+\hline
+Isolasi basis data lewat \textit{network} Compose \textit{internal} & Diubah & Ketentuan Milestone 2 meminta platform yang menegakkan kepemilikan \textit{storage}. Kini NetworkPolicy ingress pada \textit{store}, \textit{user-db}, dan \textit{coordination-db}. & \texttt{deploy/networkpolicy.yaml} \\
+\hline
+Kunci admin \texttt{X-Admin-Key} pada \texttt{/admin/*} di \textit{mock} PVMBG & Dibatalkan & Tester Agent memanggil sakelar \texttt{/admin/schema-version} tanpa kunci, sehingga mock harus menerimanya (isu \#277, commit \texttt{1f7c914}). Perlindungannya kini hanya berupa Service \textit{ClusterIP} yang tidak dibuka ke luar cluster. & \texttt{doc/TESTER\_AGENT\_NOTES.md}, bagian schema, \texttt{deploy/pvmbg-mock.yaml} \\
+\hline
+Pembatasan beban merata untuk semua \textit{client} & Diubah & Saat Media membanjiri API, Tim Lapangan harus tetap terlayani. Kini ada kuota \textit{inflight} terpisah untuk Media. & \texttt{MEDIA\_MAX\_INFLIGHT} di \texttt{deploy/configmap.yaml}, Bab XV \\
+\hline
+Jaeger dan Prometheus & Diperluas & Spesifikasi meminta metrik per \textit{service} di satu \textit{dashboard}. Ditambah Grafana, kube-state-metrics, dan \textit{scrape} per replika \textit{Aggregator}. Jaeger dan korelasi \textit{trace} dipertahankan. & \texttt{deploy/observability/}, \texttt{doc/P5\_SLO.md} \\
+\hline
+Kredensial di \texttt{.env} & Diubah & Ketentuan meminta Secret dan ConfigMap. \texttt{.env.example} tetap ada untuk pengembangan lokal, dan \texttt{make-secrets.sh} membuat Secret dari \texttt{.env}. & \texttt{deploy/make-secrets.sh}, \texttt{docs/DEPLOY.md} \\
+\hline
+Go, gRPC antar-\textit{service}, REST di tepi, JWT dalam \textit{cookie}, SSE, SvelteKit dengan nginx & Dipertahankan & Tidak ada ketentuan Milestone 2 yang menuntut perubahan, dan semuanya sudah berjalan di cluster. Daftar teknologi ada di Bab III. & \texttt{services/}, \texttt{deploy/web-frontend.yaml} \\
+\hline
+RabbitMQ \textit{fanout exchange}, \textit{queue} durable per \textit{consumer}, deduplikasi di \textit{consumer} & Dipertahankan & Pola \textit{fan-out} masih sesuai, dan \textit{consumer} tidak mengenal \textit{Aggregator}. Pengiriman tetap \textit{at-least-once}. & \texttt{deploy/rabbitmq.yaml}, Bab X \\
+\hline
+\textit{Circuit breaker}, \textit{timeout}, dan respons data basi per sumber & Dipertahankan & Dipakai ulang oleh pemegang \textit{lease} untuk tiap sumber, termasuk Sensor Pantai. & Bab VII, Bab XV \\
+\hline
+Kolom JSONB \texttt{attributes} untuk field tak dikenal & Dipertahankan & Tetap menyerap field baru. Yang berubah adalah kebijakan skema yang kini menolak rekaman PVMBG yang tidak memuat field kontrak. & \texttt{doc/P3\_SCHEMA\_POLICY.md}, Bab XIII \\
+\hline
+\end{longtable}
+
+\ph{Pastikan baris ini cocok dengan perubahan yang dibuat dua bab problem lain (isu \#331 sampai \#333) dan tambahkan baris bila ada keputusan Milestone 1 lain yang berubah, misalnya jalur laporan Tim Lapangan}

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fake kubectl for tests/bonus/ai-isolation-selftest.sh. Logs every call and serves a Notifier histogram that grows on each read.
+# FAKE_DEGRADE=<phase> puts the alerts of that phase into the 3 s bucket, like an alert path that the LLM slowed down.
+set -euo pipefail
+state=$FAKE_STATE
+echo "$*" >>"$state/calls"
+case "$*" in
+  *"exec deployment/notifier"*)
+    # Reads come in before/after pairs, one pair per phase in the order baseline, slow, invalid-json, dead, pod-killed.
+    # Every read adds 100 alerts, so the difference of a pair is 100. FAKE_DEGRADE=<phase> puts that phase's alerts in the 3 s bucket.
+    n=$(($(cat "$state/reads" 2>/dev/null || echo 0) + 1)); echo "$n" >"$state/reads"
+    phase=$(printf '%s\n' baseline slow invalid-json dead pod-killed | sed -n "$(((n + 1) / 2))p")
+    f=$(cat "$state/fast" 2>/dev/null || echo 0) sl=$(cat "$state/slow" 2>/dev/null || echo 0)
+    if [ "$phase" = "${FAKE_DEGRADE:-none}" ]; then sl=$((sl + 100)); else f=$((f + 100)); fi
+    echo "$f" >"$state/fast"; echo "$sl" >"$state/slow"
+    printf 'critical_alert_latency_seconds_bucket{le="0.1"} 0\ncritical_alert_latency_seconds_bucket{le="0.5"} %d\ncritical_alert_latency_seconds_bucket{le="3"} %d\ncritical_alert_latency_seconds_bucket{le="+Inf"} %d\n' "$f" "$((f + sl))" "$((f + sl))"
+    ;;
+  *"get secret llm-credentials"*) printf 'b2xkLWtleQ==' ;;
+esac

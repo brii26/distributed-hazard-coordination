@@ -54,6 +54,8 @@ spec:
               value: amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq:5672/
             - name: NOTIFIER_URL
               value: http://notifier:8094
+            - name: SITUATION_URL
+              value: http://situation-summarizer:8097
             - name: AGGREGATOR_GRPC_ADDR
               value: dns:///aggregator-grpc:9091
             - name: AUTH_SERVICE_GRPC_ADDR

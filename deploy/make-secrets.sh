@@ -51,6 +51,11 @@ secret user-db-credentials user=USER_DB_USER password=USER_DB_PASSWORD
 secret rabbitmq-credentials user=RABBITMQ_USER password=RABBITMQ_PASSWORD
 secret auth-secrets jwt_signing_secret=JWT_SIGNING_SECRET secret_salt=SECRET_SALT seed_operator_password=SEED_OPERATOR_PASSWORD
 
+# The LLM key may stay a placeholder: AI_ENABLED is false by default and the summarizer then uses its rule based summary.
+kubectl create secret generic llm-credentials --namespace "$NAMESPACE" \
+  --from-literal=api_key="${V[LLM_API_KEY]:-change-me-llm-key}" --dry-run=client -o yaml | apply
+echo "secret/llm-credentials"
+
 secret audit-token token=AUDIT_TOKEN
 secret admin-token token=ADMIN_TOKEN
 secret pantai-token token=PANTAI_AUTH_TOKEN

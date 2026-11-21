@@ -98,6 +98,17 @@ Needed for the physical hosts bonus. The manifests do not change.
 2. On the other machine, install k3s as an agent with the server address and token (`K3S_URL=https://<node-a address>:6443`). The node-a address must be reachable from that machine, so port 6443 and the flannel port 8472/UDP must be open, and a NAT Network is not enough (use a bridged interface or a forward on the LAN address, chosen without changing the host routing).
 3. Data stored on the old node-b is gone, which is what replication (P1) is for.
 
+## Physical hosts
+
+Needed for the physical hosts bonus (#325, procedure in `doc/BONUS_PHYSICAL_HOSTS.md`). List every machine that runs a node, one row per machine. Fill it from `hostnamectl`, `lscpu` and `free -h` run on that machine. The rows below are placeholders until a second machine is joined.
+
+| Host | Nodes on it | Kind | CPU | Threads | RAM | OS and kernel | LAN address |
+|---|---|---|---|---|---|---|---|
+| host 1 | `<node-a, ...>` | `<VM or native>` | `<lscpu model>` | `<>` | `<>` | `<>` | `<>` |
+| host 2 | `<node-b>` | `<VM or native>` | `<lscpu model>` | `<>` | `<>` | `<>` | `<>` |
+
+`kubectl get nodes -o wide` must show the `INTERNAL-IP` of each node on its own machine. `tests/bonus/net-latency.sh` measures the latency between them without changing routes or interface priority.
+
 ## Why three nodes
 
 P1 asks that no single node holds all the data, that no HazardEvent is lost when a worker is killed and its data wiped, and that the system then survives losing one more node.

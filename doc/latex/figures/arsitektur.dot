@@ -2,65 +2,71 @@ digraph arsitektur {
   rankdir=TB;
   compound=true;
   nodesep=0.35;
-  ranksep=0.6;
+  ranksep=0.55;
   fontname="TeX Gyre Termes";
   node [fontname="TeX Gyre Termes", fontsize=15, shape=box, style="filled", fillcolor="#dbe8f5", margin="0.12,0.07"];
   edge [fontname="TeX Gyre Termes", fontsize=12];
 
   pengguna [label="Client\n(Media, Tim Lapangan,\nBNPB Ops)", shape=tab, fillcolor="white", style="filled,dashed"];
+  tester [label="Tester Agent\n(namespace tester-agent)", shape=tab, fillcolor="white", style="filled,dashed"];
 
   subgraph cluster_sumber {
-    label="Third Party"; style=dashed; fontname="TeX Gyre Termes";
-    bmkg  [label="BMKG mock\n:8081", fillcolor="#e8e8e8"];
-    pvmbg [label="PVMBG mock\n:8082", fillcolor="#e8e8e8"];
+    label="Third Party (mock)"; style=dashed; fontname="TeX Gyre Termes";
+    bmkg   [label="BMKG mock", fillcolor="#e8e8e8"];
+    pvmbg  [label="PVMBG mock", fillcolor="#e8e8e8"];
+    pantai [label="Sensor Pantai", fillcolor="#e8e8e8"];
   }
 
   subgraph cluster_bnpb {
-    label="BNPB Internal Network"; labeljust=l; style=solid; fontname="TeX Gyre Termes";
+    label="Namespace sistem-informasi-kebencanaan-bnpb"; labeljust=l; style=solid; fontname="TeX Gyre Termes";
 
-    web  [label="Web Server\n(nginx)\n:3000", shape=component, fillcolor="#d5ecd4"];
-    cfa  [label="Client-Facing API\n:8080"];
-    auth [label="Auth / Token Service"];
-    agg  [label="Aggregator"];
+    web  [label="Web Frontend\n(nginx)", shape=component, fillcolor="#d5ecd4"];
+    cfa  [label="Client-Facing API"];
+    auth [label="Auth Service"];
+    userdb [label="user-db\n(PostgreSQL)", shape=cylinder, fillcolor="#fff2b3"];
+
+    subgraph cluster_agg {
+      label="Aggregator, 3 replika"; style=dotted; fontname="TeX Gyre Termes";
+      agg1 [label="replika 1\nleader (pegang lease)", fillcolor="#c9dcf2"];
+      agg2 [label="replika 2\nfollower"];
+      agg3 [label="replika 3\nfollower"];
+    }
+
+    coord [label="coordination-db\n(lease, cursor, token PVMBG)", shape=cylinder, fillcolor="#fff2b3"];
+    store [label="store\nPostgreSQL per node\n16 shard, RF 2", shape=cylinder, fillcolor="#fff2b3"];
+
     mq   [label="RabbitMQ\nexchange hazard.events\n(fanout)", shape=cds, fillcolor="#fbe0b5"];
     dash [label="Dashboard Updater", fillcolor="#f3d9e8"];
     noti [label="Notifier", fillcolor="#f3d9e8"];
     audit[label="Audit Logger", fillcolor="#f3d9e8"];
-
-    subgraph cluster_userdb {
-      label="userdb-net (internal)"; style=dotted; fontname="TeX Gyre Termes";
-      userdb [label="User DB\n(PostgreSQL)", shape=cylinder, fillcolor="#fff2b3"];
-    }
-    subgraph cluster_canon {
-      label="canonical-net (internal)"; style=dotted; fontname="TeX Gyre Termes";
-      store [label="Canonical Store\n(PostgreSQL)", shape=cylinder, fillcolor="#fff2b3"];
-    }
   }
 
   subgraph cluster_obs {
     label="Observability"; style=solid; fontname="TeX Gyre Termes";
-    {rank=same; jaeger [label="Jaeger", shape=oval, fillcolor="#eeeeee"]; prom [label="Prometheus", shape=oval, fillcolor="#eeeeee"];}
+    {rank=same; jaeger [label="Jaeger", shape=oval, fillcolor="#eeeeee"]; prom [label="Prometheus\n+ Grafana", shape=oval, fillcolor="#eeeeee"];}
   }
 
   pengguna -> web  [label="HTTPS"];
   web -> cfa       [label="proxy /api"];
   pengguna -> cfa  [label="REST/JSON"];
-  cfa -> auth      [label="gRPC\n(login, refresh)"];
-  cfa -> agg       [label="gRPC\n(read API)"];
-  dash -> cfa      [label="SSE push\n(live update)"];
-  auth -> userdb   [label="PostgreSQL\nprotocol"];
-  agg -> store     [label="PostgreSQL\nprotocol"];
-  agg -> bmkg      [label="REST\nX-BMKG-Key"];
-  agg -> pvmbg     [label="REST\nBearer OAuth"];
-  agg -> mq        [label="AMQP\npublish"];
-  mq -> dash       [label="AMQP\nqueue sendiri"];
-  mq -> noti       [label="AMQP\nqueue sendiri"];
-  mq -> audit      [label="AMQP\nqueue sendiri"];
+  cfa -> auth      [label="gRPC"];
+  auth -> userdb   [label="PostgreSQL"];
+  cfa -> agg2      [label="gRPC read\nround_robin"];
+  dash -> cfa      [label="SSE", constraint=false];
+
+  agg1 -> bmkg     [label="REST\nX-BMKG-Key"];
+  agg1 -> pvmbg    [label="REST\nBearer OAuth"];
+  agg1 -> pantai   [label="REST\nBearer token"];
+  agg1 -> store    [label="tulis ke 2 owner\n(epoch fencing)"];
+  agg2 -> store    [label="baca lintas shard", style=dashed];
+  agg1 -> coord    [label="lease, epoch"];
+  agg2 -> coord    [style=dashed, label="coba lease"];
+  agg1 -> mq       [label="AMQP publish"];
+  mq -> dash; mq -> noti; mq -> audit;
+
+  tester -> store [style=dotted, label="uji kegagalan"];
 
   edge [color="#777777", fontcolor="#555555"];
-  cfa -> jaeger    [ltail=cluster_bnpb, label="OTLP gRPC\n(service Go)"];
   prom -> jaeger   [label="scrape metrik", constraint=false];
-
-  edge [style=dotted, penwidth=1.6];
-  bmkg -> jaeger   [ltail=cluster_sumber];
+  cfa -> jaeger    [ltail=cluster_bnpb, label="OTLP gRPC"];
 }
