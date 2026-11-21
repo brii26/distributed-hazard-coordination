@@ -67,13 +67,25 @@ sample() {
     "$(count too_late "$TEXT")" "$(count singles "$TEXT")" "$(value aggregator_satelit_parked_total "$TEXT")" >>"$CSV"
 }
 
+# The last "satelit pipeline stopped" log line, when stopping is the pipeline's latest start or stop (for example a 401 on the token).
+pipeline_stopped() {
+  docker compose logs --no-log-prefix aggregator 2>/dev/null |
+    grep -E '"message":"satelit pipeline (started|stopped)"' | tail -n 1 | grep '"message":"satelit pipeline stopped"'
+}
+
 echo "warm-up: waiting until the offset lag is at most $LAG_OK (up to ${WARMUP_MAX}s)"
 deadline=$((SECONDS + WARMUP_MAX))
 caught_up=0
+idle=0
 while [ "$SECONDS" -lt "$deadline" ]; do
   if sample warmup; then
     lag="$(value aggregator_satelit_offset_lag "$TEXT")"
     if [ -n "$lag" ] && [ "$lag" -le "$LAG_OK" ]; then caught_up=1; break; fi
+    if [ -z "$(value aggregator_satelit_saved_offset "$TEXT")" ]; then idle=$((idle + 1)); else idle=0; fi
+    if [ "$idle" -ge 5 ] && stopped_line="$(pipeline_stopped)"; then
+      echo
+      die "the satellite pipeline is not running; fix the cause and restart the aggregator. Last log line: $stopped_line"
+    fi
     printf '\r  offset lag %s, saved offset %s   ' "${lag:-unknown}" "$(value aggregator_satelit_saved_offset "$TEXT")"
   fi
   sleep "$INTERVAL"
@@ -93,7 +105,7 @@ done
 sample measure || die "last scrape failed"
 buckets "$TEXT" >"$RUN/buckets-end.prom"
 
-docker compose logs --no-log-prefix --since "$SINCE" aggregator 2>/dev/null | grep '"msg":"satelit' >"$RUN/aggregator-satelit.log"
+docker compose logs --no-log-prefix --since "$SINCE" aggregator 2>/dev/null | grep '"message":"satelit' >"$RUN/aggregator-satelit.log"
 LOG="$RUN/aggregator-satelit.log"
 logcount() { grep -c "$1" "$LOG"; }
 
@@ -158,16 +170,16 @@ timed1="$(value aggregator_satelit_read_to_saved_seconds_count "$TEXT")"
 moved=$((saved1 - saved0))
 timed=$((timed1 - timed0))
 once="FAIL"; [ "$moved" -eq "$timed" ] && [ "$moved" -gt 0 ] && once="PASS"
-stopped="$(logcount '"msg":"satelit pipeline stopped"')"
+stopped="$(logcount '"message":"satelit pipeline stopped"')"
 
 {
   echo
   echo "read to saved over the window: p50 $(quantile 0.5), p95 $(quantile 0.95), $timed records"
   echo "offsets saved exactly once: bookmark moved over $moved offsets, $timed records timed: $once"
-  echo "stream connects: $(logcount '"msg":"satelit stream connected"') (the server closes every stream within about 90 s, so reconnects are normal)"
+  echo "stream connects: $(logcount '"message":"satelit stream connected"') (the server closes every stream within about 90 s, so reconnects are normal)"
   echo "gaps detected and resumed: $(logcount 'broke the offset sequence')"
-  echo "repeated offsets skipped: $(logcount '"msg":"satelit repeated offset skipped"')"
-  echo "batch save retries: $(logcount '"msg":"satelit batch not saved"')"
+  echo "repeated offsets skipped: $(logcount '"message":"satelit repeated offset skipped"')"
+  echo "batch save retries: $(logcount '"message":"satelit batch not saved"')"
   echo "pipeline stopped with an error: $stopped"
   echo "engine counts at the end: too_late $(count too_late "$TEXT"), unknown_or_closed_target $(count unknown_or_closed_target "$TEXT"), resent $(count resent "$TEXT"), tombstone_rejected $(count tombstone_rejected "$TEXT"), singles $(count singles "$TEXT")"
 } >>"$SUMMARY"
