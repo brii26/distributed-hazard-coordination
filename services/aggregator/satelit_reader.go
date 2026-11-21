@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ const (
 	satelitBackoffBase = 500 * time.Millisecond
 	satelitBackoffMax  = 10 * time.Second
 	satelitErrorBody   = 512
+	satelitSessionBody = 4096 // a /v1/session answer is about 120 bytes
 )
 
 var (
@@ -39,6 +41,7 @@ type feedRecord struct {
 	Offset int64
 	Kind   string
 	Data   []byte
+	Read   time.Time // when the reader received it, for the read-to-saved metric only; the engine never reads it
 }
 
 type satelitReader struct {
@@ -159,6 +162,8 @@ func (r *satelitReader) stream(ctx context.Context, start int64, last *int64, ou
 
 		quiet.Stop() // waiting for room in the pile is not silence
 
+		rec.Read = time.Now()
+
 		select {
 		case out <- rec:
 		case <-ctx.Done():
@@ -191,6 +196,41 @@ func (r *satelitReader) request(ctx context.Context, start, last int64) (*http.R
 	}
 
 	return req, nil
+}
+
+// The fields of GET /v1/session the lag metrics use.
+type feedSession struct {
+	LatestOffset int64     `json:"latest_offset"`
+	VirtualNow   time.Time `json:"virtual_now"`
+}
+
+// session reads the feed's current position. It never opens a stream, so it does not evict the one running.
+func (r *satelitReader) session(ctx context.Context) (feedSession, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, r.base.JoinPath("/v1/session").String(), nil)
+	if err != nil {
+		return feedSession{}, fmt.Errorf("build request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+r.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return feedSession{}, fmt.Errorf("session: %w", err)
+	}
+
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return feedSession{}, fmt.Errorf("session answered %d", resp.StatusCode)
+	}
+
+	var s feedSession
+	if err := json.NewDecoder(io.LimitReader(resp.Body, satelitSessionBody)).Decode(&s); err != nil {
+		return feedSession{}, fmt.Errorf("session body: %w", err)
+	}
+
+	return s, nil
 }
 
 // streamStatus accepts 200. 400, 401 and 403 mean the request or the token is wrong, so retrying cannot help; anything else (429 while another stream is evicted, 503, 5xx) is retried.

@@ -363,6 +363,8 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		wg.Go(func() { p.run(ctx) })
 	}
 
+	var satStats *satelitStats
+
 	if sat.enabled {
 		// Its own publisher: this one never drops and reports confirms, so the bookmark can wait for the broker.
 		satPub := newPublisher(dialAMQP(rabbitURL, exchange), defaultPublishBuffer)
@@ -376,6 +378,8 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 
 		satLease := newElector(sourceSatelit, lc, pgLease{db: db.coordDB()})
 		sp.onFenced = satLease.fence
+		satStats = sp.stats
+
 		electors = append(electors, satLease)
 
 		wg.Go(func() { satLease.run(ctx, sp.work) })
@@ -452,6 +456,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		api.fields.writeMetrics(w)
 		failed.write(r.Context(), w)
 		api.replay.writeMetrics(w)
+		satStats.writeMetrics(w)
 
 		if rb != nil {
 			rb.writeMetrics(w, rbLease.isLeader.Load() == 1)

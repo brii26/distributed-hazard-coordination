@@ -79,8 +79,10 @@ type satelitPipeline struct {
 	park     func(context.Context, failedMessage) error
 	marks    bookmarkStore
 	pub      confirmPublisher
-	onFenced func(epoch int64) // tells the elector a write was fenced
-	now      func() time.Time  // ingested_at and received_at only; the engine never reads it
+	onFenced func(epoch int64)                          // tells the elector a write was fenced
+	now      func() time.Time                           // ingested_at and received_at only; the engine never reads it
+	session  func(context.Context) (feedSession, error) // the feed's position, for the lag metrics; nil skips them
+	stats    *satelitStats
 
 	lateness  time.Duration
 	batchSize int
@@ -96,6 +98,7 @@ func newSatelitPipeline(c satelitConfig, upsert func(context.Context, HazardEven
 
 	return &satelitPipeline{
 		read: r.run, upsert: upsert, park: db.insertFailed, marks: db, pub: pub, now: time.Now,
+		session: r.session, stats: newSatelitStats(),
 		lateness: c.lateness, batchSize: satelitBatchSize, batchWait: satelitBatchWait,
 		backoff: newBackoff(satelitBackoffBase, satelitBackoffMax),
 	}, nil
@@ -114,6 +117,7 @@ type satelitBatch struct {
 	last   int64
 	fires  []fireSnapshot
 	parked []failedMessage
+	reads  []time.Time // when each record was read, for the read-to-saved metric
 }
 
 // run replays the feed from offset 0 and saves past the bookmark. It returns when ctx ends, the feed refuses the token, or a write is fenced.
@@ -124,6 +128,11 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 	}
 
 	withID("").Info("satelit pipeline started", "bookmark", mark, "lateness", p.lateness.String())
+
+	begun := time.Now()
+
+	p.stats.started(mark)
+	defer p.stats.stopped()
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -137,6 +146,10 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 
 	wg.Go(func() { readDone <- p.read(ctx, 0, pile) })
 
+	if p.session != nil {
+		wg.Go(func() { p.watchSession(ctx) })
+	}
+
 	e := newFireEngine(p.lateness)
 	b := &satelitBatch{}
 
@@ -149,10 +162,18 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 			return ctx.Err()
 		case err = <-readDone:
 		case rec := <-pile:
-			if p.take(e, b, rec, mark) && b.events >= p.batchSize {
+			joined := p.take(e, b, rec, mark)
+
+			if rec.Offset == mark {
+				p.stats.rebuilt(time.Since(begun), e.clock)
+			}
+
+			if joined && b.events >= p.batchSize {
 				err = p.save(ctx, e, b)
 			}
 		case <-tick.C:
+			p.stats.progress(len(pile), e.counts)
+
 			if b.events > 0 {
 				err = p.save(ctx, e, b)
 			}
@@ -160,6 +181,38 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 	}
 
 	return err
+}
+
+// watchSession polls /v1/session for the lag metrics until ctx ends. A failure only leaves the last values in place; it is logged once until a poll works again.
+func (p *satelitPipeline) watchSession(ctx context.Context) {
+	tick := time.NewTicker(satelitSessionEvery)
+	defer tick.Stop()
+
+	failing := false
+
+	for {
+		pollCtx, cancel := context.WithTimeout(ctx, satelitSessionEvery)
+		s, err := p.session(pollCtx)
+
+		cancel()
+
+		switch {
+		case err == nil:
+			p.stats.sessionSeen(s.LatestOffset, s.VirtualNow)
+
+			failing = false
+		case ctx.Err() == nil && !failing:
+			withID("").Warn("satelit session not read", "error", err.Error())
+
+			failing = true
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 // The last saved offset, or -1 when nothing was saved yet. A store outage is retried.
@@ -220,6 +273,10 @@ func (p *satelitPipeline) take(e *fireEngine, b *satelitBatch, rec feedRecord, m
 	b.events++
 	b.last = rec.Offset
 
+	if !rec.Read.IsZero() {
+		b.reads = append(b.reads, rec.Read)
+	}
+
 	return true
 }
 
@@ -254,6 +311,7 @@ func (p *satelitPipeline) save(ctx context.Context, e *fireEngine, b *satelitBat
 	}
 
 	p.backoff.reset()
+	p.stats.savedBatch(b.last, e.clock, e.counts, len(b.parked), b.reads)
 	withID("").Info("satelit batch saved", "events", b.events, "fires", len(b.fires), "parked", len(b.parked), "bookmark", b.last)
 
 	*b = satelitBatch{}

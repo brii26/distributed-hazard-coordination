@@ -241,7 +241,7 @@ Interpretation: a reader that stops reading loses its connection, not data. Stop
   - **Pile size:** at least one burst, e.g. 2,048 events.
   - **Lag metrics for the dashboard:**
     - offset lag = `latest_offset` (from `/v1/session`) − last committed offset;
-    - feed-time lag = `C` at the reader − `C` at the last saved batch.
+    - feed-time lag = `virtual_now` (from `/v1/session`) − `C` at the last saved batch. Its floor is the heartbeat spacing in feed time, because `C` moves with heartbeats.
 - **#309, reconnect and silence.**
   - **Normal path:** reconnecting is routine, since the server closes every stream within 90 s (F8). On EOF, reconnect after a short backoff (0.5 s, doubling to 10 s).
   - **Resume rule:** the first connect of a run uses `?from=0`; every reconnect sends only `Last-Event-ID: <last seen>` and never `?from`. The header is exclusive, so a resume has no repeat (E6b). `?from` is still needed once, because the header cannot say "from 0".

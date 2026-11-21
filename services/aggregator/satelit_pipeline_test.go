@@ -182,11 +182,15 @@ type satelitRun struct {
 	crashAfter int64
 	oneBatch   bool
 	fenced     []int64
+	stats      *satelitStats
+	session    func(context.Context) (feedSession, error)
 }
 
 func (r *satelitRun) pipeline(cancel context.CancelFunc) *satelitPipeline {
 	read := func(ctx context.Context, start int64, out chan<- feedRecord) error {
 		for _, rec := range r.recs[start:] {
+			rec.Read = time.Now()
+
 			select {
 			case out <- rec:
 			case <-ctx.Done():
@@ -209,6 +213,7 @@ func (r *satelitRun) pipeline(cancel context.CancelFunc) *satelitPipeline {
 		now:      func() time.Time { return time.Unix(1, 0) },
 		lateness: 12 * time.Hour, batchSize: 50, batchWait: 5 * time.Millisecond,
 		backoff: newBackoff(time.Millisecond, 2*time.Millisecond),
+		stats:   r.stats, session: r.session,
 	}
 
 	if r.oneBatch {
