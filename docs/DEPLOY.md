@@ -61,6 +61,15 @@ done
 
 The same holds for `014_source_received_at.sql` (the column `source_received_at` of `hazard_events`, which the Aggregator now writes on every upsert): apply it the same way on every store pod, before the new Aggregator image rolls out, or every write fails. It is safe to apply twice and sets existing rows to their last write time.
 
+The same holds for `015_wildfire.sql` (the columns `version` and `withdrawn_at` of `hazard_events`, and the source `SATELIT` and type `WILDFIRE` in its CHECK lists): the Aggregator now writes `version` and `withdrawn_at` on every upsert, for every source, so apply it on every store pod before the new Aggregator image rolls out, or every write fails, not only the satellite ones. Apply it first and roll the Aggregator after: pods of the old image keep working on the new columns because both have defaults. It is safe to apply twice:
+
+```bash
+for p in $(kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l role=store -o name); do
+  kubectl -n sistem-informasi-kebencanaan-bnpb exec "$p" -- sh -c \
+    'psql -U "$POSTGRES_USER" -d canonical_store -f /docker-entrypoint-initdb.d/015_wildfire.sql'
+done
+```
+
 Until `011_shard_state.sql` is applied the rebalancer cannot read the shard state of that node: its scan fails, nothing is copied to or from it, and reads keep their normal owner order without preferring synced copies. The error shows in the Aggregator log as a failed scan. The rebalancer starts working on its next round after the table exists.
 
 The rebalancer is set with `STORE_REBALANCE_INTERVAL`, `REBALANCE_PAGE_PAUSE` and `REBALANCE_DELETE`, see [CONFIGURATION.md](CONFIGURATION.md). The rebalance lease lives in the coordination database too, so only one replica runs a round at a time and `REBALANCE_DELETE` no longer needs the extra care that several simultaneous rounds would have asked for.
