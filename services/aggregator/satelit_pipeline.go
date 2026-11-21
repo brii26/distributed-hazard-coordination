@@ -31,9 +31,10 @@ type satelitConfig struct {
 	enabled        bool
 	baseURL, token string
 	lateness       time.Duration
+	stopAt         int64 // -1: read on forever
 }
 
-// Reads SATELIT_ENABLED and, when it is true, SATELLITE_BASE_URL, SATELLITE_GROUP_TOKEN and SATELIT_LATENESS.
+// Reads SATELIT_ENABLED and, when it is true, SATELLITE_BASE_URL, SATELLITE_GROUP_TOKEN, SATELIT_LATENESS and SATELIT_STOP_AT.
 func loadSatelitConfig() (satelitConfig, error) {
 	raw := os.Getenv("SATELIT_ENABLED")
 	if raw == "" {
@@ -56,6 +57,14 @@ func loadSatelitConfig() (satelitConfig, error) {
 
 	if c.lateness, err = envDuration("SATELIT_LATENESS", defaultSatelitLateness); err != nil {
 		return satelitConfig{}, err
+	}
+
+	c.stopAt = -1
+
+	if raw := os.Getenv("SATELIT_STOP_AT"); raw != "" {
+		if c.stopAt, err = strconv.ParseInt(raw, 10, 64); err != nil || c.stopAt < 0 {
+			return satelitConfig{}, fmt.Errorf("invalid SATELIT_STOP_AT value: %q", raw)
+		}
 	}
 
 	return c, nil
@@ -85,6 +94,7 @@ type satelitPipeline struct {
 	stats    *satelitStats
 
 	lateness  time.Duration
+	stopAt    int64 // SATELIT_STOP_AT: the last offset to read, -1 for none
 	batchSize int
 	batchWait time.Duration
 	backoff   *backoff
@@ -99,7 +109,7 @@ func newSatelitPipeline(c satelitConfig, upsert func(context.Context, HazardEven
 	return &satelitPipeline{
 		read: r.run, upsert: upsert, park: db.insertFailed, marks: db, pub: pub, now: time.Now,
 		session: r.session, stats: newSatelitStats(),
-		lateness: c.lateness, batchSize: satelitBatchSize, batchWait: satelitBatchWait,
+		lateness: c.lateness, stopAt: c.stopAt, batchSize: satelitBatchSize, batchWait: satelitBatchWait,
 		backoff: newBackoff(satelitBackoffBase, satelitBackoffMax),
 	}, nil
 }
@@ -127,7 +137,11 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 		return err
 	}
 
-	withID("").Info("satelit pipeline started", "bookmark", mark, "lateness", p.lateness.String())
+	withID("").Info("satelit pipeline started", "bookmark", mark, "lateness", p.lateness.String(), "stop_at", p.stopAt)
+
+	if p.stopAt >= 0 && mark > p.stopAt {
+		withID("").Warn("satelit bookmark is past SATELIT_STOP_AT; the store already holds offsets after it", "bookmark", mark, "stop_at", p.stopAt)
+	}
 
 	begun := time.Now()
 
@@ -141,10 +155,14 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 	defer wg.Wait()
 	defer cancel()
 
+	// The reader has its own context, so SATELIT_STOP_AT can end the stream and keep the pipeline.
+	readCtx, stopReading := context.WithCancel(ctx)
+	defer stopReading()
+
 	pile := make(chan feedRecord, satelitPile)
 	readDone := make(chan error, 1)
 
-	wg.Go(func() { readDone <- p.read(ctx, 0, pile) })
+	wg.Go(func() { readDone <- p.read(readCtx, 0, pile) })
 
 	if p.session != nil {
 		wg.Go(func() { p.watchSession(ctx) })
@@ -162,14 +180,9 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 			return ctx.Err()
 		case err = <-readDone:
 		case rec := <-pile:
-			joined := p.take(e, b, rec, mark)
-
-			if rec.Offset == mark {
-				p.stats.rebuilt(time.Since(begun), e.clock)
-			}
-
-			if joined && b.events >= p.batchSize {
-				err = p.save(ctx, e, b)
+			var stop bool
+			if stop, err = p.next(ctx, e, b, rec, mark, begun); stop {
+				return p.halt(ctx, stopReading, e, b)
 			}
 		case <-tick.C:
 			p.stats.progress(len(pile), e.counts)
@@ -181,6 +194,42 @@ func (p *satelitPipeline) run(ctx context.Context) error {
 	}
 
 	return err
+}
+
+// next applies one record and saves the batch when it is full. stop is true when the record is at SATELIT_STOP_AT; the caller then halts.
+func (p *satelitPipeline) next(ctx context.Context, e *fireEngine, b *satelitBatch, rec feedRecord, mark int64, begun time.Time) (stop bool, err error) {
+	joined := p.take(e, b, rec, mark)
+
+	if rec.Offset == mark {
+		p.stats.rebuilt(time.Since(begun), e.clock)
+	}
+
+	if p.stopAt >= 0 && rec.Offset >= p.stopAt {
+		return true, nil
+	}
+
+	if joined && b.events >= p.batchSize {
+		return false, p.save(ctx, e, b)
+	}
+
+	return false, nil
+}
+
+// halt ends a run at SATELIT_STOP_AT: it saves what is left, closes the stream so the group's one stream is free, and waits for ctx to end. Two runs stopped at the same offset hold the same fires, which is how the crash test compares a run with a kill against one without (criterion 5).
+func (p *satelitPipeline) halt(ctx context.Context, stopReading context.CancelFunc, e *fireEngine, b *satelitBatch) error {
+	if b.events > 0 {
+		if err := p.save(ctx, e, b); err != nil {
+			return err
+		}
+	}
+
+	stopReading()
+	p.stats.progress(0, e.counts)
+	withID("").Info("satelit stopped at SATELIT_STOP_AT, the stream is closed", "stop_at", p.stopAt)
+
+	<-ctx.Done()
+
+	return ctx.Err()
 }
 
 // watchSession polls /v1/session for the lag metrics until ctx ends. A failure only leaves the last values in place; it is logged once until a poll works again.

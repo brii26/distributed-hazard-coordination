@@ -178,6 +178,7 @@ services:
       SATELLITE_BASE_URL: ${SATELLITE_BASE_URL:-}
       SATELLITE_GROUP_TOKEN: ${SATELLITE_GROUP_TOKEN:-}
       SATELIT_LATENESS: ${SATELIT_LATENESS:-12h}
+      SATELIT_STOP_AT: ${SATELIT_STOP_AT:-}
     volumes:
       - aggregator_token_data:/var/lib/aggregator
     healthcheck:

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -184,10 +185,14 @@ type satelitRun struct {
 	fenced     []int64
 	stats      *satelitStats
 	session    func(context.Context) (feedSession, error)
+	stopAt     int64       // > 0: SATELIT_STOP_AT; 0 reads on
+	readEnded  atomic.Bool // the reader returned, so the stream is closed
 }
 
 func (r *satelitRun) pipeline(cancel context.CancelFunc) *satelitPipeline {
 	read := func(ctx context.Context, start int64, out chan<- feedRecord) error {
+		defer r.readEnded.Store(true)
+
 		for _, rec := range r.recs[start:] {
 			rec.Read = time.Now()
 
@@ -213,7 +218,11 @@ func (r *satelitRun) pipeline(cancel context.CancelFunc) *satelitPipeline {
 		now:      func() time.Time { return time.Unix(1, 0) },
 		lateness: 12 * time.Hour, batchSize: 50, batchWait: 5 * time.Millisecond,
 		backoff: newBackoff(time.Millisecond, 2*time.Millisecond),
-		stats:   r.stats, session: r.session,
+		stats:   r.stats, session: r.session, stopAt: -1,
+	}
+
+	if r.stopAt > 0 {
+		p.stopAt = r.stopAt
 	}
 
 	if r.oneBatch {
@@ -483,6 +492,49 @@ func TestSatelitPipelineStopsWhenFenced(t *testing.T) {
 	}
 }
 
+// runToStop runs with SATELIT_STOP_AT until the bookmark is at the stop offset and the stream is closed.
+func runToStop(t *testing.T, st *fakeSatStore, recs []feedRecord, stopAt int64) {
+	t.Helper()
+
+	r := &satelitRun{st: st, pub: &fakeConfirmPub{}, recs: recs, crashAfter: -1, stopAt: stopAt}
+	stop := r.start(t)
+	at := strconv.FormatInt(stopAt, 10)
+
+	eventually(t, "the stop at "+at, func() bool { _, _, c, _ := st.state(); return c == at && r.readEnded.Load() })
+
+	if err := stop(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run: %v", err)
+	}
+}
+
+// SATELIT_STOP_AT makes runs end at the same offset, so the crash test (criterion 5) can compare a run with a kill against one without while the live feed moves on.
+// A run with a crash before the stop holds exactly what a run over the feed up to the stop holds, the stream is closed at the stop, and a restart after the stop writes nothing.
+func TestSatelitPipelineStopsAtTheStopOffset(t *testing.T) {
+	t.Parallel()
+
+	recs := testFeed(1000)
+	ref := newFakeSatStore()
+	toEnd(t, ref, &fakeConfirmPub{}, recs[:600])
+
+	wantRows, wantParked, _, _ := ref.state()
+
+	st := newFakeSatStore()
+	crash(t, st, recs, 300)
+	runToStop(t, st, recs, 599)
+
+	rows, parked, _, upserts := st.state()
+
+	if !reflect.DeepEqual(rows, wantRows) || !reflect.DeepEqual(parked, wantParked) {
+		t.Fatalf("%d fires and %d parked at the stop, want %d and %d", len(rows), len(parked), len(wantRows), len(wantParked))
+	}
+
+	runToStop(t, st, recs, 599)
+
+	if _, _, _, again := st.state(); again != upserts {
+		t.Fatalf("a restart after the stop wrote %d fires", again-upserts)
+	}
+}
+
 func TestLoadSatelitConfig(t *testing.T) {
 	t.Setenv("SATELIT_ENABLED", "")
 
@@ -500,9 +552,25 @@ func TestLoadSatelitConfig(t *testing.T) {
 
 	t.Setenv("SATELLITE_GROUP_TOKEN", "t")
 
-	if c, err := loadSatelitConfig(); err != nil || c.lateness != 12*time.Hour {
-		t.Fatalf("defaults: %+v %v, want L = 12h", c, err)
+	if c, err := loadSatelitConfig(); err != nil || c.lateness != 12*time.Hour || c.stopAt != -1 {
+		t.Fatalf("defaults: %+v %v, want L = 12h and no stop offset", c, err)
 	}
+
+	t.Setenv("SATELIT_STOP_AT", "599")
+
+	if c, err := loadSatelitConfig(); err != nil || c.stopAt != 599 {
+		t.Fatalf("SATELIT_STOP_AT=599: %+v %v", c, err)
+	}
+
+	for _, bad := range []string{"-1", "soon"} {
+		t.Setenv("SATELIT_STOP_AT", bad)
+
+		if _, err := loadSatelitConfig(); err == nil {
+			t.Fatalf("SATELIT_STOP_AT=%q accepted", bad)
+		}
+	}
+
+	t.Setenv("SATELIT_STOP_AT", "")
 
 	t.Setenv("SATELIT_ENABLED", "yes please")
 
