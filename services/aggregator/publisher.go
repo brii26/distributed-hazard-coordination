@@ -54,23 +54,27 @@ type publisher struct {
 	wake    chan struct{} // tells run the queue is no longer empty
 
 	up atomic.Bool
+
+	// The highest seq the broker has confirmed. progress tells a waiting publishWait or waitConfirmed that it moved.
+	confirmed atomic.Uint64
+	progress  chan struct{}
 }
 
 func newPublisher(dial func(context.Context) (session, error), capacity int) *publisher {
-	return &publisher{dial: dial, capacity: capacity, retryBase: retryBase, retryMax: retryMax, wake: make(chan struct{}, 1)}
+	return &publisher{
+		dial: dial, capacity: capacity, retryBase: retryBase, retryMax: retryMax,
+		wake: make(chan struct{}, 1), progress: make(chan struct{}, 1),
+	}
 }
 
 // Queues h and returns at once. A full buffer drops the oldest message (its event is still in the Canonical Store).
 func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID string) {
-	body, err := json.Marshal(h)
+	m, err := encodeMessage(ctx, h, correlationID)
 	if err != nil {
 		withID(correlationID).Warn("publish", "hazard_id", h.HazardID, "result", "failure", "error", err.Error())
 
 		return
 	}
-
-	carrier := amqpCarrier{}
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
 
 	p.mu.Lock()
 
@@ -80,12 +84,76 @@ func (p *publisher) publish(ctx context.Context, h HazardEvent, correlationID st
 		p.queue = p.queue[1:]
 	}
 
-	p.nextSeq++
-	p.queue = append(p.queue, message{seq: p.nextSeq, hazardID: h.HazardID, correlationID: correlationID, body: body, trace: carrier})
+	p.enqueue(m)
 	p.mu.Unlock()
+	p.signal(p.wake)
+}
 
+// publishWait queues h like publish but never drops: while the buffer is full it waits for room. It returns the message's seq, for waitConfirmed. One caller at a time.
+func (p *publisher) publishWait(ctx context.Context, h HazardEvent, correlationID string) (uint64, error) {
+	m, err := encodeMessage(ctx, h, correlationID)
+	if err != nil {
+		return 0, err
+	}
+
+	for {
+		p.mu.Lock()
+
+		if len(p.queue) < p.capacity {
+			seq := p.enqueue(m)
+			p.mu.Unlock()
+			p.signal(p.wake)
+
+			return seq, nil
+		}
+
+		p.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-p.progress:
+		}
+	}
+}
+
+// waitConfirmed returns once the broker has confirmed every message up to seq. One caller at a time.
+func (p *publisher) waitConfirmed(ctx context.Context, seq uint64) error {
+	for p.confirmed.Load() < seq {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-p.progress:
+		}
+	}
+
+	return nil
+}
+
+func encodeMessage(ctx context.Context, h HazardEvent, correlationID string) (message, error) {
+	body, err := json.Marshal(h)
+	if err != nil {
+		return message{}, err
+	}
+
+	carrier := amqpCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+	return message{hazardID: h.HazardID, correlationID: correlationID, body: body, trace: carrier}, nil
+}
+
+// Appends m with the next seq. The caller holds mu.
+func (p *publisher) enqueue(m message) uint64 {
+	p.nextSeq++
+	m.seq = p.nextSeq
+	p.queue = append(p.queue, m)
+
+	return m.seq
+}
+
+func (p *publisher) signal(ch chan struct{}) {
 	select {
-	case p.wake <- struct{}{}:
+	case ch <- struct{}{}:
 	default:
 	}
 }
@@ -109,11 +177,15 @@ func (p *publisher) front() (message, bool) {
 // Removes m once confirmed. If the buffer already dropped it, nothing is removed.
 func (p *publisher) done(m message) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	if len(p.queue) > 0 && p.queue[0].seq == m.seq {
 		p.queue = p.queue[1:]
 	}
+
+	p.mu.Unlock()
+
+	p.confirmed.Store(m.seq) // messages are sent in seq order, one at a time
+	p.signal(p.progress)
 }
 
 // Publishes the oldest message and logs the result.

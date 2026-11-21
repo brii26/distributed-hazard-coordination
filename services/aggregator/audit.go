@@ -83,10 +83,13 @@ func knownSource(s string) bool {
 }
 
 // A hazard with its attributes as raw JSON, so stored numbers come out byte for byte.
+// Version and WithdrawnAt are left zero so the item keeps the Lampiran A shape: they shadow the stored fields, and omitempty drops them. Withdrawn fires are not listed at all.
 type auditItem struct {
 	HazardEvent
 
-	Attributes json.RawMessage `json:"attributes"`
+	Attributes  json.RawMessage `json:"attributes"`
+	Version     int64           `json:"version,omitempty"`
+	WithdrawnAt *time.Time      `json:"withdrawn_at,omitempty"`
 }
 
 func newAuditItem(e HazardEvent) auditItem {
@@ -109,7 +112,7 @@ type auditEventsResponse struct {
 
 // Reads and checks the events query. A non-empty msg is the 400 message.
 func parseAuditQuery(q url.Values) (f listFilter, limit int, after *listPos, msg string) {
-	f = listFilter{Asc: true, Source: q.Get("source")}
+	f = listFilter{Asc: true, Live: true, Source: q.Get("source")}
 	limit = auditDefaultLimit
 
 	if f.Source != "" && !knownSource(f.Source) {

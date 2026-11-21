@@ -102,3 +102,5 @@ Panels: request rate, error rate, p50 and p95 latency per service (span metrics)
 pod restarts, pod ready and deployments short of desired replicas (from `kube-state-metrics`, a second Prometheus job). The rows Lag, Breaker, Shards and
 Replicas are collapsed and empty, for the issues that own those metrics. Scaling a Deployment to 0 turns its tile in "Deployments short of desired replicas" red (a deleted pod has no series, so "Pod ready" alone cannot show it); a crashing pod turns
 red in "Pod ready". Both update on the next 15 s scrape. Limits: Grafana 128Mi/256Mi, kube-state-metrics 64Mi/128Mi.
+
+The row "Satellite fires (P4, #315)" shows the satellite pipeline: offset lag behind the feed, p50 and p95 from read to saved, records saved per second and the pile, feed-time lag, and the fire engine counts. Only the aggregator holding the SATELIT lease exports these series, so the panels stay empty while `SATELIT_ENABLED` is false.

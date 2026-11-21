@@ -82,6 +82,7 @@ WITH e AS (
          source
   FROM hazard_events
   WHERE shard = $1 AND ingested_at >= $2::timestamptz AND ingested_at <= $3::timestamptz
+    AND withdrawn_at IS NULL
 )
 SELECT bucket, category, severity, area, source, count(*),
        GROUPING(bucket, category, severity, area, source)

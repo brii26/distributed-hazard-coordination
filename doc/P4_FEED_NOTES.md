@@ -4,7 +4,7 @@ Date: 2026-11-18. Owner: Shanice. Issue: #308 (spike). Status: measured, for rev
 
 Everything below was measured against `https://satellite.naufarrel.dev` with our group token, using only `GET /v1/session` and `GET /v1/stream`. The session was the **practice profile at speed 60** the whole time. Every number is an observation of that profile, not a promise about the exam profile. Where a number feeds a design value, the value has a safety margin and must stay configurable. The spec says handling that depends on IDs, seeds, order or patterns of the practice profile does not count.
 
-Total open-stream time: about 44 minutes (budget 60). The raw captures stay local in `tools/feedprobe/out/` (gitignored). Section 5 regenerates them. A sample of each event type is in [`p4_feed_samples/`](p4_feed_samples/).
+Total open-stream time: about 44 minutes (budget 60). The raw captures stay local in `tools/feedprobe/out/` (gitignored). Section 6 regenerates them. A sample of each event type is in [`p4_feed_samples/`](p4_feed_samples/).
 
 ## 1. Summary
 
@@ -12,12 +12,12 @@ Total open-stream time: about 44 minutes (budget 60). The raw captures stay loca
 |---|---|---|---|
 | F1 replay depth and speed | `?from=0` is accepted: the whole session history (offsets 0 to 436,475, about 38 feed days) is kept. Replay ran at ~2,600 events/s (peak 8,224 in one second) and reached live in 169 s. Live averages ~7 events/s. | E2, `e2-replay.ndjson` | #313: recovery by re-reading is viable |
 | F2 heartbeats | `event: heartbeat` with `{"offset","virtual_now"}`. They carry an SSE `id` and consume offsets. Live interval: 15.8 s wall (p50), 21.8 s max, which is 15 to 22 feed minutes. In the replayed history, heartbeats are missing for spans of up to 31 feed hours. | E3, E2 | #312, #309 |
-| F3 lateness | Feed time at arrival minus acq time (live, 15,340 detections): p50 8 min, p99 3 h 26 min, p99.9 3 h 59 min, max 4 h 49 min. Out of order by offset: p99.9 3 h 55 min, max 5 h 1 min (replay, 405,268 detections). | E3, E2 | #312: L = 6 h |
-| F4 clock skew | No acq time after the feed clock (0 of 15,340). Minimum delay per satellite is 57 to 64 s for N, N20 and N21. Not visible in the practice profile. | E3 | #312: watermark guard stays |
+| F3 lateness | Feed time at arrival minus acq time (live, 15,340 detections): p50 8 min, p99 3 h 26 min, p99.9 3 h 59 min, max 4 h 49 min. Out of order by offset: p99.9 3 h 55 min, max 5 h 1 min (replay, 405,268 detections). | E3, E2 | #312: L = 12 h |
+| F4 clock skew | No acq time after the feed clock (0 of 15,340). Minimum delay per satellite is 57 to 64 s for N, N20 and N21. Not visible in the practice profile. | E3 | #312: feed clock uses the newest acq unclamped |
 | F5 payload shapes | `detection` is a full record under `detection`. `update` is a delta: `key` plus `changes` (subset of `bright_ti4`, `bright_ti5`, `frp`, `confidence`). `retract` is `key` plus `reason` (`false_positive`). Targets are named by the 5-field detection key only. | E2, E3 | #314 |
 | F6 raw text | Coordinates are JSON numbers with 5 decimals. 63 of 405,271 latitudes near 0 use exponent form (`-6.0e-5`) while keys write `-0.00006`. `acq_time` is an unpadded integer (`25`, `2350`). | E2 | #311, #314: detection key |
 | F7 bursts | Live bursts of ~1,028 events (~945 detections) in 11 s, flat at ≤101 events/s, every 3 to 6 wall minutes (3 to 6 feed hours). Mostly 1 to 9 events/s otherwise. | E3 | #315 |
-| F8 reconnect | `?from=N` is inclusive. `Last-Event-ID: N` is exclusive. With both, `?from` wins. The server closes the stream by itself every 9 to 90 s (p50 65 s). 41 resumes, no gaps, and no offset ever sent twice by the server. No `retry:` field is ever sent. | E2, E3, E6 | #309: resume with `?from=<last + 1>` only |
+| F8 reconnect | `?from=N` is inclusive. `Last-Event-ID: N` is exclusive. With both, `?from` wins. The server closes the stream by itself every 9 to 90 s (p50 65 s). 41 resumes, no gaps, and no offset ever sent twice by the server. No `retry:` field is ever sent. | E2, E3, E6 | #309: `?from=0` on the first connect, then `Last-Event-ID` only |
 | F9 connection limit | A second stream gets `429 too_many_connections` with no `Retry-After`, and the server closes the existing stream at the same moment. After a client process is killed, the next connect is accepted at once (0.94 s). | E4, E5 | #283 lease, #309 |
 | F10 slow reader | Paused 60 s: the server held a bounded backlog (499 events), stopped sending, and closed the stream. The backlog plus EOF arrived on resume. Resuming by offset lost nothing. | E3 | #309, #315 |
 | F11 session | `profile: practice`, `speed: 60` in all 56 snapshots over ~70 min. `virtual_now` advances 60.0 feed seconds per wall second. `latest_offset` is the id of the last emitted event. | E0, E2, E3 | #315 lag metrics |
@@ -52,7 +52,7 @@ Interpretation: re-reading the feed after a crash is cheap. Even the full histor
   Heartbeats keep coming during bursts. Their `virtual_now` advances 60.0 feed seconds per wall second.
 - **Replayed history (E2):** feed-time gaps between heartbeats have p50 16 min but p90 4 h and max 31 h. The history has long spans without heartbeats, possibly spans when no client was connected (open question 5).
 
-Interpretation: heartbeats are the only replay-safe source of feed time, because they live in the offset log. They cannot be the only thing that advances the watermark, because of the gaps in history.
+Interpretation: heartbeats are the only replay-safe source of feed time, because they live in the offset log. They cannot be the only thing that advances the feed clock, because of the gaps in history.
 
 ### F3. Lateness and order
 
@@ -81,7 +81,7 @@ Interpretation: lateness has a long tail of several hours ("laporan dari lintasa
 - **No per-satellite offset:** minimum delay per satellite is 57 s (N20), 59 s (N21) and 64 s (N), so no satellite stamps ahead of the others.
 - **Same disorder within and across satellites:** same-satellite and any-satellite out-of-order lag are almost identical (F3).
 
-Interpretation: the "jam di tiap satelit tidak selalu sepakat" behavior does not show in the practice profile. It may appear in the exam profile, so the watermark guard (section 3) stays.
+Interpretation: the "jam di tiap satelit tidak selalu sepakat" behavior does not show in the practice profile. It may appear in the exam profile. The feed clock `C` (section 3) takes the newest acq unclamped, so a satellite stamping ahead would make other detections look later; S5 records this.
 
 ### F5. Payload shapes and targets
 
@@ -206,31 +206,34 @@ Interpretation: a reader that stops reading loses its connection, not data. Stop
 |---|---|
 | #309 SSE client | resume rule, reconnect backoff, silence timeout, pile and stop reading |
 | #311 stable id | detection key text |
-| #312 time windows and lateness | allowed lateness L, watermark source |
+| #312 time windows and lateness | allowed lateness L, feed clock, closing rule |
 | #313 durable state and recovery | re-reading the feed is viable, time to recover |
 | #314 update and retract | target matching, tombstones, duplicates |
 | #315 test at 60× | throughput target, lag metrics |
 | #283 lease | only the lease holder may hold the stream |
 
-- **#312, allowed lateness L = 6 h** (configurable).
+- **#312, allowed lateness L = 12 h** (configurable).
   - **The numbers:**
-    - out of order by offset: p99.9 is 3 h 54 min to 3 h 55 min, × 1.5 = 5 h 53 min;
-    - feed-clock delay: p99.9 is 3 h 59 min, × 1.5 = 5 h 59 min.
-  - **Choice:** rounded up to 6 h.
-  - **Margin:** the largest value ever seen, 5 h 1 min in 405,268 replayed detections, is still 1 h inside the limit. At 6 h the practice data would produce no late detections, and the late count must still be reported (criterion 2).
-  - **Note:** 6 h equals the 360-minute link window in the fire definition. That is a coincidence of these numbers, not the reason.
-  - **Watermark source:** only values from the offset-ordered stream are replay-safe, because they come back identically on a re-read:
-    - acq times of detections;
-    - `virtual_now` of heartbeats.
+    - out of order by offset: p99.9 is 3 h 54 min to 3 h 55 min, max 5 h 1 min;
+    - feed-clock delay: p99.9 is 3 h 59 min, max 4 h 49 min.
+  - **Choice:** 12 h, more than twice the largest value seen. The practice data produces no late events at this limit; the late count is still reported (criterion 2). The cost is that fires close later and stay in memory longer.
+  - **Feed clock `C`:** `max(last heartbeat virtual_now, newest acq seen)`. Only values from the offset-ordered stream are used, so a re-read makes the same decisions. The wall clock and `/v1/session` are not replay-safe.
+  - **Lateness per event:** a detection is judged by its own acq; an update or retract by its target detection's acq. It is accepted only if `C − acq ≤ L`; otherwise it is parked in `failed_messages` and counted.
+  - **Measured on the #308 captures** (`C − target acq` at arrival):
 
-    The wall clock and `/v1/session` are not replay-safe.
-  - **Recommended watermark:** `max(acq seen, heartbeat virtual_now seen) − L`. Clamp each acq to at most the last heartbeat `virtual_now` before using it, so a satellite with a fast clock cannot push the watermark ahead (F4).
-  - **Why both sources:** heartbeats close windows in quiet live periods, and acq times keep the watermark moving in history spans without heartbeats (F2).
+    | Event type | p50 | p99 | max | over 12 h |
+    |---|---|---|---|---|
+    | detections, E2 replay (405,268) | 0.08 h | 3.37 h | 5.02 h | 0 |
+    | updates, E2 (21,829) | 0.15 h | 3.47 h | 4.72 h | 0 |
+    | retracts, E2 (8,763) | 0.15 h | 3.45 h | 5.12 h | 0 |
+
+    All 30,592 update and retract keys in E2 matched a detection key built with 5-decimal coordinates.
+  - **Closing ("selesai dikenali"):** a fire is final when `C > its newest detection acq + 360 min + L`, and is then dropped from memory. Nothing accepted later can change it: a new detection would be more than 360 min from every dot of the fire, and an update or retract for one of its dots would fail the lateness check.
 - **#313, recovery by re-reading the feed: viable.**
   - **Retention:** the full session history is kept (F1).
-  - **Size of an 18 h window:** the feed carries 425 to 480 events per feed hour, so 18 feed hours is about 7,700 to 8,600 events.
-  - **Time to re-read:** about 3 to 4 s at the observed 2,600 events/s (the full 436k history took 169 s).
-  - **Requirement:** the recovery reader must handle the server's periodic EOF during replay, and resume by offset.
+  - **Rule:** on every start, replay from offset 0. Up to the saved bookmark, rebuild memory silently (no saves, no publishes, no parking; counters are rebuilt), then continue normally. A smaller start offset is not computed: it could rename a fire whose anchor was retracted, re-create part of a closed fire, or misjudge lateness.
+  - **Time:** the full 436k-event history replayed in 169 s (about 2,600 events/s).
+  - **Requirement:** the reader must handle the server's periodic EOF during replay.
 - **#309 and #315, throughput and pile.**
   - **Live load:** design for bursts of ~1,000 events at up to ~100 events/s (F7).
   - **Criterion 4 (current within 60 s after a burst):** needs only about 17 events/s even if processing starts when the burst ends.
@@ -238,16 +241,11 @@ Interpretation: a reader that stops reading loses its connection, not data. Stop
   - **Pile size:** at least one burst, e.g. 2,048 events.
   - **Lag metrics for the dashboard:**
     - offset lag = `latest_offset` (from `/v1/session`) − last committed offset;
-    - feed-time lag = last heartbeat `virtual_now` − watermark.
+    - feed-time lag = `virtual_now` (from `/v1/session`) − `C` at the last saved batch. Its floor is the heartbeat spacing in feed time, because `C` moves with heartbeats.
 - **#309, reconnect and silence.**
   - **Normal path:** reconnecting is routine, since the server closes every stream within 90 s (F8). On EOF, reconnect after a short backoff (0.5 s, doubling to 10 s).
-  - **Resume rule: `?from=<last committed + 1>`, and never send `Last-Event-ID`.** Reasons:
-    - the first connect needs `?from` anyway (`0` for recovery, a stored offset after a restart), so one request shape covers every connect;
-    - when both are sent the header is ignored (E6a), so sending it as well would only hide which one the server used;
-    - the offset is in the URL, so it shows in logs and is easy to assert against a fake server.
-
-    `?from` is inclusive, so `+ 1` resumes with no repeat. A `from` past `latest_offset` is accepted and waits for new events (E1), so `+ 1` is valid at the live head too.
-  - **Stay idempotent by offset anyway:** a crash between processing and committing replays from the last commit.
+  - **Resume rule:** the first connect of a run uses `?from=0`; every reconnect sends only `Last-Event-ID: <last seen>` and never `?from`. The header is exclusive, so a resume has no repeat (E6b). `?from` is still needed once, because the header cannot say "from 0".
+  - **Stay idempotent anyway:** a crash between saving and moving the bookmark re-processes that batch, and versioned saves make the repeat a no-op.
   - **Silence timeout:** 3 × the largest heartbeat interval seen, 3 × 21.8 s ≈ **65 s** at speed 60. It should follow the heartbeat interval if speed changes (open question 4).
   - **Slot release:** under 1 s after a client dies (F9), so restarts do not need to wait.
   - **On 429:** back off with jitter. There is no `Retry-After` to honour.
@@ -259,10 +257,27 @@ Interpretation: a reader that stops reading loses its connection, not data. Stop
   - **Retract:** it must remove the detection and can split a fire, as decided.
   - **Tombstones are needed:** in the practice data, 345 re-sent detection copies and 304 updates arrived after their key was retracted. A tombstone must win over a later copy of the same key, or the false positive comes back.
   - **Duplicates:** about 6.5% of detections are exact re-sends at a new offset, so ingest must be idempotent by key, not only by offset.
-  - **Do not rely on order:** updates and retracts never came before their detection here. Do not depend on that order (spec rule on practice patterns). Hold an update or retract for an unknown key as a pending tombstone or delta.
+  - **Unknown targets:** updates and retracts never came before their detection here. One whose target is not in memory (never seen, or in a closed fire) is parked as `unknown_or_closed_target` and never creates a detection (S4).
 - **#311 and #314, detection key (F6).** Build it from the raw text, but write coordinates in plain decimal form (no exponent), so detection keys equal the keys in update and retract events. Until the assistants answer question 1, use the feed's own `key` string wherever an event carries one.
 
-## 4. Open questions for the assistants
+## 4. Assumptions
+
+These replace questions the assistants have not answered yet. Each is checked against the reference result (#316).
+
+| # | Assumption | If wrong |
+|---|---|---|
+| S1 | The detection key is written exactly like the feed's `key` field (coordinates with 5 decimals, no exponent, `acq_time` unpadded). | `detection_keys` and the checksum differ from the reference. |
+| S2 | The same key with different content replaces the detection; an identical copy is a re-send and is skipped. | Very small FRP or confidence differences. |
+| S3 | A retract is final; later re-sends and updates for that key are counted and ignored. | Some fires are smaller than the reference. |
+| S4 | An update or retract for a key not in memory is parked and never creates a detection. | That detection is missing from its fire. |
+| S5 | Lateness is measured by the feed clock with L = 12 h, exam-profile delays stay under 12 h, and no satellite stamps its acq ahead of the feed clock. | Late detections are parked; fires are smaller than the reference. |
+| S6 | An exam session keeps its full history from offset 0, and heartbeats stay in the offset sequence. | Crash recovery by replay fails. |
+| S7 | The server closing streams every 9 to 90 s is by design. | Nothing; the reader reconnects anyway. |
+| S8 | Distance is haversine with R = 6371.0 km; `≤ 1.0 km` and `≤ 360 min` are inclusive. | Boundary pairs differ. |
+| S9 | Withdrawn fires (fewer than 2 detections, or merged) are left out of the audit `count` and checksum. | Our count is lower than the reference. |
+| S10 | Confidence `l` is low and excluded from fires; `n` and `h` are included. | Fire membership differs. |
+
+## 5. Open questions for the assistants
 
 1. **Coordinate text in keys:**
    - What is the canonical text of `latitude`/`longitude` in a detection key?
@@ -288,7 +303,7 @@ Interpretation: a reader that stops reading loses its connection, not data. Stop
 10. **Offsets beyond `latest_offset`:**
     - `?from` beyond `latest_offset` returns 200 and then silence, with no heartbeat for at least 5 s. Should a client expect heartbeats while it waits there?
 
-## 5. How to reproduce
+## 6. How to reproduce
 
 From the repo root, with the token in `.env` (never printed):
 
@@ -324,6 +339,6 @@ $P analyze --in $O/e3-live.ndjson --session $O/e0-session.ndjson
 
 Each capture writes one NDJSON line per SSE event (wall time, monotonic time, connection number, `sse_id`, `event`, `retry`, the exact `data` text) and a `<name>.conn.ndjson` log of connects, statuses, response headers (never request headers), error bodies, waits and disconnect reasons. The tool lives in [`tools/feedprobe/`](../tools/feedprobe/) and uses only the standard library.
 
-## 6. Samples
+## 7. Samples
 
 [`p4_feed_samples/`](p4_feed_samples/) holds 50 events per type from the E2 replay: `detection.ndjson`, `update.ndjson`, `retract.ndjson` and `heartbeat.ndjson`. Each line is `{"id","event","data"}`, with `data` copied byte for byte from the stream. The detection file ends with five of the exponent-latitude cases from F6. The samples contain no token or request headers.
