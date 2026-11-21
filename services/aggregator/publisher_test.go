@@ -158,6 +158,75 @@ func TestPublishNeverBlocksAndKeepsTheNewestWhenTheBrokerIsGone(t *testing.T) {
 	}
 }
 
+// The satellite pipeline's path: a full buffer makes publishWait wait instead of dropping, and waitConfirmed returns only once the broker confirmed.
+func TestPublishWaitNeverDropsAndWaitsForConfirms(t *testing.T) {
+	t.Parallel()
+
+	b := &fakeBroker{dead: true}
+	p := newPublisher(b.dial, 3)
+	start(t, p)
+
+	done := make(chan error, 1)
+
+	go func() {
+		var last uint64
+
+		for i := range 10 {
+			seq, err := p.publishWait(context.Background(), event(strconv.Itoa(i)), "c")
+			if err != nil {
+				done <- err
+
+				return
+			}
+
+			last = seq
+		}
+
+		done <- p.waitConfirmed(context.Background(), last)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("returned (%v) while the broker was down", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	b.mu.Lock()
+	b.dead = false
+	b.mu.Unlock()
+
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	if got := fmt.Sprint(b.hazardIDs()); got != "[0 1 2 3 4 5 6 7 8 9]" {
+		t.Fatalf("broker got %s, want all 10 in order", got)
+	}
+}
+
+func TestPublishWaitStopsWithItsContext(t *testing.T) {
+	t.Parallel()
+
+	p := newPublisher((&fakeBroker{dead: true}).dial, 1)
+	start(t, p)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	seq, err := p.publishWait(ctx, event("a"), "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.publishWait(ctx, event("b"), "c"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("publishWait on a full buffer: %v, want the deadline", err)
+	}
+
+	if err := p.waitConfirmed(ctx, seq); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitConfirmed with the broker down: %v, want the deadline", err)
+	}
+}
+
 func TestMessagesGoOutInOrderWithTheirCorrelationID(t *testing.T) {
 	t.Parallel()
 

@@ -230,6 +230,61 @@
         "mode": "markdown",
         "content": "Inter-node round trip time and throughput are not a Prometheus metric here. No exporter runs on the nodes and the cluster has no Pushgateway or node exporter, so a graph would need a metric nobody produces. `tests/bonus/net-latency.sh` measures every node pair with `ping` and `iperf3` over ssh and writes `tests/bonus/results/net-latency-<time>.txt` (evidence) and a `.prom` file with the same numbers. Read the numbers there and in `doc/BONUS_PHYSICAL_HOSTS.md`, then compare them with the data delay graph above during the network cut."
       }
+    },
+    {"id": 40, "type": "row", "title": "Satellite fires (P4, #315)", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 75}, "panels": []},
+    {
+      "id": 41, "type": "timeseries", "title": "Satellite offset lag (feed events emitted but not yet saved; criterion 4: back near 0 within 60 s after a burst)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 76},
+      "description": "latest_offset from the feed's /v1/session (polled every 5 s) minus the last offset saved, published and bookmarked. Only the aggregator holding the SATELIT lease exports it.",
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [{"refId": "A", "legendFormat": "offset lag", "expr": "max(aggregator_satelit_offset_lag)"}]
+    },
+    {
+      "id": 42, "type": "timeseries", "title": "Satellite read to saved latency, p50 and p95 (s)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 76},
+      "description": "Time from the reader receiving a record to its batch being saved, published with broker confirms and bookmarked.",
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "p95", "expr": "histogram_quantile(0.95, sum by (le) (rate(aggregator_satelit_read_to_saved_seconds_bucket[1m])))"},
+        {"refId": "B", "legendFormat": "p50", "expr": "histogram_quantile(0.5, sum by (le) (rate(aggregator_satelit_read_to_saved_seconds_bucket[1m])))"}
+      ]
+    },
+    {
+      "id": 43, "type": "timeseries", "title": "Satellite throughput: records saved per second, and records read but not yet applied (pile, bounded at 2048)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 84},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {"refId": "A", "legendFormat": "saved per second", "expr": "sum(rate(aggregator_satelit_read_to_saved_seconds_count[1m]))"},
+        {"refId": "B", "legendFormat": "pile", "expr": "max(aggregator_satelit_pile)"}
+      ]
+    },
+    {
+      "id": 44, "type": "timeseries", "title": "Satellite feed-time lag (feed time behind virtual_now; at speed 60 one wall second is one feed minute)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 84},
+      "description": "virtual_now from /v1/session minus the feed clock at the last saved offset. The feed clock moves with heartbeats, so the floor is the heartbeat spacing in feed time even when nothing is behind.",
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [{"refId": "A", "legendFormat": "feed-time lag", "expr": "max(aggregator_satelit_feed_time_lag_seconds)"}]
+    },
+    {
+      "id": 45, "type": "stat", "title": "Satellite fire engine counts (too late, unknown target, re-sent, tombstone rejected, singles), records parked in the selected time range, last rebuild time (s)",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 92},
+      "description": "The engine counts are running totals over the whole feed. A restart rebuilds them by replay, so they match a run without a crash.",
+      "options": {"colorMode": "value", "textMode": "value_and_name", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "min": 0}, "overrides": []},
+      "targets": [
+        {"refId": "A", "legendFormat": "{{kind}}", "expr": "max by (kind) (aggregator_satelit_engine_count)"},
+        {"refId": "B", "legendFormat": "parked", "expr": "sum(increase(aggregator_satelit_parked_total[$__range])) or on() vector(0)"},
+        {"refId": "C", "legendFormat": "rebuild (s)", "expr": "max(aggregator_satelit_rebuild_seconds)"}
+      ]
     }
   ]
 }

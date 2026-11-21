@@ -111,3 +111,54 @@ func TestConcurrentHandleAndReads(t *testing.T) {
 		t.Fatalf("expected 10 distinct entries, got %d", got)
 	}
 }
+
+func fireEvent(version int64, severity string, withdrawn bool) HazardEvent {
+	e := event("fire-1", "WILDFIRE", severity)
+	e.Source, e.Version = "SATELIT", version
+
+	if withdrawn {
+		at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+		e.WithdrawnAt = &at
+	}
+
+	return e
+}
+
+// Satellite fires arrive at least once and can arrive out of order: the newest version wins.
+func TestOlderFireVersionIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	s := newState()
+	s.handle(msg(t, fireEvent(9, "AWAS", false)))
+	s.handle(msg(t, fireEvent(4, "WASPADA", false)))
+
+	got := s.snapshot()
+	if len(got) != 1 || got[0].Version != 9 || *got[0].Severity != "AWAS" {
+		t.Fatalf("kept %+v, want version 9", got)
+	}
+}
+
+// A withdrawn fire leaves the view, and an older copy that arrives later does not bring it back. A newer version (the fire formed again) does.
+func TestWithdrawnFireLeavesTheView(t *testing.T) {
+	t.Parallel()
+
+	s := newState()
+	s.handle(msg(t, fireEvent(5, "SIAGA", false)))
+	s.handle(msg(t, fireEvent(7, "SIAGA", true)))
+
+	if got := s.snapshot(); len(got) != 0 {
+		t.Fatalf("withdrawn fire still shown: %+v", got)
+	}
+
+	s.handle(msg(t, fireEvent(5, "SIAGA", false)))
+
+	if got := s.snapshot(); len(got) != 0 {
+		t.Fatalf("an older copy brought the withdrawn fire back: %+v", got)
+	}
+
+	s.handle(msg(t, fireEvent(8, "SIAGA", false)))
+
+	if got := s.snapshot(); len(got) != 1 || got[0].Version != 8 {
+		t.Fatalf("revived fire: %+v, want version 8", got)
+	}
+}

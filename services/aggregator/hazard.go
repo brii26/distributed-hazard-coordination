@@ -16,6 +16,7 @@ const (
 	typeSeismic  = "SEISMIC"
 	typeVolcanic = "VOLCANIC"
 	typeCoastal  = "COASTAL"
+	typeWildfire = "WILDFIRE"
 
 	severityNormal  = "NORMAL"
 	severityWaspada = "WASPADA"
@@ -36,6 +37,10 @@ type HazardEvent struct {
 	OccurredAt  time.Time      `json:"occurred_at"`
 	IngestedAt  time.Time      `json:"ingested_at"`
 	Attributes  map[string]any `json:"attributes"`
+
+	// Satellite fires only: the feed offset that last changed the fire (a lower one never overwrites it), and when the fire was withdrawn (shrank below 2 detections or merged into another).
+	Version     int64      `json:"version,omitempty"`
+	WithdrawnAt *time.Time `json:"withdrawn_at,omitempty"`
 
 	// The attributes exactly as stored, set when read from a database. The audit API returns these so numbers keep their format.
 	RawAttributes json.RawMessage `json:"-"`

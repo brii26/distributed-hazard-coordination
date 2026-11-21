@@ -60,4 +60,6 @@ tools/feedprobe/out/
 # Bonus network measurement output
 tests/bonus/results/*
 !tests/bonus/results/README.md
+tests/p4/results/*
+!tests/p4/results/README.md
 tests/results/

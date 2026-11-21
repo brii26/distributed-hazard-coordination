@@ -85,7 +85,10 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `AUDIT_TOKEN` | Kubernetes Secret `audit-token` | change-me | Token for the Internal Audit API |
 | `ADMIN_TOKEN` | Kubernetes Secret `admin-token`, aggregator | change-me | Bearer token for `POST /internal/admin/replay`. Separate from `AUDIT_TOKEN`; unset means the endpoint refuses every call |
 | `REPLAY_BATCH` | aggregator | 500 | Parked rows read per page when replaying |
-| `SATELLITE_GROUP_TOKEN` | Kubernetes Secret `satellite-token` | change-me | Group token for the assistants' satellite feed |
+| `SATELLITE_GROUP_TOKEN` | Kubernetes Secret `satellite-token` | change-me | Group token for the assistants' satellite feed. The Aggregator sends it as `Authorization: Bearer` and never logs it |
+| `SATELIT_ENABLED` | aggregator | false | Turns the satellite fire pipeline (P4) on. Turn it on in one deployment only: the feed allows one stream per group, and a second evicts the first. Needs `SATELLITE_BASE_URL` and `SATELLITE_GROUP_TOKEN` |
+| `SATELLITE_BASE_URL` | aggregator | https://satellite.naufarrel.dev (configmap) | Base URL of the satellite feed |
+| `SATELIT_LATENESS` | aggregator | 12h | Allowed lateness L by event time: a detection, update or retract more than L behind the feed clock is parked as `too_late`. Changing it changes which fires form, so keep it fixed for a run (see `doc/P4_FEED_NOTES.md`) |
 | `PANTAI_AUTH_TOKEN` | Kubernetes Secret `pantai-token`, aggregator | change-me | Bearer token the Sensor Pantai checks. The Aggregator sends it as `Authorization: Bearer` and needs it together with `PANTAI_BASE_URL` |
 | `PANTAI_BASE_URL` | aggregator | unset | Base URL of the Sensor Pantai, for example `http://sensor-pantai:8080`. Unset turns the Pantai poller off; set only one of the two and the Aggregator refuses to start |
 | `SENSOR_TIMEOUT_MS` | aggregator | 1000 | Timeout of one call to the sensor |

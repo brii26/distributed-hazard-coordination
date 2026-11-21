@@ -54,6 +54,7 @@ func newer(a, b HazardEvent) bool {
 // What a listing asks for: direction, an exact source, and a lower bound on ingested_at. The zero value is the client order (newest first, everything).
 type listFilter struct {
 	Asc    bool
+	Live   bool // leave out withdrawn rows (satellite fires that merged or shrank away)
 	Source string
 	Since  *time.Time
 }
@@ -124,15 +125,15 @@ func listShardOn(ctx context.Context, db *sql.DB, shard int, after *listPos, lim
 	}
 
 	rows, err := db.QueryContext(ctx, `
-SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-       latitude, longitude, occurred_at, ingested_at, attributes
+SELECT `+hazardColumns+`
 FROM hazard_events
 WHERE shard = $1
   AND ($2::timestamptz IS NULL OR (ingested_at, hazard_id) `+op+` ($2::timestamptz, $3::uuid))
   AND ($5::text IS NULL OR source = $5::text)
   AND ($6::timestamptz IS NULL OR ingested_at >= $6::timestamptz)
+  AND (NOT $7::boolean OR withdrawn_at IS NULL)
 ORDER BY ingested_at `+dir+`, hazard_id `+dir+`
-LIMIT $4`, shard, ts, id, limit, src, since)
+LIMIT $4`, shard, ts, id, limit, src, since, f.Live)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +197,7 @@ func (c *cluster) list(ctx context.Context, limit int, after *listPos, f listFil
 	return merged, false, unavailable
 }
 
-// Writes a page of copied rows to one node in one transaction. DO NOTHING keeps whatever is there: a copied old page never overwrites a newer live write.
+// Writes a page of copied rows to one node in one transaction. DO NOTHING keeps whatever is there: a copied old page never overwrites a newer live write. version and withdrawn_at are copied too, so a withdrawn fire stays withdrawn on the new copy.
 func copyOn(ctx context.Context, db *sql.DB, rows []HazardEvent) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -219,11 +220,11 @@ func copyOn(ctx context.Context, db *sql.DB, rows []HazardEvent) error {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO hazard_events
     (hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-     latitude, longitude, occurred_at, ingested_at, attributes, shard)
-VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::jsonb, $12::smallint)
+     latitude, longitude, occurred_at, ingested_at, attributes, shard, version, withdrawn_at)
+VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11::jsonb, $12::smallint, $13, $14::timestamptz)
 ON CONFLICT DO NOTHING`,
 			h.HazardID, h.Source, h.SourceRefID, h.HazardType, h.Severity, h.AreaName,
-			h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID)); err != nil {
+			h.Latitude, h.Longitude, h.OccurredAt, h.IngestedAt, string(raw), shardOf(h.HazardID), h.Version, h.WithdrawnAt); err != nil {
 			return err
 		}
 	}
@@ -231,11 +232,11 @@ ON CONFLICT DO NOTHING`,
 	return tx.Commit()
 }
 
-// One shard's source_ref_id values from one node for a source, in byte order. COLLATE "C" matters: the default collation is not byte order.
+// One shard's live source_ref_id values from one node for a source, in byte order. COLLATE "C" matters: the default collation is not byte order. Withdrawn rows are left out, as in the audit list.
 func idsShardOn(ctx context.Context, db *sql.DB, shard int, source string) ([]string, error) {
 	rows, err := db.QueryContext(ctx, `
 SELECT source_ref_id FROM hazard_events
-WHERE shard = $1 AND source = $2::text
+WHERE shard = $1 AND source = $2::text AND withdrawn_at IS NULL
 ORDER BY source_ref_id COLLATE "C"`, shard, source)
 	if err != nil {
 		return nil, err

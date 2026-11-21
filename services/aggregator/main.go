@@ -1,4 +1,4 @@
-// Command aggregator polls BMKG, PVMBG and Sensor Pantai, stores to the Canonical Store and publishes to the broker.
+// Command aggregator polls BMKG, PVMBG and Sensor Pantai, reads the satellite feed, stores to the Canonical Store and publishes to the broker.
 package main
 
 import (
@@ -276,6 +276,11 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		return err
 	}
 
+	sat, err := loadSatelitConfig()
+	if err != nil {
+		return err
+	}
+
 	rabbitURL := os.Getenv("RABBITMQ_URL")
 	if rabbitURL == "" {
 		return errors.New("RABBITMQ_URL must be set")
@@ -358,6 +363,28 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		wg.Go(func() { p.run(ctx) })
 	}
 
+	var satStats *satelitStats
+
+	if sat.enabled {
+		// Its own publisher: this one never drops and reports confirms, so the bookmark can wait for the broker.
+		satPub := newPublisher(dialAMQP(rabbitURL, exchange), defaultPublishBuffer)
+
+		pubWG.Go(func() { satPub.run(pubCtx) })
+
+		sp, err := newSatelitPipeline(sat, upsert, db, satPub)
+		if err != nil {
+			return err
+		}
+
+		satLease := newElector(sourceSatelit, lc, pgLease{db: db.coordDB()})
+		sp.onFenced = satLease.fence
+		satStats = sp.stats
+
+		electors = append(electors, satLease)
+
+		wg.Go(func() { satLease.run(ctx, sp.work) })
+	}
+
 	var rb *rebalancer
 
 	var rbLease *elector
@@ -429,6 +456,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		api.fields.writeMetrics(w)
 		failed.write(r.Context(), w)
 		api.replay.writeMetrics(w)
+		satStats.writeMetrics(w)
 
 		if rb != nil {
 			rb.writeMetrics(w, rbLease.isLeader.Load() == 1)

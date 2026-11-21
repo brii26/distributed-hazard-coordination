@@ -24,6 +24,10 @@ data:
   CB_OPEN_DURATION_MS: "10000"
   AGGREGATOR_MAX_INFLIGHT_REQUESTS: "100"
   DB_POOL_SIZE: "20"
+  # Satellite fires (P4). Turn on in exactly one deployment: the feed allows one stream per group, and a second evicts the first.
+  SATELIT_ENABLED: "false"
+  SATELLITE_BASE_URL: https://satellite.naufarrel.dev
+  SATELIT_LATENESS: 12h
   # Polling lease
   LEASE_TTL: 15s
   LEASE_RENEW_INTERVAL: 3s
