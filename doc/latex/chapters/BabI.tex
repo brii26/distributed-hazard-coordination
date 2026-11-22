@@ -74,6 +74,7 @@ RabbitMQ \textit{fanout exchange}, \textit{queue} durable per \textit{consumer},
 \hline
 Kolom JSONB \texttt{attributes} untuk field tak dikenal & Dipertahankan & Tetap menyerap field baru. Yang berubah adalah kebijakan skema yang kini menolak rekaman PVMBG yang tidak memuat field kontrak. & \texttt{doc/P3\_SCHEMA\_POLICY.md}, Bab XIII \\
 \hline
+Tidak ada jalur laporan Tim Lapangan & Ditambah & Problem 3 meminta laporan lapangan yang tidak hilang walau penerimanya mati. Client-Facing API menerima \texttt{POST /field-reports}, membalas 202 sesudah \textit{broker} mengonfirmasi, dan \texttt{field-report-processor} menyimpannya secara idempoten. & \texttt{services/field-report-processor}, Bab XIII \\
+\hline
 \end{longtable}
 
-\ph{Pastikan baris ini cocok dengan perubahan yang dibuat dua bab problem lain (isu \#331 sampai \#333) dan tambahkan baris bila ada keputusan Milestone 1 lain yang berubah, misalnya jalur laporan Tim Lapangan}
