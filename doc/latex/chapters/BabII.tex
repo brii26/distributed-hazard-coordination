@@ -76,11 +76,11 @@ Konfigurasi bawaan skrip pembuat cluster (\texttt{doc/TOPOLOGY.md}, nilai bawaan
 \textbf{Node} & \textbf{Peran} & \textbf{Jenis} & \textbf{Host fisik} & \textbf{vCPU} & \textbf{RAM} \\
 \hline
 \endhead
-node-a & control plane dan worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+node-a & control plane dan worker & VM (VirtualBox) & host 1 & 2 & 2048 MiB \\
 \hline
-node-b & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+node-b & worker & VM (VirtualBox) & host 1 & 2 & 2048 MiB \\
 \hline
-node-c & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+node-c & worker & VM (VirtualBox) & host 1 & 2 & 2048 MiB \\
 \hline
 \end{longtable}
 
@@ -89,11 +89,11 @@ node-c & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} 
 \textbf{Host} & \textbf{CPU} & \textbf{Thread} & \textbf{RAM} & \textbf{OS} & \textbf{Hypervisor} \\
 \hline
 \endhead
-host 1 & \ph{dari run} & \ph{dari run} & \ph{dari run} & \ph{dari run} & VirtualBox \ph{versi} \\
+host 1 & AMD Ryzen 5 5600H & 12 & 15 GiB & NixOS 26.11, kernel 6.18.54 & VirtualBox 7.2.18 \\
 \hline
 \end{longtable}
 
-Tabel di atas adalah bentuk keluaran \texttt{topology.sh} dengan nilai yang belum diketahui ditandai. \ph{Jalankan deploy/cluster/topology.sh pada run akhir, tempel keluarannya (tanggal deklarasi, tabel node, tabel host, versi k3s) menggantikan kedua tabel ini, dan salin teks yang sama ke deklarasi topologi di README} Bila ada node di mesin lain (bonus host fisik, isu \#325), baris mesin itu ditambahkan manual sesuai catatan di akhir keluaran skrip.
+Kedua tabel di atas adalah keluaran \texttt{deploy/cluster/topology.sh} pada 22 November 2026. Ketiga node memakai kernel 6.8.0-147-generic dan k3s v1.37.2+k3s1. Bila ada node di mesin lain (bonus host fisik, isu \#325), baris mesin itu ditambahkan manual sesuai catatan di akhir keluaran skrip.
 
 \section{Antarmuka dan Model Data}
 
