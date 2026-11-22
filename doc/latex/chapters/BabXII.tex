@@ -160,9 +160,7 @@ Pilihan kedua dipakai karena Postgres sudah menjadi teknologi inti sistem dan me
 
 Subbab ini menjawab butir 4 ``Di laporan''. Alat yang dipakai di repositori adalah k6, dijalankan dari \textit{image} Docker \texttt{grafana/k6} (variabel \texttt{K6\_IMAGE} dapat mengganti versinya) lewat \texttt{tests/load/run.sh}, dengan skrip uji \texttt{tests/load/p2.js}. Skrip Milestone 1 itu menjalankan tiga skenario terhadap \texttt{/hazards}: \texttt{bmkg\_only} (20 permintaan per detik selama 30 detik pada tipe seismik dengan ambang p95 di bawah 300 ms sementara PVMBG menjawab setelah 3 detik), \texttt{volcanic\_bg} (10 permintaan per detik latar belakang), dan \texttt{mixed} (50 koneksi selama 60 detik, ambang tingkat gagal di bawah 1\%, dengan 429 sebagai penolakan terkontrol yang tidak dihitung gagal). Ringkasan disimpan di \texttt{tests/load/results/} dan ambang yang gagal membuat skrip keluar dengan status tidak nol.
 
-Konfigurasi Milestone 2 menurut spesifikasi adalah paling sedikit 10.000 \textit{virtual user} selama paling sedikit 120 detik, dengan jumlah replika diubah 3, 5, lalu 2 selama uji, dan tingkat galat di luar penolakan terkontrol di bawah 1\%. Skrip uji yang memenuhi konfigurasi itu, jalur perubahan jumlah replika, dan target alamat pada \textit{cluster} belum ada di repositori pada \textit{commit} ini karena \texttt{p2.js} memakai 50 koneksi pada \texttt{docker compose} lokal. Bagian ini harus diisi setelah skrip M2 dibuat.
-
-\ph{Isi dengan konfigurasi M2 yang sebenarnya: nama berkas skrip, executor dan jumlah VU, durasi, ambang, URL target pada \textit{cluster}, perintah mengubah replika (\texttt{kubectl scale deployment/aggregator -{}-replicas=N}) beserta waktunya, versi k6, dan mesin penghasil beban. Jangan menulis angka sebelum skrip ada.}
+Konfigurasi Milestone 2 menurut spesifikasi adalah paling sedikit 10.000 \textit{virtual user} selama paling sedikit 120 detik, dengan jumlah replika diubah 3, 5, lalu 2 selama uji, dan tingkat galat di luar penolakan terkontrol di bawah 1\%. Skripnya ada di repositori: \texttt{tests/load/p2-k8s.js} (k6, penolakan 429 dihitung terpisah dari galat) dijalankan oleh \texttt{tests/load/p2-k8s.sh}, yang menaikkan batas laju dan masa berlaku token selama uji, mengubah replika Aggregator 3, 5, 2, lalu 3 di tengah masa tahan, dan sesudahnya memeriksa checksum Audit API serta log \textit{mock}. \texttt{tests/load/p2-ratio.sh} menjalankan konfigurasi yang sama dengan 1 dan 3 replika lalu menghitung rasionya. Keduanya memakai \textit{image} \texttt{grafana/k6:1.4.2} dan menolak berjalan bila memori bebas mesin penghasil beban terlalu kecil. Skrip itu baru diperiksa tanpa beban penuh (\texttt{k6 inspect}, \texttt{shellcheck}, dan 5 VU terhadap server palsu). Uji 10.000 VU pada \textit{cluster} belum dijalankan.
 
 \section{Batasan yang Disadari}
 
@@ -174,42 +172,66 @@ Konfigurasi Milestone 2 menurut spesifikasi adalah paling sedikit 10.000 \textit
 \item Acquire yang jawabannya hilang tidak diverifikasi dengan \textit{renew}. \textit{Instance} itu tetap pengikut dan baru dapat memegang \textit{lease} setelah TTL habis. Ini penundaan yang diterima.
 \item Kursor BMKG dan PVMBG adalah \texttt{max(occurred\_at)} pada Canonical Store, dan bergantung pada asumsi bahwa timestamp sumber tidak mundur. Sensor Pantai memakai kursor di \texttt{source\_cursors}. Satu permintaan dapat terulang di sekitar \textit{failover}.
 \item Hasil penyebaran \textit{pod} ke \textit{node} berbeda tidak dijamin, karena aturannya lunak.
-\item \textit{Rolling update} diatur \texttt{maxUnavailable: 0}, \texttt{maxSurge: 1}, dan \texttt{preStop} \textit{sleep} 5 detik. Pelepasan \textit{lease} saat SIGTERM sudah ada pada kode, tetapi kriteria 8 (ganti versi tanpa permintaan gagal saat uji beban) belum dibuktikan.
+\item \textit{Rolling update} diatur \texttt{maxUnavailable: 0}, \texttt{maxSurge: 1}, dan \texttt{preStop} \textit{sleep} 5 detik. Pelepasan \textit{lease} saat SIGTERM sudah ada pada kode, dan kriteria 8 diuji dengan 50 permintaan per detik selama 60 detik, bukan 10.000 VU (subbab Bukti).
 \item Dokumen rancangan menyebut \textit{deadline} pembaruan, TTL, dan \textit{timeout} basis data sebagai variabel terpisah. Pada kode hanya \texttt{LEASE\_TTL} dan \texttt{LEASE\_RENEW\_INTERVAL} yang dapat diubah, sedangkan \textit{deadline} sama dengan dua kali interval dan \textit{timeout} basis data tetap 2 detik.
 \end{itemize}
 
 \section{Bukti}
 
-Bukti belum diambil. Setiap kotak merah menyebut apa yang harus dilampirkan dan sumbernya, dan akan terganti gambar sungguhan begitu \textit{file} bernama sama ditaruh di \texttt{doc/latex/figures/bukti/}. Tidak ada angka atau keluaran yang ditulis sebelum bukti ada. Seluruh \textit{kubectl} dijalankan pada \textit{cluster} demo oleh anggota kelompok, bukan oleh penulis laporan ini.
+Semua bukti diambil pada \textit{cluster} k3s tiga VM (node-a, node-b, node-c) pada 22 November 2026, dengan skenario di \texttt{tests/scenarios/} yang menjalankan Tester Agent latihan. Gambar berisi keluaran asli skrip. Bukti ini tidak lewat jalur CI dan tidak dijalankan pada \textit{cluster} demo. Dua kriteria (6 dan 7) belum punya bukti dan tetap berupa kotak merah.
 
 \subsection{Kriteria 1: Tiga Instance di Node Berbeda}
 
-\buktiph{p2-k1-instance.png}{Tiga replika Aggregator tersebar dan titik masuk hanya mengarahkan ke \textit{instance} sehat}{\texttt{kubectl get pods -o wide -n sistem-informasi-kebencanaan-bnpb -l role=aggregator} (kolom NODE berbeda), \texttt{kubectl get endpoints aggregator-grpc} sebelum dan sesudah satu \textit{pod} dibuat tidak sehat.}{perintah \texttt{kubectl} pada \textit{cluster} demo.}
+Tiga replika Aggregator berjalan dan titik masuk gRPC mengarah ke ketiganya. Pada gambar ini dua replika berada di node-c dan satu di node-b, tidak ada yang di node-a. Penyebarannya memakai \textit{topology spread} lunak (\texttt{ScheduleAnyway}), jadi tidak dijamin merata. Tiga kali \textit{rollout restart} berturut-turut menghasilkan sebaran 1 dan 2 di dua node, tiga di node-b, lalu 1 dan 2 lagi. Memori node-a sudah terpakai 91\% oleh \textit{request}, sehingga replika tidak ditaruh di sana. Kriteria 1 hanya terpenuhi dalam arti paling sedikit dua node berbeda, dan tidak selalu.
+
+\buktiph{p2-k1-instance.png}{Tiga replika Aggregator pada dua node dan ketiga alamatnya siap di EndpointSlice \texttt{aggregator-grpc}}{hasil run skrip pada cluster.}{skenario di tests/scenarios.}
 
 \subsection{Kriteria 2: Setiap Sumber Diambil Tepat Sekali}
 
-\buktiph{p2-k2-sekali.png}{Satu pemimpin per sumber dan permintaan upstream tidak berlipat}{\texttt{lease\_is\_leader\{source\}} dan \texttt{lease\_token\{source\}} dari \texttt{/metrics} ketiga replika (hanya satu bernilai 1 per sumber), penghitungan baris unik di Canonical Store per \texttt{source\_ref\_id}, dan log \textit{mock} BMKG dan PVMBG (\texttt{kubectl logs}) yang menunjukkan jumlah permintaan per interval sama dengan satu \textit{poller}.}{\texttt{/metrics} Aggregator, \texttt{psql} pada Canonical Store, \texttt{kubectl logs deployment/bmkg-mock} dan \texttt{deployment/pvmbg-mock}, serta \texttt{tests/scenarios/audit-checksum.sh}.}
+Pada \texttt{/metrics} ketiga replika, hanya satu yang bernilai \texttt{lease\_is\_leader} 1 untuk BMKG, PVMBG, dan Sensor Pantai, dengan \textit{token} 85, 61, dan 103. Dua replika lain bernilai 0. Selama 2 menit, \textit{mock} BMKG menerima 41 permintaan \texttt{/seismic-events} dan 41 \texttt{/tsunami-warnings}, dan \textit{mock} PVMBG 42 permintaan \texttt{/volcanic-reports}. Dengan \textit{interval} 3 detik, satu \textit{poller} menghasilkan sekitar 40 permintaan dalam 2 menit, jadi permintaan tidak berlipat tiga. Tidak ada \textit{source\_ref\_id} ganda di Audit API pada ketiga sumber (lihat gambar kriteria 3).
+
+\buktiph{p2-k2-sekali.png}{Satu pemimpin per sumber dan jumlah permintaan ke \textit{mock} dalam 2 menit}{hasil run skrip pada cluster.}{skenario di tests/scenarios.}
 
 \subsection{Kriteria 3: Pengambilalihan dalam 60 Detik}
 
-\buktiph{p2-k3-failover.png}{Pemimpin dimatikan dan pengambilalihan terjadi dalam 60 detik tanpa celah dan duplikat}{log \texttt{lease acquired} dengan \texttt{takeover=true} dan \texttt{epoch} baru, waktu dari aksi Tester Agent sampai \textit{poll} pertama pemimpin baru, \texttt{lease\_takeovers\_total}, serta perbandingan \texttt{count} dan checksum Audit API sebelum dan sesudah.}{log Tester Agent (\texttt{kubectl logs -n tester-agent daemonset/tester-agent}), \texttt{kubectl logs} Aggregator (filter \texttt{"lease"}), \texttt{kubectl exec -n tester-agent daemonset/tester-agent -{}- /app run practice <nama>}.}
+Skenario \texttt{kill-leader} menghapus \textit{pod} pemegang \textit{lease}. Untuk ketiga sumber, pemegang baru dengan \textit{epoch} lebih tinggi muncul dalam 17 detik (batas 60 detik), dan waktu terlama tanpa pemegang yang sah 4 detik (batas 20 detik, yaitu TTL 15 detik ditambah 5). \textit{Epoch} tidak pernah turun (BMKG 81 ke 82, PVMBG 57 ke 58, Sensor Pantai 99 ke 100). Tidak ada \textit{source\_ref\_id} ganda dan tidak ada data hilang: 4.207 kejadian BMKG, 4.068 PVMBG, dan 43.807 Sensor Pantai, dan checksum Audit API sama dengan SHA-256 dari seluruh id yang dibaca per halaman. Hasil: 27 PASS, 0 FAIL. \texttt{fenced\_writes\_total} tidak naik pada \textit{run} ini, jadi fencing tidak terpakai di sini.
+
+Skenario ini bergantung pada log \textit{pod} yang memuat baris \texttt{lease acquired}. Pada \textit{pod} yang sudah lama berjalan, log itu sudah dirotasi dan \textit{run} pertama gagal karena pemegang tidak dapat dipetakan ke \textit{pod}. \textit{Run} yang dilaporkan dijalankan setelah Aggregator di-\textit{restart}.
+
+\buktiph{p2-k3-failover.png}{Skenario \texttt{kill-leader}: 27 PASS, pengambilalihan 17 detik}{hasil run skrip pada cluster.}{skenario di tests/scenarios.}
 
 \subsection{Kriteria 4: Jam Bergeser}
 
-\buktiph{p2-k4-clock.png}{Jam \textit{node} digeser +45 detik lalu -30 detik tanpa dua pemimpin yang menyimpan pada periode yang sama}{log Tester Agent yang mencatat pergeseran jam, \texttt{lease\_token} yang hanya naik dan satu pemimpin, \texttt{fenced\_writes\_total} bila ada penulisan ditolak, dan pemeriksaan bahwa tidak ada \textit{source\_ref\_id} ganda pada Canonical Store. Ulangi dengan jam digeser pada \textit{node} \texttt{coordination-db} dan catat dampaknya pada waktu pengambilalihan.}{Tester Agent, \texttt{/metrics}, dan \texttt{psql}.}
+Skenario \texttt{clock-skew} menggeser jam node. \textit{Epoch} tetap (BMKG 79, PVMBG 55, Sensor Pantai 97), waktu tanpa pemegang yang sah 0 detik, dan pada BMKG dan PVMBG hanya satu \textit{pod} yang menyimpan baris selama \textit{run}. Sensor Pantai tidak menyimpan baris baru pada periode itu, jadi pemeriksaan satu penulis tidak membandingkan apa pun untuknya (INFO pada gambar). Tidak ada duplikat atau data hilang. Hasil: 23 PASS, 0 FAIL.
+
+Pergeseran jam pada skenario ini tidak membuat \textit{lease} berpindah, sehingga \textit{run} ini menunjukkan bahwa pergeseran tidak menimbulkan dua pemimpin, bukan bahwa jam yang bergeser memaksa pengambilalihan.
+
+\buktiph{p2-k4-clock.png}{Skenario \texttt{clock-skew}: 23 PASS, \textit{epoch} tidak berubah}{hasil run skrip pada cluster.}{skenario di tests/scenarios.}
 
 \subsection{Kriteria 5: Node Dibekukan}
 
-\buktiph{p2-k5-freeze.png}{Pemimpin dibekukan lebih lama dari batas lalu bangun, tidak ada penyimpanan sesudah bangun}{log \texttt{lease lost} atau \texttt{fenced} dari \textit{instance} yang bangun, \texttt{fenced\_writes\_total} naik, \texttt{write\_fence.max\_token} pada tiap Canonical Store, dan jumlah baris yang disimpan oleh \textit{epoch} lama sesudah waktu bangun (harus 0, atau dicatat apa adanya bila bukan).}{VM dibekukan langsung oleh anggota kelompok sesuai ketentuan spesifikasi, \texttt{kubectl logs}, dan \texttt{psql} pada tiap \textit{pod} \textit{store}.}
+Tester Agent tidak punya skenario freeze, jadi node-b dibekukan dengan \texttt{VBoxManage controlvm node-b pause} lalu dilanjutkan dengan \texttt{resume} lewat \texttt{FREEZE\_NODE} dan \texttt{NODE\_FREEZE\_CMD} (prosedur di \texttt{doc/P2\_FREEZE\_TEST.md}). Setelah pembekuan, pemegang baru dengan \textit{epoch} lebih tinggi muncul dalam 33 detik untuk ketiga sumber, waktu tanpa pemegang yang sah 18 detik (batas 20 detik), dan \textit{epoch} tidak turun. \textit{Pod} yang dibekukan tidak menyimpan apa pun setelah bangun. Hasil: 29 PASS, 0 FAIL.
+
+Batasannya: \textit{pod} yang bangun tidak mencatat \texttt{lease lost}, tidak ada penulisan ditolak (\texttt{fenced\_writes\_total} +0), dan tidak mengambil \textit{lease} lagi. Jadi jalur fencing, yaitu penulisan dari \textit{epoch} lama yang ditolak, tidak teruji oleh \textit{run} ini. Yang terbukti adalah pemegang baru tanpa duplikat. Hanya satu node dibekukan.
+
+\buktiph{p2-k5-freeze.png}{Skenario \texttt{freeze} pada node-b: 29 PASS, pengambilalihan 33 detik}{hasil run skrip pada cluster.}{skenario di tests/scenarios.}
 
 \subsection{Kriteria 6: Load Test dengan Perubahan Replika}
 
-\buktiph{p2-k6-load.png}{Load test 10.000 VU selama 120 detik dengan replika 3, 5, lalu 2}{ringkasan akhir k6 (tingkat galat di luar penolakan terkontrol, hitungan per kode status), grafik jumlah replika terhadap waktu, dan bukti kriteria 2 tetap terpenuhi (tidak ada baris ganda).}{skrip k6 M2 (belum ada, lihat subbab konfigurasi), \texttt{kubectl scale deployment/aggregator -{}-replicas=N}, dan panel Grafana.}
+Belum dijalankan. Skrip \texttt{tests/load/p2-k8s.sh} sudah ada, tetapi 10.000 VU selama 120 detik belum pernah dicoba pada \textit{cluster} ini. Satu \textit{run} yang jauh lebih kecil ada pada kriteria 8.
+
+\buktiph{p2-k6-load.png}{Load test 10.000 VU selama 120 detik dengan replika 3, 5, lalu 2}{ringkasan akhir k6 (tingkat galat di luar penolakan terkontrol, hitungan per kode status), grafik jumlah replika terhadap waktu, dan bukti kriteria 2 tetap terpenuhi (tidak ada baris ganda).}{\texttt{tests/load/p2-k8s.sh} dan panel Grafana.}
 
 \subsection{Kriteria 7: Throughput 3 Instance Dibanding 1}
 
-\buktiph{p2-k7-throughput.png}{Throughput 3 \textit{instance} paling sedikit 2,0 kali 1 \textit{instance}}{dua ringkasan k6 dengan konfigurasi yang sama (replika 1 dan replika 3) dan perhitungan rasionya.}{skrip k6 M2 dan \texttt{kubectl scale}.}
+Belum dijalankan, karena membutuhkan \textit{run} yang sama seperti kriteria 6 dengan 1 dan 3 replika. Tidak ada angka rasio yang ditulis tanpa pengukuran.
+
+\buktiph{p2-k7-throughput.png}{Throughput 3 \textit{instance} paling sedikit 2,0 kali 1 \textit{instance}}{dua ringkasan k6 dengan konfigurasi yang sama (replika 1 dan replika 3) dan perhitungan rasionya.}{\texttt{tests/load/p2-ratio.sh}.}
 
 \subsection{Kriteria 8: Ganti Versi saat Load Test}
 
-\buktiph{p2-k8-rolling.png}{\textit{Rolling update} Aggregator saat uji beban tanpa permintaan gagal}{\texttt{kubectl rollout status deployment/aggregator}, ringkasan k6 selama \textit{rollout} dengan 0 permintaan gagal, dan log pelepasan \textit{lease} dari \textit{pod} yang diganti.}{\texttt{kubectl set image} atau \texttt{kubectl rollout restart deployment/aggregator}, k6, dan \texttt{kubectl logs}.}
+\texttt{rolling-update.sh} menjalankan k6 selama 60 detik pada \texttt{/hazards}, dan 10 detik setelah mulai melakukan \texttt{rollout restart} Aggregator. Hasilnya 3.849 permintaan, 0 gagal, 100\% jawaban 200. \textit{Lease} BMKG, PVMBG, Sensor Pantai, dan \textit{rebalance} berpindah tangan (misalnya BMKG 76 ke 77) tanpa \textit{epoch} turun dan tanpa celah di atas 5 detik, dan tidak ada \textit{source\_ref\_id} ganda. Lease SATELIT dilewati karena sumber itu dimatikan pada \textit{cluster} ini dan tidak punya pemegang.
+
+Beban ini sekitar 64 permintaan per detik, jauh di bawah 10.000 VU, jadi yang dibuktikan adalah \textit{rolling update} tanpa permintaan gagal pada beban ringan. Bukan pada beban spesifikasi.
+
+\buktiph{p2-k8-rolling.png}{\texttt{rolling-update.sh}: 3.849 permintaan, 0 gagal, \textit{lease} berpindah tanpa celah}{hasil run skrip pada cluster.}{skenario di tests/scenarios.}
