@@ -3,7 +3,7 @@
 
 \section{Ringkasan}
 
-Langkah lengkap dan terbaru ada di \texttt{README.md} di akar repositori, dan langkah Kubernetes terperinci di \texttt{docs/DEPLOY.md} serta \texttt{doc/TOPOLOGY.md}. Bab ini meringkas urutannya. Seluruh perintah dijalankan dari direktori utama repositori. \ph{Ganti ringkasan ini dengan rujukan ke bagian deploy di README setelah README memuat satu perintah deploy Kubernetes (saat ini Quick start README masih Compose, isu \#329)}
+Langkah lengkap dan terbaru ada di \texttt{README.md} di akar repositori, dan langkah Kubernetes terperinci di \texttt{docs/DEPLOY.md} serta \texttt{doc/TOPOLOGY.md}. Bab ini meringkas urutannya. Seluruh perintah dijalankan dari direktori utama repositori. Bagian \textit{Kubernetes (Milestone 2)} di README memuat urutan yang sama dalam satu blok perintah dari \textit{fresh clone}.
 
 \section{Menjalankan di Kubernetes}
 
@@ -36,11 +36,18 @@ cp .env.example .env
 deploy/deploy.sh
 \end{codebox}
 
-Nilai \texttt{change-me} di \texttt{.env} diganti dulu. \texttt{deploy.sh} membuat \textit{namespace}, Secret dari \texttt{.env}, ConfigMap skema dan \textit{broker}, menerapkan manifest dengan Kustomize, menunggu tiap \textit{rollout}, lalu menjalankan pemeriksaan label dan sumber daya (\texttt{deploy/check.sh}). Skrip berhenti dengan galat dan daftar pod yang belum Running bila ada yang tidak siap dalam waktu \texttt{TIMEOUT} (bawaan 300 detik per workload). \ph{Tambahkan langkah membangun semua image sekaligus bila README sudah menyediakannya}
+Nilai \texttt{change-me} di \texttt{.env} diganti dulu. \texttt{deploy.sh} membuat \textit{namespace}, Secret dari \texttt{.env}, ConfigMap skema dan \textit{broker}, menerapkan manifest dengan Kustomize, menunggu tiap \textit{rollout}, lalu menjalankan pemeriksaan label dan sumber daya (\texttt{deploy/check.sh}). Skrip berhenti dengan galat dan daftar pod yang belum Running bila ada yang tidak siap dalam waktu \texttt{TIMEOUT} (bawaan 300 detik per workload). Kesebelas \textit{image} dapat dibangun sekaligus dengan satu \textit{loop}:
+
+\begin{codebox}
+for s in aggregator bmkg-mock pvmbg-mock auth-service client-facing-api web-frontend dashboard-updater notifier audit-logger field-report-processor situation-summarizer; do
+  docker build -t 127.0.0.1:5000/$s:0.1.0 services/$s
+  docker push 127.0.0.1:5000/$s:0.1.0
+done
+\end{codebox}
 
 \subsection{Membuka Antarmuka}
 
-Web Frontend dibuka pada NodePort 30080 dan Client-Facing API pada NodePort 30081 di alamat node, misalnya \texttt{http://10.77.0.11:30080} (\texttt{deploy/web-frontend.yaml}, \texttt{deploy/client-facing-api.yaml}). Antarmuka lain tidak dibuka dan dijangkau lewat \texttt{kubectl port-forward}, misalnya \texttt{kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/grafana 3000} untuk Grafana (kata sandi pengguna \texttt{admin} dibuat sekali oleh \texttt{make-secrets.sh}, \texttt{docs/OBSERVABILITY.md}). \ph{Verifikasi alamat dan port pada run akhir dari fresh clone}
+Web Frontend dibuka pada NodePort 30080 dan Client-Facing API pada NodePort 30081 di alamat node, misalnya \texttt{http://10.77.0.11:30080} (\texttt{deploy/web-frontend.yaml}, \texttt{deploy/client-facing-api.yaml}). Antarmuka lain tidak dibuka dan dijangkau lewat \texttt{kubectl port-forward}, misalnya \texttt{kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/grafana 3000} untuk Grafana (kata sandi pengguna \texttt{admin} dibuat sekali oleh \texttt{make-secrets.sh}, \texttt{docs/OBSERVABILITY.md}). Kedua NodePort diperiksa pada klaster tiga VM tanggal 23 November 2026 dengan \texttt{kubectl get svc}: \texttt{web-frontend} 30080 dan \texttt{client-facing-api} 30081.
 
 \subsection{Skenario dan Pengujian}
 
@@ -102,7 +109,7 @@ Batasan yang perlu diketahui pembaca:
 
 \section{Pengembangan Lokal dengan Docker Compose}
 
-Bagian ini sampai akhir bab berasal dari Milestone 1 dan berlaku untuk pengembangan di satu mesin dengan \texttt{docker-compose.yml}. Demo Milestone 2 berjalan di Kubernetes, dan Compose tidak menjalankan fitur replika, shard, maupun \textit{lease}. \ph{Selaraskan bagian Compose ini dengan README setelah isu \#329 (fresh clone verification and README sync) selesai}
+Bagian ini sampai akhir bab berasal dari Milestone 1 dan berlaku untuk pengembangan di satu mesin dengan \texttt{docker-compose.yml}. Demo Milestone 2 berjalan di Kubernetes, dan Compose tidak menjalankan fitur replika, shard, maupun \textit{lease}. Langkahnya sama dengan bagian \textit{Quick start} di README.
 
 
 Prasyarat yang dibutuhkan adalah Go 1.26 atau lebih baru, Docker beserta Docker Compose, \texttt{git}, serta \texttt{curl} dan \texttt{jq} untuk perintah skenario. Dari \textit{clone} baru, sistem dijalankan dengan perintah berikut:
