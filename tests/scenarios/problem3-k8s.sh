@@ -5,12 +5,10 @@
 #   ONLY="1 2" tests/scenarios/problem3-k8s.sh       some scenarios
 #   DRY_RUN=1 tests/scenarios/problem3-k8s.sh        print the plan and every command, touches no cluster
 #
-# 1 additive change accepted, 2 the three incompatible changes parked, 3 retryable failure heals, 4 who may inspect,
-# 5 bad messages crash nothing, 6 replay after adjusting the system, 7 a 202 report is never lost.
-# A FAIL means the implementation is wrong. Exit 2 and NOT RUN mean the script could not run, never a verdict.
-# Needs: kubectl (context of the cluster), curl, jq, base64, sha256sum. The cluster is a local VM, so the script may break the PVMBG mock,
-# stop the field report processor and patch bnpb-config; the exit trap puts all of it back.
+# A FAIL means the implementation is wrong. NOT RUN means the script could not run, never a verdict.
 # Exit code 1 when any check is FAIL, 2 when the cluster is not ready.
+# Needs kubectl on the cluster, curl, jq, base64 and sha256sum. It breaks the PVMBG mock, stops the field report processor
+# and patches bnpb-config, so run it on a cluster nobody else uses. The exit trap puts all of it back.
 set -uo pipefail
 
 DRY_RUN=${DRY_RUN:-0}
@@ -55,10 +53,9 @@ nap() { sleep "$1" & wait $!; }
 
 kc() { kubectl -n "$NS" "$@"; }
 
-# want <what> <got> <expected>
 want() { if [ "$2" = "$3" ]; then pass "$1 ($2)"; else fail "$1: got $2, want $3"; fi }
 
-# until_true <seconds> <cmd...>: runs cmd every 2 s until it succeeds.
+# Runs the command every 2 s until it succeeds or the seconds are up.
 until_true() {
   local end=$((SECONDS + $1))
   shift
@@ -93,9 +90,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 2' INT TERM
 
-# ---------- reaching the cluster ----------
-
-forward() { # forward <target> <local port> <remote port>
+forward() {
   if [ "$DRY_RUN" = 1 ]; then say "[dry-run] kubectl -n $NS port-forward $1 $2:$3"; return 0; fi
   kc port-forward "$1" "$2:$3" >"$WORK/pf-$2.log" 2>&1 &
   PIDS+=("$!")
@@ -134,8 +129,6 @@ prepare() {
   say "cluster ready, run id $RUN"
 }
 
-# ---------- helpers for the scenarios ----------
-
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 login() { code -c "$WORK/$1.jar" -X POST "$API/auth/login" -d "{\"email\":\"$2\",\"password\":\"$3\"}"; }
 ops() { curl -s -b "$WORK/op.jar" "$@"; }
@@ -155,8 +148,6 @@ ensure_accounts() {
   login field field@demo.example field-pass-1 >/dev/null
   : >"$WORK/accounts"
 }
-
-# ---------- scenario 1 ----------
 
 s1() {
   heading "Scenario 1: the source adds a field (accepted change)"
@@ -178,8 +169,6 @@ s1() {
   set_schema '{"version":1}'
 }
 
-# ---------- scenario 2 ----------
-
 # failed_row <message id>: the Operator route's row for that id, found by following the cursor, or nothing.
 failed_row() {
   local cursor="" page row i
@@ -192,7 +181,7 @@ failed_row() {
   done
 }
 
-# round <change> <field pattern in the reason> <marker that must be in the stored payload>
+# Breaks the PVMBG format one way, then checks the parked message: reason, auditor fields and the stored payload.
 s2_round() {
   local change=$1 reason_re=$2 marker=$3 before after row id payload sha
   before=$(parked_count PVMBG)
@@ -231,8 +220,6 @@ s2() {
   want "S2 hazards still served" "$(code -b "$WORK/op.jar" "$API/hazards?type=VOLCANIC&limit=5")" 200
   want "S2 restart counts unchanged" "$(restarts)" "$before_restarts"
 }
-
-# ---------- scenario 3 ----------
 
 all_unprocessed() { audit_get "/internal/audit/unprocessed?limit=1000"; }
 agent_logs() { kubectl -n "$TESTER_NS" logs -l app=tester-agent --tail=-1 --max-log-requests=10 2>/dev/null; }
@@ -291,8 +278,6 @@ s3() {
   want "S3 restart counts do not matter here, hazards still served" "$(code -b "$WORK/op.jar" "$API/hazards?type=VOLCANIC&limit=5")" 200
 }
 
-# ---------- scenario 4 ----------
-
 s4() {
   heading "Scenario 4: who may inspect failed messages"
   if [ "$DRY_RUN" = 1 ]; then say "[dry-run] GET $API/admin/failed-messages as Operator, Media, Tim Lapangan and without a cookie; the audit route with a cookie"; return 0; fi
@@ -307,14 +292,14 @@ s4() {
 
 queue_depth() { curl -s -u "$MQ_USER:$MQ_PASS" "$MQ/api/queues/%2F/field-reports" | jq '.messages // 0'; }
 
-# publish <file with the body> <message id>: puts the raw bytes of the file on the field-reports queue through the broker's HTTP API.
+# Puts the raw bytes of a file on the field-reports queue through the broker's HTTP API.
 publish() {
   base64 -w0 <"$1" >"$WORK/b64"
   printf '{"properties":{"delivery_mode":2,"message_id":"%s"},"routing_key":"field-reports","payload_encoding":"base64","payload":"%s"}' "$2" "$(cat "$WORK/b64")" >"$WORK/pub.json"
   curl -s -u "$MQ_USER:$MQ_PASS" -X POST "$MQ/api/exchanges/%2F/amq.default/publish" -H 'content-type: application/json' --data-binary "@$WORK/pub.json" | jq -r '.routed'
 }
 
-# bad_body <kind> <file>: writes one bad input of the four kinds the M2 text lists.
+# Writes one bad input of the four kinds the M2 text lists.
 bad_body() {
   case $1 in
     truncated) printf '{"description":"cut in the mi' >"$2" ;;
@@ -324,7 +309,7 @@ bad_body() {
   esac
 }
 
-s5_source() { # s5_source <kind> <reason code>
+s5_source() {
   local kind=$1 code=$2 before after newest_before
   before=$(unprocessed PVMBG | jq --arg c "$code" '[.items[] | select(.reason | startswith($c))] | length')
   newest_before=$(ops "$API/hazards?type=VOLCANIC&limit=1" | jq -r '.data[0].source_ref_id // ""')
@@ -406,7 +391,7 @@ s6() {
   want "S6 repeated source_ref_id among the audit events" "$dup" 0
   want "S6 a second replay recovers nothing more" "$(replay | jq .recovered)" 0
 }
-# send_report <index>: one report with its own key, retried with the same key until it gets a 202. Appends "key code seconds" to sent.log.
+# Sends one report with its own key, retried with the same key until it gets a 202. Appends "key code seconds" to sent.log.
 send_report() {
   local i=$1 key="$RUN-r$1" out tries=0
   while [ "$tries" -lt 40 ]; do
@@ -423,7 +408,15 @@ send_report() {
 }
 
 # The report id is derived from the Idempotency-Key, so a stored report is matched by its description "report <i> of <run>".
-stored_indexes() { # the index i of every report of this run on every store node, one line per row
+# field_report_counters: new and duplicate counts summed over every Aggregator pod, through the API server proxy.
+field_report_counters() {
+  local pod
+  for pod in $(kc get pods -l role=aggregator -o name | cut -d/ -f2); do
+    kubectl get --raw "/api/v1/namespaces/$NS/pods/$pod:8091/proxy/metrics" 2>/dev/null
+  done | awk -F'[{}" =]+' '/^aggregator_field_reports_total/ { n[$3] += $NF } END { printf "new=%d duplicate=%d", n["new"], n["duplicate"] }'
+}
+
+stored_indexes() {
   local pod user
   user=$(secret store-credentials user)
   for pod in $(kc get pods -l app=store -o name); do
@@ -436,7 +429,7 @@ s7() {
   if [ "$DRY_RUN" = 1 ]; then say "[dry-run] scale field-report-processor to 0, send 50 reports and time them, scale back, send the rest while deleting the processor, an Aggregator and a Client-Facing API pod, then compare the 202 keys with the stored report ids"; return 0; fi
   ensure_accounts
   : >"$WORK/sent.log"; : >"$WORK/failed.log"
-  local before_restarts replicas i third p95 slow stored accepted
+  local before_restarts replicas i third p95 slow accepted
   before_restarts=$(restarts)
   replicas=$(kc get deployment field-report-processor -o 'jsonpath={.spec.replicas}')
   RESTORE_PROCESSOR=$replicas
@@ -470,7 +463,7 @@ s7() {
   want "S7 distinct stored reports equal the keys that got a 202 ($accepted)" "$(wc -l <"$WORK/stored.idx" | tr -d ' ')" "$accepted"
   want "S7 acknowledged reports missing from the store" "$(comm -23 "$WORK/accepted.idx" "$WORK/stored.idx" | wc -l | tr -d ' ')" 0
   want "S7 reports stored that no 202 acknowledged" "$(comm -13 "$WORK/accepted.idx" "$WORK/stored.idx" | wc -l | tr -d ' ')" 0
-  info "S7 duplicates absorbed: $(curl -s "$AUDIT/metrics" | grep '^aggregator_field_reports_total' | tr '\n' ' ')"
+  info "S7 field reports the Aggregators answered as new or duplicate since their start: $(field_report_counters)"
   info "S7 restart counts before: $before_restarts"
   info "S7 restart counts after:  $(restarts)"
 }
