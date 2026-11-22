@@ -25,11 +25,27 @@ step "schema and broker ConfigMaps"
 step "manifests"
 kubectl apply -k "$HERE"
 
+# rollout status refuses OnDelete DaemonSets (the store), so wait for every pod to be ready instead.
+wait_ready() {
+  local w=$1 end d r
+  if [ "$(kubectl get "$w" --namespace "$NAMESPACE" -o jsonpath='{.spec.updateStrategy.type}' 2>/dev/null)" != OnDelete ]; then
+    kubectl rollout status "$w" --namespace "$NAMESPACE" --timeout "$TIMEOUT"
+    return
+  fi
+  end=$((SECONDS + ${TIMEOUT%s}))
+  while [ "$SECONDS" -lt "$end" ]; do
+    read -r d r < <(kubectl get "$w" --namespace "$NAMESPACE" -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady}')
+    [ "${d:-0}" -gt 0 ] && [ "$d" = "$r" ] && return 0
+    sleep 3
+  done
+  return 1
+}
+
 step "waiting for rollouts (timeout $TIMEOUT each)"
 failed=()
 while IFS= read -r w; do
   [ -n "$w" ] || continue
-  if kubectl rollout status "$w" --namespace "$NAMESPACE" --timeout "$TIMEOUT"; then
+  if wait_ready "$w"; then
     echo "ok     $w"
   else
     echo "FAILED $w" >&2
