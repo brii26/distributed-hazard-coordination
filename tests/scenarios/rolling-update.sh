@@ -146,7 +146,12 @@ lease_rows >"$work/lease-after.csv"
 cat "$work/lease-after.csv"
 kill "${pids[1]}" 2>/dev/null
 
-while IFS=, read -r src before _; do
+while IFS=, read -r src before held; do
+  if [ "$held" != 1 ]; then
+    echo "SKIP: $src lease was not held before the run (source off), nothing to hand over"
+    continue
+  fi
+
   after=$(awk -F, -v s="$src" '$1 == s { print $2 }' "$work/lease-after.csv")
   expect_true "$src lease changed hands (epoch $before to $after)" test "${after:-0}" -gt "$before"
 
