@@ -38,7 +38,7 @@ Jalur \textit{client} dimulai dari \textit{browser} ke \textit{Web Frontend} ata
 
 \subsection{Kepemilikan Storage dan Batas Isolasi}
 
-Ketentuan Milestone 2 meminta kepemilikan \textit{storage} oleh satu \textit{service} ditegakkan oleh platform. Di Milestone 1 ini dilakukan dengan \textit{network} Compose yang bersifat \textit{internal}. Di Kubernetes, \texttt{deploy/networkpolicy.yaml} memuat tiga NetworkPolicy ingress: pod \textit{store} hanya menerima koneksi dari pod berlabel \texttt{role=aggregator} (ditambah rentang alamat node 10.77.0.0/24 agar Tester Agent yang memakai \texttt{hostNetwork} tetap dapat menjangkaunya), \textit{user-db} hanya dari \textit{auth-service}, dan \textit{coordination-db} hanya dari \textit{Aggregator}. Policy tidak memuat aturan egress, sehingga DNS dan \textit{probe} \textit{kubelet} tidak terganggu. \ph{Tambahkan bukti uji koneksi yang ditolak dari pod lain setelah run akhir}
+Ketentuan Milestone 2 meminta kepemilikan \textit{storage} oleh satu \textit{service} ditegakkan oleh platform. Di Milestone 1 ini dilakukan dengan \textit{network} Compose yang bersifat \textit{internal}. Di Kubernetes, \texttt{deploy/networkpolicy.yaml} memuat tiga NetworkPolicy ingress: pod \textit{store} hanya menerima koneksi dari pod berlabel \texttt{role=aggregator} (ditambah rentang alamat node 10.77.0.0/24 agar Tester Agent yang memakai \texttt{hostNetwork} tetap dapat menjangkaunya), \textit{user-db} hanya dari \textit{auth-service}, dan \textit{coordination-db} hanya dari \textit{Aggregator}. Policy tidak memuat aturan egress, sehingga DNS dan \textit{probe} \textit{kubelet} tidak terganggu. Uji pada klaster lokal 22 November 2026 dengan \texttt{nc -z -w 3} dari dalam \textit{pod}: \texttt{auth-service} ke \texttt{user-db:5432} terbuka, sedangkan \texttt{client-facing-api}, \texttt{notifier}, dan \texttt{web-frontend} ke \texttt{user-db:5432} ditolak. \texttt{web-frontend} ke \texttt{client-facing-api:8080} terbuka.
 
 \section{Diagram Deployment}
 
@@ -76,11 +76,11 @@ Konfigurasi bawaan skrip pembuat cluster (\texttt{doc/TOPOLOGY.md}, nilai bawaan
 \textbf{Node} & \textbf{Peran} & \textbf{Jenis} & \textbf{Host fisik} & \textbf{vCPU} & \textbf{RAM} \\
 \hline
 \endhead
-node-a & control plane dan worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+node-a & control plane dan worker & VM (VirtualBox) & host 1 & 2 & 2048 MiB \\
 \hline
-node-b & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+node-b & worker & VM (VirtualBox) & host 1 & 2 & 2048 MiB \\
 \hline
-node-c & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} \\
+node-c & worker & VM (VirtualBox) & host 1 & 2 & 2048 MiB \\
 \hline
 \end{longtable}
 
@@ -89,11 +89,11 @@ node-c & worker & VM (VirtualBox) & \ph{host 1} & \ph{dari run} & \ph{dari run} 
 \textbf{Host} & \textbf{CPU} & \textbf{Thread} & \textbf{RAM} & \textbf{OS} & \textbf{Hypervisor} \\
 \hline
 \endhead
-host 1 & \ph{dari run} & \ph{dari run} & \ph{dari run} & \ph{dari run} & VirtualBox \ph{versi} \\
+host 1 & AMD Ryzen 7 7730U & 16 & 15 GiB & Arch Linux, kernel 6.18.60-lts & VirtualBox 7.2.22 \\
 \hline
 \end{longtable}
 
-Tabel di atas adalah bentuk keluaran \texttt{topology.sh} dengan nilai yang belum diketahui ditandai. \ph{Jalankan deploy/cluster/topology.sh pada run akhir, tempel keluarannya (tanggal deklarasi, tabel node, tabel host, versi k3s) menggantikan kedua tabel ini, dan salin teks yang sama ke deklarasi topologi di README} Bila ada node di mesin lain (bonus host fisik, isu \#325), baris mesin itu ditambahkan manual sesuai catatan di akhir keluaran skrip.
+Kedua tabel di atas adalah keluaran \texttt{deploy/cluster/topology.sh} pada 22 November 2026. Ketiga node memakai kernel 6.8.0-149-generic dan k3s v1.37.2+k3s1. Bila ada node di mesin lain (bonus host fisik, isu \#325), baris mesin itu ditambahkan manual sesuai catatan di akhir keluaran skrip.
 
 \section{Antarmuka dan Model Data}
 
