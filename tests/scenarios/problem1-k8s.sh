@@ -249,7 +249,7 @@ sWipe() {
     case $? in
       0) pass "$label audit checksum of $src equals an independent SHA-256 over its ids" ;;
       1) fail "$label audit checksum of $src does not match the listed ids (#295)" ;;
-      *) notrun "$label checksum of $src: the data kept moving for 5 tries" ;;
+      *) notrun "$label checksum of $src: the data kept moving for 8 tries" ;;
     esac
   done
   total=$(wc -l <"$WORK/probe.log" | tr -d ' ')
