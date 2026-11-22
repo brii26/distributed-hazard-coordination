@@ -64,7 +64,7 @@ echo "== raising ACCESS_TOKEN_TTL_S $orig_ttl -> $LOAD_TTL_S and RATE_LIMIT_RPS 
 patched=1
 cfg_set "$LOAD_TTL_S" "$LOAD_RATE_RPS"
 
-jwt=$(curl -sf -c - -X POST "$API_URL/auth/login" -d "{\"email\":\"$LOGIN_EMAIL\",\"password\":\"$LOGIN_PASSWORD\"}" -o /dev/null | awk '$6 == "jwt" {print $7}')
+jwt=$(curl -sf --retry 8 --retry-delay 2 --retry-all-errors -c - -X POST "$API_URL/auth/login" -d "{\"email\":\"$LOGIN_EMAIL\",\"password\":\"$LOGIN_PASSWORD\"}" -o /dev/null | awk '$6 == "jwt" {print $7}')
 [ -n "$jwt" ] || { echo "login failed, no jwt cookie" >&2; exit 2; }
 
 cat > "$work/ramp.js" <<JS
@@ -104,7 +104,7 @@ if command -v k6 >/dev/null; then
   k6cmd=(k6 run)
   script="$work/ramp.js"
 else
-  k6cmd=(docker run --rm --network host -v "$work:/w:ro" -e API_URL -e JWT -e PEAK_VUS -e HOLD grafana/k6:1.4.2 run)
+  k6cmd=(docker run --rm --network host -u "$(id -u):$(id -g)" -v "$work:/w:ro" -e API_URL -e JWT -e PEAK_VUS -e HOLD grafana/k6:1.4.2 run)
   script=/w/ramp.js
 fi
 
@@ -113,7 +113,7 @@ idle_ok=1
 idle_end=$((SECONDS + IDLE_PERIOD))
 while [ "$SECONDS" -lt "$idle_end" ]; do
   cur=$(hpa '{.status.currentReplicas}')
-  cpu=$(kubectl -n "$NS" get hpa aggregator --no-headers | awk '{print $3}')
+  cpu=$(kubectl -n "$NS" get hpa aggregator --no-headers | awk '{print $3, $4}')
   printf '%s replicas=%s cpu=%s\n' "$(date +%T)" "${cur:-0}" "$cpu"
   [ "${cur:-0}" -eq "$min" ] || idle_ok=0
   sleep 15
@@ -128,7 +128,7 @@ pids+=("$k6pid")
 peak_seen=$min
 while kill -0 "$k6pid" 2>/dev/null; do
   cur=$(hpa '{.status.currentReplicas}')
-  cpu=$(kubectl -n "$NS" get hpa aggregator --no-headers | awk '{print $3}')
+  cpu=$(kubectl -n "$NS" get hpa aggregator --no-headers | awk '{print $3, $4}')
   printf '%s replicas=%s cpu=%s\n' "$(date +%T)" "${cur:-0}" "$cpu"
   [ "${cur:-0}" -gt "$peak_seen" ] && peak_seen=${cur:-0}
   sleep 15
