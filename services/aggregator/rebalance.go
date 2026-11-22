@@ -37,6 +37,10 @@ type rebalancer struct {
 	setSynced func(ctx context.Context, n *node, shard int) error
 	purge     func(ctx context.Context, n *node, shard int) error
 
+	// Field reports travel with their shard. Left nil by tests that only fake hazard rows.
+	listReports   func(ctx context.Context, n *node, shard int, after string, limit int) ([]reportRow, error)
+	copyReportsTo func(ctx context.Context, n *node, rows []reportRow) error
+
 	pageSize   int
 	pause      time.Duration
 	del        bool
@@ -58,6 +62,10 @@ func newRebalancer(c *cluster, pause time.Duration, del bool) *rebalancer {
 		setSynced: func(ctx context.Context, n *node, shard int) error { return markSyncedOn(ctx, n.db, shard) },
 		purge:     func(ctx context.Context, n *node, shard int) error { return purgeShardOn(ctx, n.db, shard) },
 		rowGauge:  map[string]map[int]int{},
+		listReports: func(ctx context.Context, n *node, shard int, after string, limit int) ([]reportRow, error) {
+			return listReportsOn(ctx, n.db, shard, after, limit)
+		},
+		copyReportsTo: func(ctx context.Context, n *node, rows []reportRow) error { return copyReportsOn(ctx, n.db, rows) },
 	}
 }
 
@@ -323,6 +331,14 @@ func (r *rebalancer) dropDisplaced(ctx context.Context, shard int, own []copyRef
 
 // Copies one shard from src to dst in pages, newest first, with a pause between pages. A retry starts over and skips rows that exist.
 func (r *rebalancer) copyShard(ctx context.Context, shard int, src, dst *node) error {
+	if err := r.copyHazards(ctx, shard, src, dst); err != nil {
+		return err
+	}
+
+	return r.copyReports(ctx, shard, src, dst)
+}
+
+func (r *rebalancer) copyHazards(ctx context.Context, shard int, src, dst *node) error {
 	var after *listPos
 
 	for {
@@ -449,9 +465,20 @@ func scanOn(ctx context.Context, n *node) (map[int]shardStat, error) {
 }
 
 func digestsOn(ctx context.Context, db *sql.DB) (map[int]shardStat, error) {
-	rows, err := db.QueryContext(ctx, `
+	// A shard counts its hazard rows and its field reports together, so a report missing on one owner changes the digest.
+	query := `
 SELECT shard, count(*), md5(string_agg(hazard_id::text, ',' ORDER BY hazard_id))
-FROM hazard_events WHERE shard IS NOT NULL GROUP BY shard`)
+FROM hazard_events WHERE shard IS NOT NULL GROUP BY shard`
+	if hasFieldReports(ctx, db) {
+		query = `
+SELECT shard::int, count(*), md5(string_agg(id, ',' ORDER BY id)) FROM (
+  SELECT shard, hazard_id::text AS id FROM hazard_events WHERE shard IS NOT NULL
+  UNION ALL
+  SELECT shard, 'r:' || report_id FROM field_reports
+) t GROUP BY shard`
+	}
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -528,6 +555,17 @@ DELETE FROM hazard_events WHERE hazard_id IN (SELECT hazard_id FROM hazard_event
 		}
 
 		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+
+	if hasFieldReports(ctx, db) {
+		cctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
+		_, err := db.ExecContext(cctx, `DELETE FROM field_reports WHERE shard = $1::smallint`, shard)
+
+		cancel()
+
+		if err != nil {
 			return err
 		}
 	}
