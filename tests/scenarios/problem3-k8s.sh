@@ -353,22 +353,41 @@ publish() {
   curl -s -u "$MQ_USER:$MQ_PASS" -X POST "$MQ/api/exchanges/%2F/amq.default/publish" -H 'content-type: application/json' --data-binary "@$WORK/pub.json" | jq -r '.routed'
 }
 
-# Writes one bad input of the four kinds the M2 text lists.
+# Writes one bad input of the four kinds the M2 text lists. The run id makes every body new, so a message parked by an
+# earlier run (same bytes, same message id) cannot stand in for this one.
 bad_body() {
   case $1 in
-    truncated) printf '{"description":"cut in the mi' >"$2" ;;
-    deep) { printf '{"description":'; head -c 100 </dev/zero | tr '\0' '['; head -c 100 </dev/zero | tr '\0' ']'; printf '}'; } >"$2" ;;
-    utf8) printf '{"description":"bad \377\376 bytes"}' >"$2" ;;
-    huge) { printf '{"description":"'; head -c 1100000 </dev/zero | tr '\0' 'x'; printf '"}'; } >"$2" ;;
+    truncated) printf '{"description":"%s cut in the mi' "$RUN" >"$2" ;;
+    deep) { printf '{"note":"%s","description":' "$RUN"; head -c 100 </dev/zero | tr '\0' '['; head -c 100 </dev/zero | tr '\0' ']'; printf '}'; } >"$2" ;;
+    utf8) printf '{"description":"%s bad \377\376 bytes"}' "$RUN" >"$2" ;;
+    huge) { printf '{"description":"%s ' "$RUN"; head -c 1100000 </dev/zero | tr '\0' 'x'; printf '"}'; } >"$2" ;;
+  esac
+}
+
+# The bad record the PVMBG mock puts in the middle of its page for deep, utf8 and huge (services/pvmbg-mock/malformed.go).
+mock_bad_record() {
+  case $1 in
+    deep) printf '{"report_id":"MALFORMED-deep","nested":'; head -c 100 </dev/zero | tr '\0' '['; head -c 100 </dev/zero | tr '\0' ']'; printf '}' ;;
+    utf8) printf '{"report_id":"MALFORMED-utf8","note":"\377\376"}' ;;
+    huge) printf '{"report_id":"MALFORMED-huge","note":"'; head -c $((1048576 + 1024)) </dev/zero | tr '\0' 'x'; printf '"}' ;;
   esac
 }
 
 s5_source() {
-  local kind=$1 code=$2 before after newest_before
+  local kind=$1 code=$2 before after newest_before id=""
   before=$(unprocessed PVMBG | jq --arg c "$code" '[.items[] | select(.reason | startswith($c))] | length')
   newest_before=$(ops "$API/hazards?type=VOLCANIC&limit=1" | jq -r '.data[0].source_ref_id // ""')
+  [ "$kind" != truncated ] && id="PVMBG:$(mock_bad_record "$kind" | sha256sum | cut -d' ' -f1)"
   set_malformed "$kind" >/dev/null
-  if until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?source=PVMBG&limit=1000' | jq --arg c '$code' '[.items[] | select(.reason | startswith(\$c))] | length')\" -gt $before ]"; then
+  # truncated cuts a different record each time, so a new row counts. The other kinds serve the same bytes every time:
+  # their one row must be parked with the right code.
+  if [ -n "$id" ]; then
+    if until_true "$WAIT" bash -c "curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?source=PVMBG&limit=1000' | jq -e --arg id '$id' --arg c '$code' 'any(.items[]; .message_id == \$id and .status == \"parked\" and (.reason | startswith(\$c)))' >/dev/null"; then
+      pass "S5 source $kind: the mock's bad record is parked with the code $code"
+    else
+      fail "S5 source $kind: the mock's bad record $id is not parked with the code $code after ${WAIT}s (#302)"
+    fi
+  elif until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?source=PVMBG&limit=1000' | jq --arg c '$code' '[.items[] | select(.reason | startswith(\$c))] | length')\" -gt $before ]"; then
     pass "S5 source $kind: a parked PVMBG message with the code $code"
   else
     fail "S5 source $kind: nothing parked with the code $code after ${WAIT}s (#302)"
@@ -404,6 +423,7 @@ s5() {
   want "S5 queue a good report published" "$(publish "$WORK/good.json" "$RUN-good")" true
   if until_true "$WAIT" bash -c "[ \"\$(curl -s -u '$MQ_USER:$MQ_PASS' '$MQ/api/queues/%2F/field-reports' | jq '.messages // 0')\" = 0 ]"; then pass "S5 queue drained to 0"; else fail "S5 queue still holds $(queue_depth) messages after ${WAIT}s (#306)"; fi
   local parked
+  until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?source=FIELD_REPORT&limit=1000' | jq '[.items[] | select(.status == \"parked\")] | length')\" -ge $((before_ff + 4)) ]"
   parked=$(unprocessed FIELD_REPORT | jq '[.items[] | select(.status == "parked")] | length')
   if [ "$parked" -ge $((before_ff + 4)) ]; then pass "S5 queue: the four bad messages are parked as FIELD_REPORT ($((parked - before_ff)) new)"; else fail "S5 queue: only $((parked - before_ff)) of 4 bad messages parked (#306)"; fi
   say "-- (c) the data source"
