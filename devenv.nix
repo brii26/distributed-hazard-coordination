@@ -48,6 +48,10 @@ in
     pkgs.kubectl
     pkgs.kubeconform
     pkgs.jq
+    pkgs.shellcheck
+    pkgs.openssh
+    pkgs.dosfstools
+    pkgs.mtools
     pkgs.protobuf
     pkgs.protoc-gen-go
     pkgs.protoc-gen-go-grpc
