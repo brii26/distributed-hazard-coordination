@@ -111,3 +111,13 @@ func TestLoadRetryConfig(t *testing.T) {
 		t.Setenv(bad[0], "")
 	}
 }
+
+func TestFailureReasonPrefixOnce(t *testing.T) {
+	if got := failureReason(codeSchema, &IncompatibleSchema{Reason: "schema_incompatible: x"}); got != "schema_incompatible: x" {
+		t.Errorf("schema reason = %q", got)
+	}
+
+	if got := failureReason(codeTimeout, errors.New("slow")); got != "timeout: slow" {
+		t.Errorf("plain reason = %q", got)
+	}
+}

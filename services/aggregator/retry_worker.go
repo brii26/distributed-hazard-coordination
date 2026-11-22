@@ -118,7 +118,7 @@ func (w *retryWorker) recordFailure(ctx context.Context, m failedMessage, err er
 	next := m.Attempts + 1
 	keep := retryable && next < w.cfg.maxAttempts
 
-	if rerr := w.q.recordRetryFailure(ctx, m.MessageID, keep, code+": "+err.Error(), w.cfg.delay(next)); rerr != nil {
+	if rerr := w.q.recordRetryFailure(ctx, m.MessageID, keep, failureReason(code, err), w.cfg.delay(next)); rerr != nil {
 		withID(m.CorrelationID).Warn("retry record failed", "message_id", m.MessageID, "error", rerr.Error())
 
 		return
