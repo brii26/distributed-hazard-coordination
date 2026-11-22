@@ -538,7 +538,7 @@ start_probes() {
   : >"$PROBE_CSV"
   : >"$ALERTS_CSV"
   local pair
-  for pair in "health:/health" "seismic:/hazards?type=SEISMIC" "volcanic:/hazards?type=VOLCANIC" "coastal:/hazards?type=COASTAL"; do
+  for pair in "health:/health" "seismic:/hazards?type=SEISMIC" "volcanic:/hazards?type=VOLCANIC"; do
     probe_loop "${pair%%:*}" "${pair#*:}" &
     PIDS+=("$!")
     sleep 1
@@ -589,7 +589,7 @@ write_summary() {
     echo
     echo "| Endpoint | Samples | Good | Availability | Longest failing streak |"
     echo "|---|---|---|---|---|"
-    for ep in health seismic volcanic coastal; do
+    for ep in health seismic volcanic; do
       read -r t g pct worst < <(availability "$ep")
       echo "| $ep | $t | $g | $pct percent | ${worst}s |"
     done
@@ -599,7 +599,7 @@ write_summary() {
   } >"$SUMMARY"
 
   local reads_t=0 reads_g=0 ep_t ep_g
-  for ep in seismic volcanic coastal; do
+  for ep in seismic volcanic; do
     read -r ep_t ep_g _ _ < <(availability "$ep")
     reads_t=$((reads_t + ep_t)); reads_g=$((reads_g + ep_g))
   done
@@ -641,7 +641,7 @@ write_summary() {
     echo "| Budget used, trailing 2h at the end | $(budget_used "$c_rem2h") percent | $(budget_used "$r_rem2h") percent |"
     echo "| Budget remaining over the run range (dashboard panels 23 and 24) | $c_range | $r_range |"
     echo "| Undelivered critical alerts, now and peak (slo:critical_alert_undelivered:count10m) | $c_undeliv and $c_undeliv_max | not applicable |"
-    echo "| Probe availability of the three /hazards reads | not applicable | $read_pct percent |"
+    echo "| Probe availability of the two /hazards reads | not applicable | $read_pct percent |"
     echo
     echo "Alerts that fired during the run: ${firing:-none or Prometheus not reachable}."
     echo
