@@ -196,6 +196,9 @@ graph TD
   307["#307 F9 P3 end-to-end test script"]
   403["#403 Adjustable PVMBG schema mapping"]
   405["#405 PVMBG mock malformed records switch"]
+  408["#408 Failed message reason has the code twice"]
+  409["#409 Failed messages split across store nodes"]
+  410["#410 P3 script follow-up checks"]
 
   %% P4 satellite feed
   308["#308 G1 read the live satellite feed and recor.."]
@@ -290,6 +293,9 @@ graph TD
   403 -.->|informs, not blocking| 307
   302 --> 405
   405 -.->|informs, not blocking| 307
+  307 -.->|found by the script, not blocking| 408
+  307 -.->|found by the script, not blocking| 409
+  307 -.->|follow-up, not blocking| 410
   309 --> 313
   310 --> 311
   311 --> 312
