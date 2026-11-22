@@ -163,7 +163,7 @@ func (i *ingest) keepRejected(ctx context.Context, res pollResult, events []Haza
 			raws = append(raws, raw)
 		} else if i.fail != nil {
 			_, code := classifyFailure(cause)
-			m := newFailedMessage(i.name, raw, code+": "+cause.Error(), false, time.Now())
+			m := newFailedMessage(i.name, raw, failureReason(code, cause), false, time.Now())
 			m.CorrelationID = res.correlationID
 
 			if err := i.fail(context.WithoutCancel(ctx), m); err != nil {
@@ -207,7 +207,7 @@ func (i *ingest) keepSetAside(ctx context.Context, res pollResult) bool {
 			continue
 		}
 
-		m := newFailedMessage(i.name, r.raw, code+": "+r.err.Error(), false, time.Now())
+		m := newFailedMessage(i.name, r.raw, failureReason(code, r.err), false, time.Now())
 		m.CorrelationID = res.correlationID
 
 		if err := i.fail(context.WithoutCancel(ctx), m); err != nil {
@@ -263,7 +263,7 @@ func (i *ingest) park(ctx context.Context, h HazardEvent, raw []byte, err error,
 		raw, _ = json.Marshal(h)
 	}
 
-	m := newFailedMessage(i.name, raw, code+": "+err.Error(), retryable, now)
+	m := newFailedMessage(i.name, raw, failureReason(code, err), retryable, now)
 	m.SourceRefID = h.SourceRefID
 	m.CorrelationID = correlationOf(ctx)
 

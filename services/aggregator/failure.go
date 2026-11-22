@@ -100,6 +100,15 @@ func isRecordError(err error) bool {
 	return errors.As(err, &re)
 }
 
+// Stored reason "code: detail"; IncompatibleSchema already starts with its code, so it is not added twice.
+func failureReason(code string, err error) string {
+	if detail := err.Error(); strings.HasPrefix(detail, code+": ") {
+		return detail
+	}
+
+	return code + ": " + err.Error()
+}
+
 // True when the code means the store itself is not answering.
 func isOutage(code string) bool { return code == codeTimeout || code == codeStoreUnavailable }
 
