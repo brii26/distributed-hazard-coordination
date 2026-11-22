@@ -22,6 +22,7 @@ MQ_PORT=${MQ_PORT:-35672}
 N=${N:-200}                    # field reports in scenario 7
 WAIT=${WAIT:-120}              # seconds the system gets to produce a result
 FAST_MS=${FAST_MS:-1000}       # answer time of POST /field-reports while the downstream is dead
+LOCK_SECONDS=${LOCK_SECONDS:-75}   # how long scenario 3 locks hazard_events when kill-store shows no retrying row
 ADJUST=${ADJUST:-rename:eruption_count=eruption_count_24h,type:ash_column_height_m,default:volcano_id=UNKNOWN}
 RUN=${RUN:-p3-$(date +%s)}
 
@@ -69,8 +70,8 @@ until_true() {
 secret() { kc get secret "$1" -o "jsonpath={.data.$2}" | base64 -d; }
 
 cleanup() {
+  local rc=$? p
   trap - EXIT INT TERM
-  local p
   if [ "$DRY_RUN" != 1 ]; then
     if [ "$RESTORE_SCHEMA" = 1 ]; then curl -s -X POST "$MOCK/admin/schema-version" -d '{"version":1}' >/dev/null && say "trap: PVMBG schema back to legacy"; fi
     if [ "$RESTORE_MALFORMED" = 1 ]; then curl -s -X POST "$MOCK/admin/malformed" -d '{"kind":"off"}' >/dev/null && say "trap: PVMBG malformed off"; fi
@@ -84,6 +85,7 @@ cleanup() {
   rm -rf "$WORK"
   say ""
   say "PASS $PASSED, FAIL $FAILED, NOT RUN $NOTRUN"
+  [ "$rc" = 2 ] && exit 2
   [ "$FAILED" -gt 0 ] && exit 1
   exit 0
 }
@@ -222,6 +224,16 @@ s2() {
 }
 
 all_unprocessed() { audit_get "/internal/audit/unprocessed?limit=1000"; }
+
+# Holds an exclusive lock on hazard_events on every store node, so hazard writes time out while failed_messages still works.
+lock_hazard_events() {
+  local pod user
+  user=$(secret store-credentials user)
+  for pod in $(kc get pods -l app=store -o name); do
+    kc exec "$pod" -- psql -U "$user" -d canonical_store -qc "BEGIN; LOCK TABLE hazard_events IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep($1); COMMIT;" >/dev/null 2>&1 &
+    PIDS+=("$!")
+  done
+}
 agent_logs() { kubectl -n "$TESTER_NS" logs -l app=tester-agent --tail=-1 --max-log-requests=10 2>/dev/null; }
 agent_done_count() { local l; l=$(agent_logs); grep -c "pemulihan akhir selesai" <<<"$l"; }
 
@@ -259,7 +271,22 @@ s3() {
     nap 3
   done
   if [ "$seen" = 0 ]; then notrun "S3 the Tester Agent did not report the end of kill-store within 300 s"; return; fi
-  info "S3 kill-store finished, waiting 60 s for the retry worker; most retrying rows seen at once: $max_retrying, highest attempts: $max_attempts"
+  info "S3 kill-store finished; most retrying rows seen at once: $max_retrying, highest attempts: $max_attempts"
+  if [ "$max_retrying" = 0 ]; then
+    info "S3 the second copy of the data absorbed kill-store, locking hazard_events on every store node for ${LOCK_SECONDS}s instead"
+    lock_hazard_events "$LOCK_SECONDS"
+    end=$((SECONDS + LOCK_SECONDS + 10))
+    while [ "$SECONDS" -lt "$end" ]; do
+      samples=$(all_unprocessed)
+      r=$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$samples" 2>/dev/null || echo 0)
+      [ "${r:-0}" -gt "$max_retrying" ] && max_retrying=$r
+      n=$(jq '[.items[]? | select(.status == "retrying") | .attempts] | max // 0' <<<"$samples" 2>/dev/null || echo 0)
+      [ "${n:-0}" -gt "$max_attempts" ] && max_attempts=$n
+      nap 3
+    done
+    info "S3 after the table lock: most retrying rows seen at once: $max_retrying, highest attempts: $max_attempts"
+  fi
+  info "S3 waiting 60 s for the retry worker"
   nap 60
   until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
   after=$(all_unprocessed)
@@ -273,7 +300,7 @@ s3() {
   if [ "$max_retrying" -gt 0 ]; then
     pass "S3 retrying rows were seen during the outage ($max_retrying at once, attempts up to $max_attempts) and all healed"
   else
-    notrun "S3 kill-store produced no retrying row (the second copy of the data may have absorbed it), so the retrying path itself was not shown; the table lock fallback is not written yet"
+    fail "S3 neither kill-store nor a ${LOCK_SECONDS}s table lock produced a retrying row, so a failed write is not kept as a retryable message (#300, #301)"
   fi
   want "S3 restart counts do not matter here, hazards still served" "$(code -b "$WORK/op.jar" "$API/hazards?type=VOLCANIC&limit=5")" 200
 }
