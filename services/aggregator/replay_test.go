@@ -279,6 +279,24 @@ func TestMapParkedBMKGAndPVMBG(t *testing.T) {
 	}
 }
 
+// The records the PVMBG mock serves in its deep, utf8 and huge modes keep their ingest code when replayed (#302).
+func TestMapParkedKeepsTheGuardCode(t *testing.T) {
+	t.Parallel()
+
+	m := testMapper()
+
+	for want, raw := range map[string][]byte{
+		codeTooDeep:     []byte(`{"report_id":"MALFORMED-deep","nested":` + strings.Repeat("[", 100) + strings.Repeat("]", 100) + `}`),
+		codeInvalidUTF8: []byte(`{"report_id":"MALFORMED-utf8","note":"` + "\xff\xfe" + `"}`),
+		codeTooLarge:    []byte(`{"report_id":"MALFORMED-huge","note":"` + strings.Repeat("x", maxFailedPayload+1024) + `"}`),
+	} {
+		_, err := m.mapParked(newFailedMessage(sourcePVMBG, raw, "x", false, replayBase))
+		if _, code := classifyFailure(err); code != want {
+			t.Fatalf("want %s, got %s (%v)", want, code, err)
+		}
+	}
+}
+
 const adminTestToken = "s3cret"
 
 // Sends one request through the aggregator mux.
