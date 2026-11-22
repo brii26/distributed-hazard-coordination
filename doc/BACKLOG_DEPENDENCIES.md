@@ -195,6 +195,7 @@ graph TD
   306["#306 F8 Field reports consumer that is idempot.."]
   307["#307 F9 P3 end-to-end test script"]
   403["#403 Adjustable PVMBG schema mapping"]
+  405["#405 PVMBG mock malformed records switch"]
 
   %% P4 satellite feed
   308["#308 G1 read the live satellite feed and recor.."]
@@ -287,6 +288,8 @@ graph TD
   299 --> 403
   303 --> 403
   403 -.->|informs, not blocking| 307
+  302 --> 405
+  405 -.->|informs, not blocking| 307
   309 --> 313
   310 --> 311
   311 --> 312

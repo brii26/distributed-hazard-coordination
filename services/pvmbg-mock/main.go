@@ -118,6 +118,7 @@ func newMux(store *tokenStore, reports *reportStore, minDelay, maxDelay time.Dur
 	mux.HandleFunc("POST /oauth/token", store.tokenHandler)
 	mux.HandleFunc("POST /admin/outage", outageHandler)
 	mux.HandleFunc("POST /admin/schema-version", schemaVersionHandler)
+	mux.HandleFunc("POST /admin/malformed", malformedHandler)
 	mux.HandleFunc("GET /volcanic-reports", requireBearer(store, reportsHandler(reports, minDelay, maxDelay)))
 
 	return withRequestLog(withOutage(mux))
