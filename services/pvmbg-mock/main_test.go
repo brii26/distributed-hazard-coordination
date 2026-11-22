@@ -15,15 +15,17 @@ const (
 	bodyVersion2 = `{"version":2}`
 )
 
-// Starts a test from both switches off and puts them back off afterwards. Only for tests that are not parallel.
+// Starts a test from every switch off and puts them back off afterwards. Only for tests that are not parallel.
 func resetSwitches(t *testing.T) {
 	t.Helper()
 
 	outageActive.Store(false)
 	schemaState.Store(0)
+	malformedState.Store(0)
 	t.Cleanup(func() {
 		outageActive.Store(false)
 		schemaState.Store(0)
+		malformedState.Store(0)
 	})
 }
 

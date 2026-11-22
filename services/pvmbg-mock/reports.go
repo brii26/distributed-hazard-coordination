@@ -271,7 +271,7 @@ func reportsHandler(s *reportStore, minDelay, maxDelay time.Duration) http.Handl
 
 		w.Header().Set("Content-Type", "application/json")
 
-		if err := json.NewEncoder(w).Encode(s.since(since)); err != nil {
+		if err := writeReports(w, s.since(since)); err != nil {
 			log.Printf("failed to write volcanic-reports response: %v", err)
 		}
 	}

@@ -366,7 +366,7 @@ docker compose up -d --build --wait
 | <http://localhost:3000> | Web frontend (log in as `SEED_OPERATOR_EMAIL` / `SEED_OPERATOR_PASSWORD` from `.env`) |
 | <http://localhost:8080> | Client-Facing API, the only public API |
 | <http://localhost:8081> | BMKG mock (needs `X-BMKG-Key`) |
-| <http://localhost:8082> | PVMBG mock, including the demo switches `/admin/outage` and `/admin/schema-version` |
+| <http://localhost:8082> | PVMBG mock, including the demo switches `/admin/outage`, `/admin/schema-version` and `/admin/malformed` |
 | <http://localhost:15672> | RabbitMQ management UI |
 
 Stop it with `docker compose down` (add `-v` to wipe the data).
