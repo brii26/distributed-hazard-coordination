@@ -95,6 +95,9 @@ spec:
               value: store
             - name: STORE_DSN_TEMPLATE
               value: postgres://$(STORE_USER):$(STORE_PASSWORD)@%s:5432/$(STORE_DB)?sslmode=disable
+            # Keep equal to NODE_COUNT, or the degraded banner clears once a dead node leaves.
+            - name: STORE_EXPECTED_NODES
+              value: "3"
             - name: GRPC_PORT
               value: "9091"
             - name: HEALTH_PORT
