@@ -107,13 +107,22 @@ Tiga kondisi diuji dengan satu skenario yang sama. Pertama baseline tanpa ganggu
 
 \subsection{Bukti}
 
-\buktiph{bonus-ai-baseline.png}{p95 latensi peringatan kritis tanpa gangguan}{output skenario peringatan kritis dengan p95, tanpa LLM palsu.}{jalankan skenario peringatan kritis sebagai baseline (menunggu \#326).}
+Pengukuran dijalankan dengan \texttt{tests/bonus/ai-isolation.sh} pada \textit{cluster} yang sama pada 22 November 2026, dengan jendela 60 detik per fase. Lima fase berjalan berurutan: baseline (AI mati, ringkasan berbasis aturan), LLM palsu yang tidur 60 detik, LLM palsu yang menjawab bukan JSON, LLM palsu yang menutup koneksi, dan \textit{pod} \texttt{situation-summarizer} diskalakan ke 0. LLM sungguhan tidak dipakai. Pada tiap fase skrip membaca histogram \texttt{critical\_alert\_latency\_seconds} milik Notifier sebelum dan sesudah, mengambil p95 dari peringatan yang terkirim di antaranya, dan memanggil \texttt{GET /situation} tiap 2 detik dengan batas 300 ms.
 
-\buktiph{bonus-ai-lambat.png}{LLM palsu yang tidur 60 detik}{p95 peringatan kritis dan waktu jawab \texttt{GET /situation} selama LLM palsu tidur 60 detik.}{skenario yang sama dengan LLM palsu lambat aktif (menunggu \#326).}
+Hasilnya sama di semua fase: p95 peringatan kritis berada pada \textit{bucket} 10 detik, sama dengan baseline, dengan 57 sampai 62 peringatan terkirim per fase, dan tidak ada jawaban \texttt{/situation} yang lebih lambat dari 300 ms. Skrip menyatakan semua fase lulus.
 
-\buktiph{bonus-ai-salah.png}{LLM palsu yang mengembalikan JSON tidak valid}{p95 peringatan kritis dan waktu jawab \texttt{GET /situation} dengan jawaban LLM tidak valid, beserta metrik kegagalan dan status breaker.}{skenario yang sama dengan LLM palsu salah aktif (menunggu \#326).}
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/bonus-ai-hasil.png}{\includegraphics[width=\linewidth,height=0.45\textheight,keepaspectratio]{figures/bukti/bonus-ai-hasil.png}}{\ph{figures/bukti/bonus-ai-hasil.png belum ada}}
+\caption{Keluaran \texttt{ai-isolation.sh}: p95 peringatan kritis dan jumlah jawaban \texttt{/situation} yang lambat per fase}
+\end{figure}
 
-\buktiph{bonus-ai-mati.png}{Pod situation-summarizer dimatikan}{p95 peringatan kritis dan waktu jawab \texttt{GET /situation} setelah pod dihapus, dengan penanda \texttt{unavailable}.}{\texttt{kubectl delete pod} pada komponen lalu skenario yang sama (menunggu \#326).}
+Batasan pengukuran ini perlu dibaca bersama angkanya:
+\begin{itemize}
+\item Profil sensor latihan hampir tidak menghasilkan peringatan kritis (3 dari sekitar 80.000 kejadian Sensor Pantai), jauh di bawah 20 per fase yang dibutuhkan skrip. Peringatan kritis karena itu diisi sendiri, satu per detik, ke tabel \texttt{critical\_outbox} pada satu node store, dan dikirim oleh jalur Aggregator ke Notifier seperti peringatan sensor. Jalur dari sensor ke Aggregator tidak ikut terukur.
+\item p95 dibaca dari \textit{bucket} histogram, sehingga resolusinya 10 detik. Kenaikan di bawah itu tidak terlihat.
+\item Satu \textit{run}, jendela 60 detik per fase, bukan 5 menit.
+\end{itemize}
 
 \begin{table}[H]
 \caption{Hasil pengujian komponen AI}
@@ -122,13 +131,15 @@ Tiga kondisi diuji dengan satu skenario yang sama. Pertama baseline tanpa ganggu
 \hline
 \rowcolor{gray!25}\textbf{Kondisi} & \textbf{p95 peringatan kritis} & \textbf{\texttt{/situation}} \\
 \hline
-Baseline & \ph{belum diukur} & \ph{belum diukur} \\
+Baseline & 10 detik (60 peringatan) & semua di bawah 300 ms \\
 \hline
-LLM lambat (60 detik) & \ph{belum diukur} & \ph{belum diukur} \\
+LLM lambat (60 detik) & 10 detik (61 peringatan) & semua di bawah 300 ms \\
 \hline
-LLM salah (JSON tidak valid) & \ph{belum diukur} & \ph{belum diukur} \\
+LLM salah (JSON tidak valid) & 10 detik (62 peringatan) & semua di bawah 300 ms \\
 \hline
-Pod mati & \ph{belum diukur} & \ph{belum diukur} \\
+LLM menutup koneksi & 10 detik (61 peringatan) & semua di bawah 300 ms \\
+\hline
+Pod mati & 10 detik (57 peringatan) & semua di bawah 300 ms \\
 \hline
 \end{tabular}
 \vspace{-12pt}
@@ -205,12 +216,16 @@ Hasilnya PASS bila replika bertahan di minimum saat idle, naik di atas minimum s
 
 \subsection{Bukti}
 
-\buktiph{bonus-hpa-config.png}{HPA Aggregator pada cluster}{output \texttt{kubectl get hpa aggregator -o yaml} yang menunjukkan minimum 3, maksimum 5, target CPU 60\%, dan behavior.}{\texttt{kubectl -n sistem-informasi-kebencanaan-bnpb get hpa aggregator -o yaml} (menunggu \#327).}
+HPA \texttt{aggregator} dikonfigurasi minimum 3, maksimum 5, target CPU 60\%. Pada \textit{run} \texttt{autoscale.sh} (22 November 2026) jumlah replika naik ke 5 selama rampa k6 lalu turun ke 3 setelah beban, dengan 189.969 permintaan, 0 gagal, dan tanpa id ganda pada Audit API. Skrip gagal pada satu pemeriksaan, yaitu replika saat idle harus tetap 3: HPA sendiri naik ke 4, karena satu \textit{pod} Aggregator kadang memakai sekitar 240m CPU dari \textit{request} 200m. Penyebab \textit{pod} sibuk itu belum dicari, dan pemeriksaan itu tidak diubah agar lulus.
 
-\buktiph{bonus-hpa-ramp.png}{Replika naik saat ramp k6}{output \texttt{kubectl get hpa -w} atau log \texttt{autoscale.sh} yang menunjukkan jumlah replika naik di atas 3 selama beban.}{jalankan \texttt{tests/scenarios/autoscale.sh} (menunggu \#285 dan \#327).}
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/bonus-hpa-ramp.png}{\includegraphics[width=0.6\linewidth,height=0.6\textheight,keepaspectratio]{figures/bukti/bonus-hpa-ramp.png}}{\ph{belum ada}}
+\caption{Keluaran \texttt{autoscale.sh}: replika naik ke 5 lalu turun ke 3}
+\end{figure}
 
-\buktiph{bonus-hpa-turun.png}{Replika kembali ke minimum setelah beban}{bagian akhir log yang sama, jumlah replika kembali ke 3 beserta baris PASS.}{log \texttt{autoscale.sh} sampai baris RESULT (menunggu \#327).}
-
-\buktiph{bonus-hpa-panel.png}{Panel Aggregator replicas pada Grafana}{panel dengan rentang waktu yang memuat naik dan turun.}{Grafana pada rentang waktu pengujian (menunggu \#327).}
-
-\buktiph{bonus-hpa-audit.png}{Audit API setelah scaling}{baris PASS untuk id ganda dan checksum pada tiga sumber, dan angka galat k6 di bawah 1\%.}{bagian akhir log \texttt{autoscale.sh} (menunggu \#327).}
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/bonus-hpa-panel.png}{\includegraphics[width=\linewidth,height=0.4\textheight,keepaspectratio]{figures/bukti/bonus-hpa-panel.png}}{\ph{belum ada}}
+\caption{Panel Grafana jumlah replika Aggregator (saat ini, yang diinginkan, minimum, dan maksimum) selama uji}
+\end{figure}
