@@ -74,7 +74,7 @@ Satu \textit{run} penuh \texttt{all-k8s.sh} dari awal sampai akhir belum dilakuk
 \hline
 \texttt{p1-wipe-node} & \#298 & Dijalankan pada path store baru dengan sekitar 104.000 kejadian: tidak ada kejadian yang hilang, 15 PASS dan 10 FAIL, kegagalannya batas tunggu pemulihan 300 detik dan checksum yang dibaca saat pemulihan. Sekitar 4 menit sesudahnya gauge menunjukkan 0 dan checksum BMKG lulus. & Bab Problem 1 \\
 \hline
-\texttt{p3-e2e} & \#307 & Dijalankan satu skenario per \textit{run}: skenario 1, 4, 6, dan 7 lulus, skenario 2, 3, dan 5 menjadi temuan (pesan gagal terpecah di antara \textit{node} store, \#409, belum selesai). & Bab Problem 3 \\
+\texttt{p3-e2e} & \#307 & Dijalankan satu skenario per \textit{run}: ketujuh skenario lulus pada 23 November 2026 dengan perbaikan \#409 dan \#302 (PR \#442, \#444). & Bab Problem 3 \\
 \hline
 \texttt{p4-60x} & \#401 & \textit{Replay} tanpa \textit{crash} dan dengan dua kali \textit{kill} pemimpin menghasilkan 23.561 kebakaran dengan SHA-256 sama (\texttt{cb75381e...}), \textit{epoch} lease SATELIT naik tepat sesudah tiap \textit{kill}. & Komentar isu \#401 \\
 \hline
@@ -104,7 +104,6 @@ Batasan yang perlu diketahui pembaca:
 \item Semua pengujian dijalankan pada tiga VM VirtualBox di satu mesin, bukan pada \textit{cluster} demo atau host fisik terpisah.
 \item Beban terbesar yang dijalankan adalah 1.000 VU, jauh di bawah 10.000 VU, karena mesin penghasil beban berbagi komputer dengan ketiga VM. Replika maksimum 5 dibatasi memori \textit{node}, dan \textit{node} terkecil sudah memakai sekitar 90\% memori dalam bentuk \textit{request}.
 \item Pemeriksaan jumlah replika saat idle pada \texttt{autoscale.sh} gagal pada \textit{run} yang dilaporkan dan tidak diubah agar lulus.
-\item Skenario P3 2, 3, dan 5 bergantung pada \#409 dan tidak dapat dinyatakan lulus sampai isu itu selesai.
 \end{itemize}
 
 \section{Pengembangan Lokal dengan Docker Compose}
