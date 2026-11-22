@@ -90,7 +90,7 @@ func storedIsNewer(ctx context.Context, tx *sql.Tx, h HazardEvent, guard time.Ti
 // The only door to the Canonical Store. *sql.DB is a pool, safe for concurrent use.
 type store struct {
 	db *sql.DB
-	// Pool of the coordination database (lease, cursors, token pair). Nil means the same database as db.
+	// Pool of the coordination database (lease, cursors, token pair, failed messages). Nil means the same database as db.
 	coord *sql.DB
 }
 

@@ -182,7 +182,7 @@ s1() {
 failed_row() {
   local cursor="" page row i
   for i in $(seq 1 30); do
-    page=$(ops "$API/admin/failed-messages?status=parked&limit=100${cursor:+&cursor=$cursor}")
+    page=$(ops "$API/admin/failed-messages?status=parked&source=PVMBG&limit=100${cursor:+&cursor=$cursor}")
     row=$(jq -c --arg id "$1" '[.data[]? | select(.message_id == $id)] | first // empty' <<<"$page")
     if [ -n "$row" ]; then printf '%s' "$row"; return 0; fi
     cursor=$(jq -r '.next_cursor // empty' <<<"$page")
@@ -230,7 +230,11 @@ s2() {
   want "S2 restart counts unchanged" "$(restarts)" "$before_restarts"
 }
 
-all_unprocessed() { audit_get "/internal/audit/unprocessed?limit=1000"; }
+# The polled sources only: the Sensor Pantai quarantine parks tens of thousands of rows, which would push these off the first page.
+all_unprocessed() {
+  { audit_get "/internal/audit/unprocessed?source=PVMBG&limit=1000"; audit_get "/internal/audit/unprocessed?source=BMKG&limit=1000"; } |
+    jq -s '{items: (map(.items // []) | add)}'
+}
 
 # Holds an exclusive lock on hazard_events on every store node, so hazard writes time out while failed_messages still works.
 lock_hazard_events() {
@@ -255,15 +259,16 @@ pvmbg_seqs() {
   done | sed 's/^.*-//' | sort -n | uniq
 }
 
-# Each missing PVMBG sequence number after the base, with the status of its row in failed_messages on every store node, if any.
+# failed_messages lives in coordination-db (#409). psql there, with the given arguments.
+coord_sql() {
+  kc exec -i coordination-db-0 -- sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"' sh "$@"
+}
+
+# Each missing PVMBG sequence number after the base, with the status of its row in failed_messages, if any.
 explain_holes() {
-  local base=$1 seq pod user out="" st
-  user=$(secret store-credentials user)
+  local base=$1 seq out="" st
   for seq in $(pvmbg_seqs | awk -v base="$base" 'BEGIN { prev = base + 0 } $1 + 0 > base + 0 { for (m = prev + 1; m < $1 + 0; m++) if (prev > 0) print m; prev = $1 + 0 }'); do
-    st=""
-    for pod in $(kc get pods -l app=store -o name); do
-      st="$st$(kc exec "$pod" -- psql -U "$user" -d canonical_store -tAc "SELECT status || '/' || split_part(reason, ':', 1) FROM failed_messages WHERE source_ref_id LIKE 'PVMBG-%-$(printf '%06d' "$seq")'" 2>/dev/null | tr '\n' ',')"
-    done
+    st="$(coord_sql -tAc "SELECT status || '/' || split_part(reason, ':', 1) FROM failed_messages WHERE source_ref_id LIKE 'PVMBG-%-$(printf '%06d' "$seq")'" </dev/null 2>/dev/null | tr '\n' ',')"
     out="$out $seq=${st:-nowhere}"
   done
   printf '%s' "$out"
@@ -309,7 +314,7 @@ s3() {
   fi
   info "S3 waiting ${SETTLE}s for the retry worker"
   nap "$SETTLE"
-  until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
+  until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?source=PVMBG&limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
   after=$(all_unprocessed)
   want "S3 no message is left in the retrying state" "$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$after")" 0
   holes=$(pvmbg_seqs | awk -v base="${max_seq_before:-0}" 'BEGIN { prev = base + 0 } $1 + 0 > base + 0 { if (prev > 0 && $1 + 0 != prev + 1) gap++; prev = $1 + 0 } END { print gap + 0 }')
@@ -422,28 +427,21 @@ fixtures() {
     "order-new|P3O-$id|{\"report_id\":\"P3O-$id\",\"volcano_id\":\"MERAPI\",\"alert_level\":\"Awas\",\"eruption_count\":5,\"ash_column_height_m\":1000,\"reported_at\":\"2026-10-01T10:00:00Z\"}|now() - interval '5 minutes'"
 }
 
-# Parks the five messages in the coordination database, where the Aggregator keeps failed_messages (#409).
+# Parks the five messages in coordination-db, where every Aggregator pod reads failed_messages (#409).
 insert_fixtures() {
-  local pod user name ref payload at
-  user=$(secret store-credentials user)
+  local name ref payload at
   RESTORE_FIXTURES=1
-  for pod in pod/coordination-db-0; do
-    while IFS='|' read -r name ref payload at; do
-      kc exec -i "$pod" -- psql -U "$user" -d coordination -q >/dev/null 2>&1 <<SQL
+  while IFS='|' read -r name ref payload at; do
+    coord_sql -q >/dev/null 2>&1 <<SQL
 INSERT INTO failed_messages (message_id, source, received_at, payload, payload_sha256, payload_size, oversize, reason, retryable, attempts, status, source_ref_id, last_error_at)
 SELECT 'PVMBG:p3-$RUN-$name', 'PVMBG', $at, p, sha256(p), length(p), false, 'schema_incompatible: field ''x'' missing', false, 1, 'parked', '$ref', now()
 FROM (SELECT convert_to('$payload', 'UTF8') AS p) s;
 SQL
-    done < <(fixtures)
-  done
+  done < <(fixtures)
 }
 
 remove_fixtures() {
-  local pod user
-  user=$(secret store-credentials user)
-  for pod in pod/coordination-db-0; do
-    kc exec "$pod" -- psql -U "$user" -d coordination -qc "DELETE FROM failed_messages WHERE message_id LIKE 'PVMBG:p3-$RUN-%'" >/dev/null 2>&1
-  done
+  coord_sql -qc "DELETE FROM failed_messages WHERE message_id LIKE 'PVMBG:p3-$RUN-%'" </dev/null >/dev/null 2>&1
 }
 
 # The audit event of one source_ref_id, found by following the cursor, or nothing.

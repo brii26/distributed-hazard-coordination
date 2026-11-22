@@ -145,6 +145,53 @@ func TestLeaseCursorAndTokenUseTheCoordinationPool(t *testing.T) { //nolint:para
 	if c, err := s.getCursor(ctx, src); err != nil || c != "c1" {
 		t.Fatalf("cursor read back: %q, %v", c, err)
 	}
+
+	m := newFailedMessage(sourcePVMBG, []byte(`{"test":"coordination `+newHazardID()+`"}`), "schema_incompatible: test", false, time.Now().UTC())
+
+	t.Cleanup(func() {
+		for _, db := range []*sql.DB{s.db, s.coord} {
+			_, _ = db.ExecContext(ctx, `DELETE FROM failed_messages WHERE message_id = $1`, m.MessageID)
+		}
+	})
+
+	if err := s.insertFailed(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	q := `SELECT count(*) FROM failed_messages WHERE message_id = $1`
+	if c, d := count(s.coord, q, m.MessageID), count(s.db, q, m.MessageID); c != 1 || d != 0 {
+		t.Fatalf("failed message: coordination database holds %d rows, data database %d, want 1 and 0", c, d)
+	}
+
+	rows, _, err := s.listFailed(ctx, failedFilter{Statuses: []string{failedParked}, Source: sourcePVMBG}, "", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, r := range rows {
+		found = found || r.MessageID == m.MessageID
+	}
+
+	if !found {
+		t.Fatal("listFailed does not return the row written by insertFailed")
+	}
+
+	if ok, err := s.markReplayed(ctx, m.MessageID, false); err != nil || !ok {
+		t.Fatalf("markReplayed: ok=%v err=%v", ok, err)
+	}
+
+	release, ok, err := s.lockReplay(ctx, "TEST_COORD")
+	if err != nil || !ok {
+		t.Fatalf("lockReplay: ok=%v err=%v", ok, err)
+	}
+
+	var free bool
+	if err := s.coord.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtext('replay:TEST_COORD'))`).Scan(&free); err != nil || free {
+		t.Fatalf("replay lock not held in the coordination database: free=%v err=%v", free, err)
+	}
+
+	release()
 }
 
 // Real Postgres with two separate databases. Failed messages written through one store are read through another that points at a different data database.
@@ -173,15 +220,17 @@ func TestFailedMessagesLiveInTheCoordinationDatabase(t *testing.T) { //nolint:pa
 		return s
 	}
 
-	ddl, err := os.ReadFile("migrations/016_failed_in_coordination.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	a, b := open(dataA), open(dataB)
 
-	if _, err = a.coordDB().ExecContext(ctx, string(ddl)); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{"migrations/003_failed_messages.sql", "migrations/016_failed_messages_coordination.sql"} {
+		ddl, err := os.ReadFile(f) //nolint:gosec // test reads the project's own migration files
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = a.coordDB().ExecContext(ctx, string(ddl)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	m := newFailedMessage(sourcePVMBG, []byte(`{"x":`), "malformed_json: truncated", false, time.Now())
@@ -191,7 +240,7 @@ func TestFailedMessagesLiveInTheCoordinationDatabase(t *testing.T) { //nolint:pa
 		_, _ = a.coordDB().ExecContext(ctx, `DELETE FROM failed_messages WHERE message_id = $1`, m.MessageID)
 	})
 
-	if err = a.insertFailed(ctx, m); err != nil {
+	if err := a.insertFailed(ctx, m); err != nil {
 		t.Fatal(err)
 	}
 

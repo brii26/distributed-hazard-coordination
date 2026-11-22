@@ -38,7 +38,7 @@ func requireOperator(next http.Handler) http.Handler {
 	})
 }
 
-// GET /admin/failed-messages: the Aggregator's failed rows with the raw payload as base64, oldest first. Operator only.
+// GET /admin/failed-messages: the Aggregator's failed rows with the raw payload as base64, oldest first, optionally of one source. Operator only.
 type failedMessagesAPI struct {
 	agg     aggregatorpb.AggregatorClient
 	timeout time.Duration // UPSTREAM_TIMEOUT_MS
@@ -71,7 +71,7 @@ func (h failedMessagesAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "x-client-role", roleOperator)
 
-	resp, err := h.agg.ListFailedMessages(ctx, &aggregatorpb.ListFailedMessagesRequest{Status: st, Limit: limit, Cursor: q.Get("cursor")})
+	resp, err := h.agg.ListFailedMessages(ctx, &aggregatorpb.ListFailedMessagesRequest{Status: st, Limit: limit, Cursor: q.Get("cursor"), Source: q.Get("source")})
 	if err != nil {
 		failedMessagesError(r.Context(), w, err)
 

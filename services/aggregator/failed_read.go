@@ -69,6 +69,12 @@ func (a *readAPI) ListFailedMessages(ctx context.Context, req *aggregatorpb.List
 		return nil, status.Error(codes.InvalidArgument, "status must be retrying, parked or recovered")
 	}
 
+	switch req.GetSource() {
+	case "", sourceBMKG, sourcePVMBG, sourceSatelit, sourceSensorPantai, sourceFieldReport:
+	default:
+		return nil, status.Error(codes.InvalidArgument, "source must be BMKG, PVMBG, SATELIT, SENSOR_PANTAI or FIELD_REPORT")
+	}
+
 	limit := int(req.GetLimit())
 
 	switch {
@@ -86,7 +92,7 @@ func (a *readAPI) ListFailedMessages(ctx context.Context, req *aggregatorpb.List
 		}
 	}
 
-	rows, next, err := a.failed(ctx, failedFilter{Statuses: statuses}, req.GetCursor(), limit)
+	rows, next, err := a.failed(ctx, failedFilter{Statuses: statuses, Source: req.GetSource()}, req.GetCursor(), limit)
 	if err != nil {
 		withID(id).Warn("list failed messages", "error", err)
 

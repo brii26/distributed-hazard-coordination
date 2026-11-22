@@ -162,8 +162,8 @@ func TestFailedMessagesQueryChecks(t *testing.T) {
 
 	f := fakeFailed{resp: oneFailed(), got: &got}
 
-	if rec, _ := getFailed(t, f, roleOperator, "status=parked&limit=7&cursor=abc"); rec.Code != 200 ||
-		got.GetStatus() != "parked" || got.GetLimit() != 7 || got.GetCursor() != "abc" {
+	if rec, _ := getFailed(t, f, roleOperator, "status=parked&limit=7&cursor=abc&source=PVMBG"); rec.Code != 200 ||
+		got.GetStatus() != "parked" || got.GetLimit() != 7 || got.GetCursor() != "abc" || got.GetSource() != "PVMBG" {
 		t.Fatalf("not passed on: %d %v", rec.Code, got)
 	}
 
