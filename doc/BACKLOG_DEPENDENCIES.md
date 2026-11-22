@@ -198,6 +198,7 @@ graph TD
   405["#405 PVMBG mock malformed records switch"]
   408["#408 Failed message reason has the code twice"]
   409["#409 Failed messages split across store nodes"]
+  412["#412 Store hostPath under the folder the Tester Agent wipes"]
 
   %% P4 satellite feed
   308["#308 G1 read the live satellite feed and recor.."]
@@ -294,6 +295,7 @@ graph TD
   405 -.->|informs, not blocking| 307
   307 -.->|found by the script, not blocking| 408
   307 -.->|found by the script, not blocking| 409
+  298 -.->|found while writing the script, not blocking| 412
   309 --> 313
   310 --> 311
   311 --> 312
