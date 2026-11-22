@@ -23,6 +23,12 @@ N=${N:-200}                    # field reports in scenario 7
 WAIT=${WAIT:-120}              # seconds the system gets to produce a result
 FAST_MS=${FAST_MS:-1000}       # answer time of POST /field-reports while the downstream is dead
 LOCK_SECONDS=${LOCK_SECONDS:-75}   # how long scenario 3 locks hazard_events when kill-store shows no retrying row
+TICK=${TICK:-2}                # seconds between two tries of a wait
+SAMPLE=${SAMPLE:-3}            # seconds between two looks at the unprocessed list in scenario 3
+SETTLE=${SETTLE:-60}           # seconds the retry worker gets after an outage in scenario 3
+SETTLE_SHORT=${SETTLE_SHORT:-10}   # seconds the consumer gets to finish after the last report in scenario 7
+WAIT_FLOW=${WAIT_FLOW:-60}     # seconds a new normal record may take to appear in scenario 5
+RETRIES=${RETRIES:-40}         # tries of one field report in scenario 7, one second apart
 ADJUST=${ADJUST:-rename:eruption_count=eruption_count_24h,type:ash_column_height_m,default:volcano_id=UNKNOWN}
 RUN=${RUN:-p3-$(date +%s)}
 
@@ -62,7 +68,7 @@ until_true() {
   shift
   while [ "$SECONDS" -lt "$end" ]; do
     if "$@" >/dev/null 2>&1; then return 0; fi
-    nap 2
+    nap "$TICK"
   done
   return 1
 }
@@ -269,7 +275,7 @@ s3() {
     n=$(jq '[.items[]? | select(.status == "retrying") | .attempts] | max // 0' <<<"$samples" 2>/dev/null || echo 0)
     [ "${n:-0}" -gt "$max_attempts" ] && max_attempts=$n
     if [ "$(agent_done_count)" -gt "$before_done" ]; then seen=1; break; fi
-    nap 3
+    nap "$SAMPLE"
   done
   if [ "$seen" = 0 ]; then notrun "S3 the Tester Agent did not report the end of kill-store within 300 s"; return; fi
   info "S3 kill-store finished; most retrying rows seen at once: $max_retrying, highest attempts: $max_attempts"
@@ -283,16 +289,16 @@ s3() {
       [ "${r:-0}" -gt "$max_retrying" ] && max_retrying=$r
       n=$(jq '[.items[]? | select(.status == "retrying") | .attempts] | max // 0' <<<"$samples" 2>/dev/null || echo 0)
       [ "${n:-0}" -gt "$max_attempts" ] && max_attempts=$n
-      nap 3
+      nap "$SAMPLE"
     done
     info "S3 after the table lock: most retrying rows seen at once: $max_retrying, highest attempts: $max_attempts"
   fi
-  info "S3 waiting 60 s for the retry worker"
-  nap 60
+  info "S3 waiting ${SETTLE}s for the retry worker"
+  nap "$SETTLE"
   until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
   after=$(all_unprocessed)
   want "S3 no message is left in the retrying state" "$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$after")" 0
-  holes=$(pvmbg_seqs | awk -v base="${max_seq_before:-0}" '$1 + 0 > base + 0 { if (prev && $1 + 0 != prev + 1) gap++; prev = $1 + 0 } END { print gap + 0 }')
+  holes=$(pvmbg_seqs | awk -v base="${max_seq_before:-0}" 'BEGIN { prev = base + 0 } $1 + 0 > base + 0 { if (prev > 0 && $1 + 0 != prev + 1) gap++; prev = $1 + 0 } END { print gap + 0 }')
   want "S3 holes in the PVMBG sequence after the outage (a lost record)" "$holes" 0
   dup=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000" | jq '[.items[].source_ref_id] | length - (unique | length)')
   want "S3 repeated source_ref_id among the audit events" "$dup" 0
@@ -347,10 +353,10 @@ s5_source() {
   else
     fail "S5 source $kind: nothing parked with the code $code after ${WAIT}s (#302)"
   fi
-  if until_true 60 bash -c "[ \"\$(curl -s -b '$WORK/op.jar' '$API/hazards?type=VOLCANIC&limit=1' | jq -r '.data[0].source_ref_id // \"\"')\" != '$newest_before' ]"; then
+  if until_true "$WAIT_FLOW" bash -c "[ \"\$(curl -s -b '$WORK/op.jar' '$API/hazards?type=VOLCANIC&limit=1' | jq -r '.data[0].source_ref_id // \"\"')\" != '$newest_before' ]"; then
     pass "S5 source $kind: a new normal record was stored while the bad one was served"
   else
-    fail "S5 source $kind: no new normal record in 60 s, the good records did not keep flowing (#302)"
+    fail "S5 source $kind: no new normal record in ${WAIT_FLOW}s, the good records did not keep flowing (#302)"
   fi
   after=$(unprocessed PVMBG | jq --arg c "$code" '[.items[] | select(.reason | startswith($c))] | length')
   info "S5 source $kind: $((after - before)) new parked row(s) with $code"
@@ -521,7 +527,7 @@ s6() {
 # Sends one report with its own key, retried with the same key until it gets a 202. Appends "key code seconds" to sent.log.
 send_report() {
   local i=$1 key="$RUN-r$1" out tries=0
-  while [ "$tries" -lt 40 ]; do
+  while [ "$tries" -lt "$RETRIES" ]; do
     out=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' -b "$WORK/field.jar" -X POST "$API/field-reports" -H "Idempotency-Key: $key" \
       -d "{\"description\":\"report $i of $RUN\",\"kind\":\"p3-test\"}")
     case $out in
@@ -581,7 +587,7 @@ s7() {
     esac
   done
   until_true "$WAIT" bash -c "[ \"\$(curl -s -u '$MQ_USER:$MQ_PASS' '$MQ/api/queues/%2F/field-reports' | jq '.messages // 0')\" = 0 ]" || info "S7 the queue still holds $(queue_depth) messages"
-  nap 10
+  nap "$SETTLE_SHORT"
   sed 's/^.*-r\([0-9]*\) .*/\1/' "$WORK/sent.log" | sort -u >"$WORK/accepted.idx"
   stored_indexes >"$WORK/stored.rows"
   sort -u "$WORK/stored.rows" >"$WORK/stored.idx"
