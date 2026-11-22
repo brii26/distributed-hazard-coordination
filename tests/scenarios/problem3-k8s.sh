@@ -34,7 +34,7 @@ AUDIT=http://127.0.0.1:$AUDIT_PORT
 MOCK=http://127.0.0.1:$MOCK_PORT
 MQ=http://127.0.0.1:$MQ_PORT
 AUDIT_TOKEN="" ADMIN_TOKEN="" OP_EMAIL="" OP_PASS="" MQ_USER="" MQ_PASS="" AUDIT_PF="" API_PF=""
-RESTORE_SCHEMA=0 RESTORE_MALFORMED=0 RESTORE_ADJUST=0 RESTORE_PROCESSOR=""
+RESTORE_SCHEMA=0 RESTORE_MALFORMED=0 RESTORE_ADJUST=0 RESTORE_FIXTURES=0 RESTORE_PROCESSOR=""
 
 say() { printf '%s\n' "$*"; }
 pass() { say "PASS: $*"; PASSED=$((PASSED + 1)); }
@@ -76,6 +76,7 @@ cleanup() {
     if [ "$RESTORE_SCHEMA" = 1 ]; then curl -s -X POST "$MOCK/admin/schema-version" -d '{"version":1}' >/dev/null && say "trap: PVMBG schema back to legacy"; fi
     if [ "$RESTORE_MALFORMED" = 1 ]; then curl -s -X POST "$MOCK/admin/malformed" -d '{"kind":"off"}' >/dev/null && say "trap: PVMBG malformed off"; fi
     if [ -n "$RESTORE_PROCESSOR" ]; then kc scale deployment/field-report-processor --replicas="$RESTORE_PROCESSOR" >/dev/null && say "trap: field report processor back to $RESTORE_PROCESSOR"; fi
+    if [ "$RESTORE_FIXTURES" = 1 ]; then remove_fixtures && say "trap: the parked test messages of scenario 6 removed"; fi
     if [ "$RESTORE_ADJUST" = 1 ]; then
       kc patch configmap bnpb-config --type=json -p '[{"op":"remove","path":"/data/PVMBG_SCHEMA_ADJUST"}]' >/dev/null 2>&1
       kc rollout restart deployment/aggregator >/dev/null && say "trap: PVMBG_SCHEMA_ADJUST removed, Aggregator restarted"
@@ -386,20 +387,99 @@ s5() {
   s5_source huge too_large
   want "S5 restart counts unchanged" "$(restarts)" "$before_restarts"
 }
-schema_parked() { unprocessed PVMBG | jq '[.items[] | select(.status == "parked" and (.reason | startswith("schema_incompatible")))] | length'; }
 replay() { curl -s -X POST -H "Authorization: Bearer ${1:-$ADMIN_TOKEN}" "$AUDIT/internal/admin/replay?source=PVMBG"; }
+
+# The five parked PVMBG messages scenario 6 creates: name, report id, payload and the receive time. The two P3O versions
+# are one report, the newer by source time was received first. Every payload is shaped like what the mock sends in that mode.
+fixtures() {
+  local id=$RUN
+  printf '%s\n' \
+    "rename|P3R-$id|{\"report_id\":\"P3R-$id\",\"volcano_id\":\"MERAPI\",\"alert_level\":\"Siaga\",\"eruption_count\":3,\"ash_column_height_m\":1000,\"reported_at\":\"2026-10-01T08:00:00Z\"}|now()" \
+    "type|P3T-$id|{\"report_id\":\"P3T-$id\",\"volcano_id\":\"MERAPI\",\"alert_level\":\"Siaga\",\"eruption_count_24h\":3,\"ash_column_height_m\":\"1200.5\",\"reported_at\":\"2026-10-01T08:10:00Z\"}|now()" \
+    "missing|P3M-$id|{\"report_id\":\"P3M-$id\",\"alert_level\":\"Siaga\",\"eruption_count_24h\":3,\"ash_column_height_m\":1000,\"reported_at\":\"2026-10-01T08:20:00Z\"}|now()" \
+    "order-old|P3O-$id|{\"report_id\":\"P3O-$id\",\"volcano_id\":\"MERAPI\",\"alert_level\":\"Waspada\",\"eruption_count\":3,\"ash_column_height_m\":1000,\"reported_at\":\"2026-10-01T09:00:00Z\"}|now()" \
+    "order-new|P3O-$id|{\"report_id\":\"P3O-$id\",\"volcano_id\":\"MERAPI\",\"alert_level\":\"Awas\",\"eruption_count\":5,\"ash_column_height_m\":1000,\"reported_at\":\"2026-10-01T10:00:00Z\"}|now() - interval '5 minutes'"
+}
+
+# Parks the five messages on every store node: a connection of the Aggregator may land on any of them (#409).
+insert_fixtures() {
+  local pod user name ref payload at
+  user=$(secret store-credentials user)
+  RESTORE_FIXTURES=1
+  for pod in $(kc get pods -l app=store -o name); do
+    while IFS='|' read -r name ref payload at; do
+      kc exec -i "$pod" -- psql -U "$user" -d canonical_store -q >/dev/null 2>&1 <<SQL
+INSERT INTO failed_messages (message_id, source, received_at, payload, payload_sha256, payload_size, oversize, reason, retryable, attempts, status, source_ref_id, last_error_at)
+SELECT 'PVMBG:p3-$RUN-$name', 'PVMBG', $at, p, sha256(p), length(p), false, 'schema_incompatible: field ''x'' missing', false, 1, 'parked', '$ref', now()
+FROM (SELECT convert_to('$payload', 'UTF8') AS p) s;
+SQL
+    done < <(fixtures)
+  done
+}
+
+remove_fixtures() {
+  local pod user
+  user=$(secret store-credentials user)
+  for pod in $(kc get pods -l app=store -o name); do
+    kc exec "$pod" -- psql -U "$user" -d canonical_store -qc "DELETE FROM failed_messages WHERE message_id LIKE 'PVMBG:p3-$RUN-%'" >/dev/null 2>&1
+  done
+}
+
+# The audit event of one source_ref_id, found by following the cursor, or nothing.
+audit_event_for() {
+  local cursor="" page row i
+  for i in $(seq 1 30); do
+    page=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000${cursor:+&cursor=$cursor}")
+    row=$(jq -c --arg r "$1" '[.items[]? | select(.source_ref_id == $r)] | first // empty' <<<"$page")
+    if [ -n "$row" ]; then printf '%s' "$row"; return 0; fi
+    cursor=$(jq -r '.next_cursor // empty' <<<"$page")
+    [ -n "$cursor" ] || return 0
+  done
+}
+
+# How many of the four test reports are among the audit events.
+fixtures_stored() {
+  local ref n=0
+  for ref in "P3R-$RUN" "P3T-$RUN" "P3M-$RUN" "P3O-$RUN"; do
+    [ -n "$(audit_event_for "$ref")" ] && n=$((n + 1))
+  done
+  printf '%s' "$n"
+}
+
+# The newest replay correlation id in the Aggregator logs and the pods whose logs carry it.
+replay_trail() {
+  local cid pod n out=""
+  cid=$(kc logs -l role=aggregator --tail=-1 --max-log-requests=10 2>/dev/null | grep -o 'replay-pvmbg-[0-9]*' | sort | tail -1)
+  [ -n "$cid" ] || return 1
+  for pod in $(kc get pods -o name | cut -d/ -f2); do
+    n=$(kc logs "$pod" --all-containers --tail=-1 2>/dev/null | grep -c "$cid")
+    [ "${n:-0}" -gt 0 ] && out="$out $pod=$n"
+  done
+  printf '%s%s' "$cid" "$out"
+}
+
+# check_adjusted <report id> <schema_adjusted mark>: the replayed event is in the audit events and carries the mark.
+check_adjusted() {
+  local event
+  event=$(audit_event_for "$1")
+  if [ -z "$event" ]; then fail "S6 $1 is not among the audit events after replay (#303)"; return; fi
+  if jq -e --arg m "$2" '.attributes.schema_adjusted // [] | index($m) != null' <<<"$event" >/dev/null 2>&1; then
+    pass "S6 $1 was recovered and marked $2"
+  else
+    fail "S6 $1 was recovered without the mark $2 in attributes.schema_adjusted: $(jq -c '.attributes' <<<"$event" | head -c 200)"
+  fi
+}
 
 s6() {
   heading "Scenario 6: replay after the system is adjusted"
-  if [ "$DRY_RUN" = 1 ]; then say "[dry-run] replay once, patch bnpb-config with PVMBG_SCHEMA_ADJUST=$ADJUST, kubectl rollout restart deployment/aggregator, replay again and check recovered, duplicates, a second replay; remove the setting on exit"; return 0; fi
+  if [ "$DRY_RUN" = 1 ]; then say "[dry-run] park five PVMBG messages (rename, type, missing, two versions of one id) on every store node, replay once, patch bnpb-config with PVMBG_SCHEMA_ADJUST=$ADJUST, kubectl rollout restart deployment/aggregator, replay until the four reports are stored and check marks, order, duplicates and the correlation id; remove the setting and the test messages on exit"; return 0; fi
   ensure_accounts
-  local expected parked_all rep dup logs
-  expected=$(schema_parked)
-  parked_all=$(parked_count PVMBG)
-  if [ "$expected" -lt 3 ]; then notrun "S6 needs the parked schema_incompatible messages of scenario 2, found $expected"; return; fi
+  local rep logs event trail replays=0 stored=0
+  insert_fixtures
   want "S6 replay without the admin token" "$(code -X POST "$AUDIT/internal/admin/replay?source=PVMBG")" 401
   rep=$(replay)
-  want "S6 replay before the adjustment recovers nothing" "$(jq .recovered <<<"$rep")" 0
+  info "S6 replay before the adjustment: $(jq -c 'del(.errors)' <<<"$rep")"
+  want "S6 replay before the adjustment stores none of the four test reports" "$(fixtures_stored)" 0
   kc patch configmap bnpb-config --type=merge -p "{\"data\":{\"PVMBG_SCHEMA_ADJUST\":\"$ADJUST\"}}" >/dev/null
   RESTORE_ADJUST=1
   kc rollout restart deployment/aggregator >/dev/null
@@ -409,14 +489,34 @@ s6() {
   AUDIT_PF=${PIDS[${#PIDS[@]} - 1]}
   logs=$(kc logs -l role=aggregator --tail=-1 --max-log-requests=10 2>/dev/null)
   if ! grep -q "PVMBG schema adjustments active" <<<"$logs"; then notrun "S6 the Aggregator on the cluster does not know PVMBG_SCHEMA_ADJUST (a build without it)"; return; fi
-  rep=$(replay)
-  info "S6 replay answer: $(jq -c 'del(.errors)' <<<"$rep")"
-  want "S6 recovered equals the schema_incompatible messages parked before" "$(jq .recovered <<<"$rep")" "$expected"
-  want "S6 schema_incompatible messages still parked" "$(schema_parked)" 0
-  want "S6 other parked messages untouched" "$(parked_count PVMBG)" "$((parked_all - expected))"
-  dup=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000" | jq '[.items[].source_ref_id] | length - (unique | length)')
-  want "S6 repeated source_ref_id among the audit events" "$dup" 0
-  want "S6 a second replay recovers nothing more" "$(replay | jq .recovered)" 0
+  while [ "$replays" -lt 4 ] && [ "$stored" -lt 4 ]; do
+    rep=$(replay)
+    replays=$((replays + 1))
+    stored=$(fixtures_stored)
+    info "S6 replay $replays after the adjustment: $(jq -c 'del(.errors)' <<<"$rep"), $stored of 4 test reports stored"
+  done
+  want "S6 test reports stored after the replays" "$stored" 4
+  want "S6 replays needed to recover them all (more than one means a replay does not see all parked messages, #409)" "$replays" 1
+  check_adjusted "P3R-$RUN" "rename:eruption_count"
+  check_adjusted "P3T-$RUN" "type:ash_column_height_m"
+  check_adjusted "P3M-$RUN" "default:volcano_id"
+  event=$(audit_event_for "P3O-$RUN")
+  if [ -z "$event" ]; then
+    fail "S6 order: P3O-$RUN, parked in two versions, is not among the audit events after replay (#303)"
+  elif [[ "$(jq -r .occurred_at <<<"$event")" == 2026-10-01T10:00:00* ]]; then
+    pass "S6 order: of two parked versions the newer one by source time is stored, although it was received first"
+  else
+    fail "S6 order: the stored version has occurred_at $(jq -r .occurred_at <<<"$event"), want the newer 2026-10-01T10:00:00Z (#303)"
+  fi
+  want "S6 repeated source_ref_id among the audit events" "$(audit_get "/internal/audit/events?source=PVMBG&limit=1000" | jq '[.items[].source_ref_id] | length - (unique | length)')" 0
+  trail=$(replay_trail)
+  if [ -z "$trail" ]; then
+    fail "S6 correlation id: no replay-pvmbg-... id in the Aggregator logs (#303)"
+  elif [ "$(wc -w <<<"$trail")" -ge 3 ]; then
+    pass "S6 correlation id $trail: it appears in more than one pod"
+  else
+    fail "S6 correlation id $trail: it stops in one pod, it is not in the logs end to end (#303)"
+  fi
 }
 # Sends one report with its own key, retried with the same key until it gets a 202. Appends "key code seconds" to sent.log.
 send_report() {
