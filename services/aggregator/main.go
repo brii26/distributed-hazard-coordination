@@ -93,6 +93,7 @@ func loadPollConfig(tokens *tokenManager) (pollConfig, error) {
 		rejectToken: tokens.Reject,
 		pantaiURL:   os.Getenv("PANTAI_BASE_URL"),
 		pantaiToken: os.Getenv("PANTAI_AUTH_TOKEN"),
+		adjust:      parseSchemaAdjust(os.Getenv("PVMBG_SCHEMA_ADJUST")),
 	}
 
 	var err error
@@ -436,7 +437,9 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 		return err
 	}
 
-	api.replay = &replayer{q: db, m: newMapper(), upsert: upsert, publish: pub.publish, batch: batch}
+	replayMapper := newMapper()
+	replayMapper.adjust = pc.adjust
+	api.replay = &replayer{q: db, m: replayMapper, upsert: upsert, publish: pub.publish, batch: batch}
 
 	go api.watchStore(ctx, storeWatchEvery)
 

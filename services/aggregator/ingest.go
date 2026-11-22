@@ -380,6 +380,7 @@ func (p pipeline) run(ctx context.Context) {
 // One pipeline per source, all sharing the same upsert.
 func newPipelines(c pollConfig, upsert func(context.Context, HazardEvent) (bool, error), publish func(context.Context, HazardEvent, string)) []pipeline {
 	m := newMapper()
+	m.adjust = c.adjust
 	mappers := map[string]func(pollResult) ([]HazardEvent, error){
 		sourceBMKG:  func(r pollResult) ([]HazardEvent, error) { return m.mapSeismic(r.records, r.warnings) },
 		sourcePVMBG: func(r pollResult) ([]HazardEvent, error) { return m.mapVolcanic(r.records) },
