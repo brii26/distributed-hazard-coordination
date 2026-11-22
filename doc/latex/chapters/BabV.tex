@@ -44,7 +44,61 @@ Web Frontend dibuka pada NodePort 30080 dan Client-Facing API pada NodePort 3008
 
 \subsection{Skenario dan Pengujian}
 
-Skrip skenario ada di \texttt{tests/scenarios/}: \texttt{problem1.sh} sampai \texttt{problem5.sh} dan \texttt{all.sh} dari Milestone 1, ditambah \texttt{rolling-update.sh}, \texttt{autoscale.sh}, \texttt{audit-checksum.sh}, \texttt{critical-alerts.sh}, \texttt{trace-check.sh}, dan \texttt{gameday.sh}. Tester Agent dipasang dari manifest asisten dan dijalankan dengan \texttt{/app run practice <nama>} (\texttt{doc/TESTER\_AGENT\_NOTES.md}). Hasil dan bukti tiap skenario ada pada bab problem masing-masing. \ph{Tambahkan skrip end-to-end semua skenario latihan setelah isu \#328 selesai}
+Skrip skenario ada di \texttt{tests/scenarios/}: \texttt{problem1.sh} sampai \texttt{problem5.sh} dan \texttt{all.sh} dari Milestone 1, ditambah \texttt{rolling-update.sh}, \texttt{autoscale.sh}, \texttt{audit-checksum.sh}, \texttt{critical-alerts.sh}, \texttt{trace-check.sh}, dan \texttt{gameday.sh}. Tester Agent dipasang dari manifest asisten dan dijalankan dengan \texttt{/app run practice <nama>} (\texttt{doc/TESTER\_AGENT\_NOTES.md}). Hasil dan bukti tiap skenario ada pada bab problem masing-masing.
+
+\subsection{Skrip End-to-End Semua Skenario}
+
+\texttt{tests/scenarios/all-k8s.sh} menjalankan semua skrip skenario yang ada dalam urutan tetap pada \textit{cluster} Kubernetes dan mencetak satu tabel ringkasan. Skrip ini tidak punya logika skenario sendiri. Ia hanya memanggil skrip anak, memeriksa Audit API sesudah tiap skenario, menunggu \textit{cluster} sehat di antara skenario, dan melaporkan PASS, FAIL, SKIP, atau TIMEOUT. Urutannya: yang hanya membaca dulu, lalu yang mengubah ConfigMap, lalu beban berat, dan yang merusak data paling akhir (\texttt{--include-destructive}). \texttt{--list} menampilkan daftar dan kebutuhan tiap skenario, dan \texttt{DRY\_RUN=1} hanya mencetak rencana.
+
+Satu \textit{run} penuh \texttt{all-k8s.sh} dari awal sampai akhir belum dilakukan. Sebagai gantinya, tiap skenario dijalankan sendiri pada \textit{cluster} yang sama pada 21 dan 22 November 2026, dengan skrip anak yang sama seperti yang dipanggil orkestrator. Tabel berikut mencatat hasil yang ada, bukan hasil satu \textit{run} orkestrator.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.17\linewidth}|>{\raggedright\arraybackslash}p{0.12\linewidth}|>{\raggedright\arraybackslash}p{0.43\linewidth}|>{\raggedright\arraybackslash}p{0.2\linewidth}|}
+\hline
+\textbf{Skenario} & \textbf{Isu} & \textbf{Hasil pada cluster} & \textbf{Bukti} \\
+\hline
+\endhead
+\texttt{audit-checksum} & \#295 & Checksum Audit API sama dengan SHA-256 id yang dibaca per halaman, tanpa duplikat, untuk BMKG, PVMBG, dan Sensor Pantai. Dijalankan sesudah tiap skenario Problem 2. & Gambar kriteria 3 dan 5, Bab Problem 2 \\
+\hline
+\texttt{rolling-update} & \#286 & 3.849 permintaan, 0 gagal, \textit{lease} berpindah tanpa celah di atas 5 detik. SATELIT dilewati karena sumber itu mati. & Gambar kriteria 8, Bab Problem 2 \\
+\hline
+\texttt{autoscale} & \#327 & Replika naik ke 5 lalu turun ke 3 selama 189.969 permintaan, 0 gagal, tanpa duplikat. Skrip gagal pada satu pemeriksaan (jumlah replika saat idle harus tetap 3): HPA sendiri naik ke 4 saat idle, karena satu \textit{pod} Aggregator kadang memakai sekitar 240m CPU dari \textit{request} 200m. Penyebab \textit{pod} sibuk itu belum dicari. & Gambar \ref{fig:e2e-autoscale} dan \ref{fig:e2e-replika} \\
+\hline
+\texttt{p2-leases} & \#287 & \texttt{kill-leader} 27 PASS, \texttt{clock-skew} 23 PASS, \texttt{freeze} 29 PASS. Fencing tidak teruji oleh \textit{freeze}. & Gambar kriteria 3, 4, dan 5, Bab Problem 2 \\
+\hline
+\texttt{p1-wipe-node} & \#298 & Skrip ada. Pemulihan setelah \textit{wipe-node} dibahas pada Bab Problem 1. & Bab Problem 1 \\
+\hline
+\texttt{p3-e2e} & \#307 & Skrip ada, tetapi hasilnya merah selama pesan gagal terpecah di antara \textit{node} store dan hilang saat \textit{restart} (\#409, belum selesai). & Tidak ada \\
+\hline
+\texttt{p4-60x} & \#401 & \textit{Replay} tanpa \textit{crash} dan dengan dua kali \textit{kill} pemimpin menghasilkan 23.561 kebakaran dengan SHA-256 sama (\texttt{cb75381e...}), \textit{epoch} lease SATELIT naik tepat sesudah tiap \textit{kill}. & Komentar isu \#401 \\
+\hline
+\texttt{load-p2}, \texttt{load-ratio} & \#288 & Skrip ada. Uji 10.000 VU belum dijalankan. Uji dengan VU lebih kecil dilaporkan pada Bab Problem 2 bila sudah ada. & Bab Problem 2, kriteria 6 dan 7 \\
+\hline
+\texttt{gameday} & \#324 & Dijalankan pada 22 November 2026 dengan enam skenario dan pengamatan 5 menit. Hasilnya dilaporkan pada Bab Problem 5. & Bab Problem 5 \\
+\hline
+\end{longtable}
+
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/e2e-autoscale-output.png}{\includegraphics[width=0.62\linewidth,height=0.6\textheight,keepaspectratio]{figures/bukti/e2e-autoscale-output.png}}{\ph{figures/bukti/e2e-autoscale-output.png belum ada}}
+\caption{\texttt{autoscale.sh}: replika naik ke 5 lalu turun ke 3, 0 permintaan gagal, dan satu pemeriksaan gagal pada replika saat idle}
+\label{fig:e2e-autoscale}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/e2e-grafana-replicas.png}{\includegraphics[width=\linewidth,height=0.4\textheight,keepaspectratio]{figures/bukti/e2e-grafana-replicas.png}}{\ph{figures/bukti/e2e-grafana-replicas.png belum ada}}
+\caption{Panel Grafana jumlah replika Aggregator (saat ini, yang diinginkan, minimum, dan maksimum) selama \texttt{autoscale.sh}}
+\label{fig:e2e-replika}
+\end{figure}
+
+Batasan yang perlu diketahui pembaca:
+\begin{itemize}
+\item Tidak ada \textit{run} orkestrator tunggal. Hasil di tabel berasal dari \textit{run} terpisah pada \textit{cluster} yang sama, sebagian pada \textit{image} yang diganti di antaranya.
+\item Semua pengujian dijalankan pada tiga VM VirtualBox di satu mesin, bukan pada \textit{cluster} demo atau host fisik terpisah.
+\item Beban terbesar yang pernah dijalankan jauh di bawah 10.000 VU. Replika maksimum 5 dibatasi memori \textit{node}, dan \textit{node} terkecil sudah memakai sekitar 90\% memori dalam bentuk \textit{request}.
+\item Pemeriksaan jumlah replika saat idle pada \texttt{autoscale.sh} gagal pada \textit{run} yang dilaporkan dan tidak diubah agar lulus.
+\item Skenario P3 bergantung pada \#409 dan tidak dapat dinyatakan lulus sampai isu itu selesai.
+\end{itemize}
 
 \section{Pengembangan Lokal dengan Docker Compose}
 
