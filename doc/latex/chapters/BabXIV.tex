@@ -48,4 +48,11 @@ Membaca ulang dari awal dipilih karena server menyimpan seluruh riwayat sesi dan
 
 \textbf{Mengikuti aliran langsung.} Sesudah batas \textit{offset} dilepas, selisih \textit{offset} turun dari 1.719.453 ke 3 dalam 832 detik, dan selisih waktu umpan menjadi 138 detik.
 
-\textbf{Kriteria lain.} \ph{bukti kriteria lain Problem 4, tangkapan layar Grafana baris "Satellite fires (P4, \#315)" belum diambil}
+\textbf{\textit{Dashboard}.} Gambar \ref{fig:p4-grafana} diambil pada klaster lokal tiga VM pada 22 November 2026 pukul 23.48 WIB, sekitar lima menit sesudah pipeline satelit dinyalakan dan mulai membaca dari \textit{offset} 0. Penyimpanan mencapai sekitar 2.000 rekaman per detik saat membaca ulang, dan tumpukan tertahan pada batas 2.048. Pada saat itu tercatat 13 ribu kiriman ulang dan 367 kiriman yang ditolak \textit{tombstone}, sedangkan \texttt{too\_late}, \texttt{unknown\_or\_closed\_target}, dan rekaman yang disimpan sebagai gagal masih 0. Selisih \textit{offset} dan waktu umpan masih besar karena pembacaan ulang riwayat belum selesai.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/p4-grafana-satelit.png}
+\caption{Baris \textit{Satellite fires} pada Grafana saat pembacaan ulang}
+\label{fig:p4-grafana}
+\end{figure}
