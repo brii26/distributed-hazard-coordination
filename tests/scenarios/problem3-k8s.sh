@@ -234,10 +234,61 @@ s2() {
 
 # ---------- scenario 3 ----------
 
+all_unprocessed() { audit_get "/internal/audit/unprocessed?limit=1000"; }
+agent_logs() { kubectl -n "$TESTER_NS" logs -l app=tester-agent --tail=-1 --max-log-requests=10 2>/dev/null; }
+agent_done_count() { local l; l=$(agent_logs); grep -c "pemulihan akhir selesai" <<<"$l"; }
+
+# pvmbg_seqs: the sequence numbers at the end of every PVMBG source_ref_id in the audit events, sorted.
+pvmbg_seqs() {
+  local cursor="" page i
+  for i in $(seq 1 30); do
+    page=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000${cursor:+&cursor=$cursor}")
+    jq -r '.items[]?.source_ref_id' <<<"$page"
+    cursor=$(jq -r '.next_cursor // empty' <<<"$page")
+    [ -n "$cursor" ] || break
+  done | sed 's/^.*-//' | sort -n | uniq
+}
+
 s3() {
   heading "Scenario 3: retryable and never-retryable are treated differently"
-  say "NOT YET WRITTEN: needs the Tester Agent kill-store step"
-  notrun "S3"
+  if [ "$DRY_RUN" = 1 ]; then say "[dry-run] kubectl exec -n $TESTER_NS daemonset/tester-agent -- /app run practice kill-store, sample /internal/audit/unprocessed every 3 s, wait for the agent end marker, check no retrying row is left, no hole in the PVMBG ids and the parked messages unchanged"; return 0; fi
+  if ! kubectl -n "$TESTER_NS" get daemonset tester-agent >/dev/null 2>&1; then notrun "S3 the Tester Agent is not installed in the namespace $TESTER_NS"; return; fi
+  ensure_accounts
+  local before_done parked_before max_seq_before samples max_retrying max_attempts r n end seen after holes dup
+  parked_before=$(all_unprocessed | jq -c '[.items[] | select(.status == "parked") | {(.message_id): .attempts}] | add // {}')
+  max_seq_before=$(pvmbg_seqs | tail -1)
+  before_done=$(agent_done_count)
+  info "S3 parked messages before: $(jq 'length' <<<"$parked_before"), newest PVMBG sequence ${max_seq_before:-none}"
+  kubectl -n "$TESTER_NS" exec daemonset/tester-agent -- /app run practice kill-store >"$WORK/kill-store.log" 2>&1 || { notrun "S3 the Tester Agent refused kill-store: $(head -c 200 "$WORK/kill-store.log")"; return; }
+  max_retrying=0 max_attempts=0 seen=0
+  end=$((SECONDS + 300))
+  while [ "$SECONDS" -lt "$end" ]; do
+    samples=$(all_unprocessed)
+    r=$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$samples" 2>/dev/null || echo 0)
+    [ "${r:-0}" -gt "$max_retrying" ] && max_retrying=$r
+    n=$(jq '[.items[]? | select(.status == "retrying") | .attempts] | max // 0' <<<"$samples" 2>/dev/null || echo 0)
+    [ "${n:-0}" -gt "$max_attempts" ] && max_attempts=$n
+    if [ "$(agent_done_count)" -gt "$before_done" ]; then seen=1; break; fi
+    nap 3
+  done
+  if [ "$seen" = 0 ]; then notrun "S3 the Tester Agent did not report the end of kill-store within 300 s"; return; fi
+  info "S3 kill-store finished, waiting 60 s for the retry worker; most retrying rows seen at once: $max_retrying, highest attempts: $max_attempts"
+  nap 60
+  until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
+  after=$(all_unprocessed)
+  want "S3 no message is left in the retrying state" "$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$after")" 0
+  holes=$(pvmbg_seqs | awk -v base="${max_seq_before:-0}" '$1 + 0 > base + 0 { if (prev && $1 + 0 != prev + 1) gap++; prev = $1 + 0 } END { print gap + 0 }')
+  want "S3 holes in the PVMBG sequence after the outage (a lost record)" "$holes" 0
+  dup=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000" | jq '[.items[].source_ref_id] | length - (unique | length)')
+  want "S3 repeated source_ref_id among the audit events" "$dup" 0
+  want "S3 parked messages that disappeared from the auditor's list (#300, #304)" "$(jq -c --argjson b "$parked_before" '[.items[] | select(.status == "parked") | {(.message_id): .attempts}] | add // {} | . as $a | ($b | to_entries | map(select($a[.key] == null)) | length)' <<<"$after")" 0
+  want "S3 parked messages whose attempts changed (a never-retryable message was retried)" "$(jq -c --argjson b "$parked_before" '[.items[] | select(.status == "parked") | {(.message_id): .attempts}] | add // {} | . as $a | ($b | to_entries | map(select($a[.key] != null and $a[.key] != .value)) | length)' <<<"$after")" 0
+  if [ "$max_retrying" -gt 0 ]; then
+    pass "S3 retrying rows were seen during the outage ($max_retrying at once, attempts up to $max_attempts) and all healed"
+  else
+    notrun "S3 kill-store produced no retrying row (the second copy of the data may have absorbed it), so the retrying path itself was not shown; the table lock fallback is not written yet"
+  fi
+  want "S3 restart counts do not matter here, hazards still served" "$(code -b "$WORK/op.jar" "$API/hazards?type=VOLCANIC&limit=5")" 200
 }
 
 # ---------- scenario 4 ----------
