@@ -355,6 +355,7 @@ func TestAnalyticsShardOnRealDB(t *testing.T) { //nolint:paralleltest // shared 
 	mk(typeSeismic, map[string]any{tsunamiAttr: true}, &awas, &area, at)
 	mk(typeSeismic, map[string]any{tsunamiAttr: false}, nil, nil, at.Add(time.Minute))
 	mk(typeVolcanic, nil, &awas, &area, at.Add(6*time.Minute))
+	mk(typeWildfire, nil, &awas, &area, at.Add(7*time.Minute))
 	mk(typeVolcanic, nil, &awas, &area, at.Add(time.Hour)) // after as_of
 
 	got, err := analyticsShardOn(ctx, s.db, shard, analyticsSpec{Since: at, AsOf: at.Add(10 * time.Minute), BucketSec: 300})
@@ -363,13 +364,13 @@ func TestAnalyticsShardOnRealDB(t *testing.T) { //nolint:paralleltest // shared 
 	}
 
 	b := at.Unix() / 300 * 300
-	for k, want := range map[seriesKey]int64{{b, "tsunami"}: 1, {b, "earthquake"}: 1, {b + 300, "volcano"}: 1} {
+	for k, want := range map[seriesKey]int64{{b, "tsunami"}: 1, {b, "earthquake"}: 1, {b + 300, "volcano"}: 1, {b + 300, "wildfire"}: 1} {
 		if got.Series[k] != want {
 			t.Errorf("series %v = %d, want %d", k, got.Series[k], want)
 		}
 	}
 
-	if got.Severity["AWAS"] != 2 || got.Severity[""] != 1 || got.Area["Padang"] != 2 || got.Area[""] != 1 || got.Source[sourcePVMBG] != 3 {
+	if got.Severity["AWAS"] != 3 || got.Severity[""] != 1 || got.Area["Padang"] != 3 || got.Area[""] != 1 || got.Source[sourcePVMBG] != 4 {
 		t.Errorf("severity=%v area=%v source=%v", got.Severity, got.Area, got.Source)
 	}
 }

@@ -76,6 +76,7 @@ WITH e AS (
               WHEN hazard_type = 'SEISMIC' THEN 'earthquake'
               WHEN hazard_type = 'VOLCANIC' THEN 'volcano'
               WHEN hazard_type = 'COASTAL' THEN 'coastal'
+              WHEN hazard_type = 'WILDFIRE' THEN 'wildfire'
               ELSE 'other' END AS category,
          COALESCE(severity, '') AS severity,
          COALESCE(area_name, '') AS area,
