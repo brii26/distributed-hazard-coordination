@@ -8,7 +8,7 @@ digraph deployment {
   edge [fontname="TeX Gyre Termes", fontsize=12];
 
   subgraph cluster_free {
-    label="Pod tanpa pin node, dijadwalkan k3s ke node mana pun (letak akhir: lihat hasil run)"; style=dashed; fontname="TeX Gyre Termes";
+    label="Pod tanpa pin node, dijadwalkan k3s ke node mana pun"; style=dashed; fontname="TeX Gyre Termes";
     fe   [label="web-frontend, client-facing-api,\nauth-service, bmkg-mock,\npvmbg-mock, sensor-pantai", fillcolor="#d5ecd4"];
     dbs  [label="coordination-db, user-db\n(StatefulSet, PVC local-path)", shape=cylinder, fillcolor="#fff2b3"];
     mq   [label="rabbitmq (StatefulSet),\ndashboard-updater, notifier,\naudit-logger", fillcolor="#fbe0b5"];

@@ -15,6 +15,7 @@ digraph arsitektur {
     bmkg   [label="BMKG mock", fillcolor="#e8e8e8"];
     pvmbg  [label="PVMBG mock", fillcolor="#e8e8e8"];
     pantai [label="Sensor Pantai", fillcolor="#e8e8e8"];
+    satelit [label="Feed Satelit\n(SSE, server asisten)", fillcolor="#e8e8e8"];
   }
 
   subgraph cluster_bnpb {
@@ -57,6 +58,7 @@ digraph arsitektur {
   agg1 -> bmkg     [label="REST\nX-BMKG-Key"];
   agg1 -> pvmbg    [label="REST\nBearer OAuth"];
   agg1 -> pantai   [label="REST\nBearer token"];
+  agg1 -> satelit  [label="SSE\nLast-Event-ID"];
   agg1 -> store    [label="tulis ke 2 owner\n(epoch fencing)"];
   agg2 -> store    [label="baca lintas shard", style=dashed];
   agg1 -> coord    [label="lease, epoch"];
