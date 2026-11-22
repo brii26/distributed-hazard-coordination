@@ -42,13 +42,13 @@ notrun() { say "NOT RUN: $*"; NOTRUN=$((NOTRUN + 1)); }
 info() { say "INFO: $*"; }
 heading() { printf '\n== %s\n' "$*"; }
 
-# x <cmd...>: the only way the script changes anything, so a dry run prints instead.
+# The only way the script changes anything, so a dry run prints instead.
 x() {
   if [ "$DRY_RUN" = 1 ]; then printf '[dry-run] %s\n' "$*"; return 0; fi
   "$@"
 }
 
-# nap <seconds>: sleep that a TERM can interrupt, so the exit trap runs at once.
+# Sleep that a TERM can interrupt, so the exit trap runs at once.
 nap() { sleep "$1" & wait $!; }
 
 kc() { kubectl -n "$NS" "$@"; }
@@ -169,7 +169,7 @@ s1() {
   set_schema '{"version":1}'
 }
 
-# failed_row <message id>: the Operator route's row for that id, found by following the cursor, or nothing.
+# The Operator route's row for a message id, found by following the cursor, or nothing.
 failed_row() {
   local cursor="" page row i
   for i in $(seq 1 30); do
@@ -225,7 +225,7 @@ all_unprocessed() { audit_get "/internal/audit/unprocessed?limit=1000"; }
 agent_logs() { kubectl -n "$TESTER_NS" logs -l app=tester-agent --tail=-1 --max-log-requests=10 2>/dev/null; }
 agent_done_count() { local l; l=$(agent_logs); grep -c "pemulihan akhir selesai" <<<"$l"; }
 
-# pvmbg_seqs: the sequence numbers at the end of every PVMBG source_ref_id in the audit events, sorted.
+# The sequence numbers at the end of every PVMBG source_ref_id in the audit events, sorted.
 pvmbg_seqs() {
   local cursor="" page i
   for i in $(seq 1 30); do
@@ -408,7 +408,7 @@ send_report() {
 }
 
 # The report id is derived from the Idempotency-Key, so a stored report is matched by its description "report <i> of <run>".
-# field_report_counters: new and duplicate counts summed over every Aggregator pod, through the API server proxy.
+# New and duplicate counts summed over every Aggregator pod, read through the API server proxy.
 field_report_counters() {
   local pod
   for pod in $(kc get pods -l role=aggregator -o name | cut -d/ -f2); do
