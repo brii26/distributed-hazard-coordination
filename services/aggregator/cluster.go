@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"slices"
 	"sync"
 	"time"
@@ -32,6 +34,39 @@ type cluster struct {
 
 	mu    sync.Mutex
 	dirty map[int]bool
+
+	// Copies written successfully per node since start, under mu.
+	nodeWrites map[string]int64
+}
+
+func (c *cluster) countWrite(node string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.nodeWrites == nil {
+		c.nodeWrites = map[string]int64{}
+	}
+
+	c.nodeWrites[node]++
+}
+
+// Prometheus text for the writes each node took on this pod. Every pod exports its own, so a report sums them.
+func (c *cluster) writeMetrics(w io.Writer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	names := make([]string, 0, len(c.nodeWrites))
+	for name := range c.nodeWrites {
+		names = append(names, name)
+	}
+
+	slices.Sort(names)
+
+	_, _ = io.WriteString(w, "# TYPE store_node_writes_total counter\n")
+
+	for _, name := range names {
+		_, _ = fmt.Fprintf(w, "store_node_writes_total{node=%q} %d\n", name, c.nodeWrites[name])
+	}
 }
 
 // How many expected store nodes are missing from the live list. Membership drops a dead node after its grace period, so this is what keeps a lost node visible afterwards. 0 when expectedNodes is not set.
@@ -82,7 +117,14 @@ func newCluster(live func() []*node) *cluster {
 
 // Writes h to every owner of its shard, see fanout.
 func (c *cluster) upsert(ctx context.Context, h HazardEvent) (bool, error) {
-	return c.fanout(ctx, shardOf(h.HazardID), func(ctx context.Context, n *node) (bool, error) { return c.write(ctx, n, h) })
+	return c.fanout(ctx, shardOf(h.HazardID), func(ctx context.Context, n *node) (bool, error) {
+		changed, err := c.write(ctx, n, h)
+		if err == nil {
+			c.countWrite(n.name)
+		}
+
+		return changed, err
+	})
 }
 
 // Runs write on every owner of the shard at once, each with its own timeout. One commit is enough; a copy that missed marks the shard dirty. True if any copy was new or changed.

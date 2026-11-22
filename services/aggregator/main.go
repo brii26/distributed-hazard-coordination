@@ -34,6 +34,7 @@ func newMux(api *readAPI) *http.ServeMux {
 	mux.HandleFunc("GET /internal/audit/events", api.auditEvents)
 	mux.HandleFunc("GET /internal/audit/checksum", api.auditChecksum)
 	mux.HandleFunc("POST /internal/admin/replay", api.adminReplay)
+	mux.HandleFunc("POST /internal/admin/ingest", api.adminIngest)
 	mux.HandleFunc("GET /internal/audit/unprocessed", api.auditUnprocessed)
 	mux.HandleFunc("GET /internal/audit/location", api.auditLocation)
 
@@ -440,6 +441,7 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	replayMapper := newMapper()
 	replayMapper.adjust = pc.adjust
 	api.replay = &replayer{q: db, m: replayMapper, upsert: upsert, publish: pub.publish, batch: batch}
+	api.backfill = &backfill{m: newMapper(), upsert: upsert, fail: db.insertFailed, retry: rc}
 
 	go api.watchStore(ctx, storeWatchEvery)
 
@@ -456,6 +458,11 @@ func run() error { //nolint:gocyclo,funlen // start-up wiring, one step after an
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		leaseMetrics(w, r)
 		relay.writeMetrics(w)
+
+		if cl != nil {
+			cl.writeMetrics(w)
+		}
+
 		api.fields.writeMetrics(w)
 		failed.write(r.Context(), w)
 		api.replay.writeMetrics(w)

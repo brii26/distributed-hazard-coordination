@@ -13,4 +13,5 @@ use (
 	./services/satellite-ingest
 	./services/situation-summarizer
 	./tools/feedprobe
+	./tools/load-quakes
 )
