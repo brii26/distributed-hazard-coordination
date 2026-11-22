@@ -230,7 +230,11 @@ s2() {
   want "S2 restart counts unchanged" "$(restarts)" "$before_restarts"
 }
 
-all_unprocessed() { audit_get "/internal/audit/unprocessed?limit=1000"; }
+# The polled sources only: the Sensor Pantai quarantine parks tens of thousands of rows, which would push these off the first page.
+all_unprocessed() {
+  { audit_get "/internal/audit/unprocessed?source=PVMBG&limit=1000"; audit_get "/internal/audit/unprocessed?source=BMKG&limit=1000"; } |
+    jq -s '{items: (map(.items // []) | add)}'
+}
 
 # Holds an exclusive lock on hazard_events on every store node, so hazard writes time out while failed_messages still works.
 lock_hazard_events() {
@@ -310,7 +314,7 @@ s3() {
   fi
   info "S3 waiting ${SETTLE}s for the retry worker"
   nap "$SETTLE"
-  until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
+  until_true "$WAIT" bash -c "[ \"\$(curl -s -H 'Authorization: Bearer $AUDIT_TOKEN' '$AUDIT/internal/audit/unprocessed?source=PVMBG&limit=1000' | jq '[.items[]? | select(.status == \"retrying\")] | length')\" = 0 ]"
   after=$(all_unprocessed)
   want "S3 no message is left in the retrying state" "$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$after")" 0
   holes=$(pvmbg_seqs | awk -v base="${max_seq_before:-0}" 'BEGIN { prev = base + 0 } $1 + 0 > base + 0 { if (prev > 0 && $1 + 0 != prev + 1) gap++; prev = $1 + 0 } END { print gap + 0 }')
