@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -191,4 +192,70 @@ func TestLeaseCursorAndTokenUseTheCoordinationPool(t *testing.T) { //nolint:para
 	}
 
 	release()
+}
+
+// Real Postgres with two separate databases. Failed messages written through one store are read through another that points at a different data database.
+func TestFailedMessagesLiveInTheCoordinationDatabase(t *testing.T) { //nolint:paralleltest // shares tables with other runs
+	coordURL := os.Getenv("COORDINATION_DB_TEST_URL")
+	dataA, dataB := os.Getenv("CANONICAL_DB_TEST_URL"), os.Getenv("CANONICAL_DB_TEST_URL_B")
+
+	if coordURL == "" || dataA == "" || dataB == "" || dataA == dataB {
+		t.Skip("CANONICAL_DB_TEST_URL, CANONICAL_DB_TEST_URL_B and COORDINATION_DB_TEST_URL needed")
+	}
+
+	ctx := context.Background()
+
+	open := func(dataURL string) *store {
+		s, err := openStore(dataURL, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err = s.openCoordination(coordURL, dataURL, 2); err != nil {
+			t.Fatal(err)
+		}
+
+		t.Cleanup(func() { _ = s.close() })
+
+		return s
+	}
+
+	a, b := open(dataA), open(dataB)
+
+	for _, f := range []string{"migrations/003_failed_messages.sql", "migrations/016_failed_messages_coordination.sql"} {
+		ddl, err := os.ReadFile(f) //nolint:gosec // test reads the project's own migration files
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err = a.coordDB().ExecContext(ctx, string(ddl)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m := newFailedMessage(sourcePVMBG, []byte(`{"x":`), "malformed_json: truncated", false, time.Now())
+	m.MessageID = fmt.Sprintf("two-db-%d", time.Now().UnixNano())
+
+	t.Cleanup(func() {
+		_, _ = a.coordDB().ExecContext(ctx, `DELETE FROM failed_messages WHERE message_id = $1`, m.MessageID)
+	})
+
+	if err := a.insertFailed(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _, err := b.listFailed(ctx, failedFilter{Statuses: []string{"parked"}, Source: sourcePVMBG}, "", 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+
+	for _, r := range rows {
+		found = found || r.MessageID == m.MessageID
+	}
+
+	if !found {
+		t.Fatal("a message written through the first store must be listed by the second one that has a different data database")
+	}
 }
