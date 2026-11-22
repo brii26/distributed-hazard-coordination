@@ -33,25 +33,17 @@ The Milestone 2 system runs on a three node k3s cluster. The VMs are VirtualBox 
 
 ```mermaid
 flowchart TB
-  DEV["Host: kubectl, docker, scripts<br/>127.0.0.1:6443 API, :5000 registry, :2201-2203 ssh"]
-  subgraph HOST["VirtualBox host"]
-    subgraph NET["Private network k3s-net 10.77.0.0/24"]
-      subgraph A["node-a 10.77.0.11: control plane and worker"]
-        API["k3s API server :6443"]
-        REG["image registry :5000"]
-        SA[("store pod")]
-      end
-      subgraph B["node-b 10.77.0.12: worker"]
-        SB[("store pod")]
-      end
-      subgraph C["node-c 10.77.0.13: worker"]
-        SC[("store pod")]
-        CDB[("coordination-db-0")]
-      end
-    end
+  DEV["Host<br/>kubectl, docker, scripts"]
+  subgraph NET["VirtualBox, private network 10.77.0.0/24"]
+    direction TB
+    A["node-a 10.77.0.11<br/>control plane + worker<br/>API :6443, registry :5000<br/>store pod"]
+    B["node-b 10.77.0.12<br/>worker<br/>store pod"]
+    C["node-c 10.77.0.13<br/>worker<br/>store pod, coordination-db-0"]
   end
-  DEV --> API
-  DEV --> REG
+  DEV -->|"6443, 5000, ssh 2201-2203"| A
+  A --- B
+  A --- C
+  B --- C
 ```
 
 | Namespace | What runs there |
@@ -78,20 +70,39 @@ Details: [TOPOLOGY.md](doc/TOPOLOGY.md) (nodes, ports, building and destroying t
 ## Service architecture
 
 ```mermaid
-flowchart LR
-  SRC["Sources: BMKG, PVMBG,<br/>Sensor Pantai, Satelit feed"] -->|poll, SSE| AGG["Aggregator x3<br/>one lease per source"]
-  AGG -->|"2 copies, 16 shards"| ST[("Canonical Store<br/>one per node")]
-  AGG -.->|"leases, cursors, failed messages"| CDB[("coordination-db")]
-  AGG -->|publish| MQ{{"RabbitMQ<br/>hazard.events"}}
-  MQ --> NO["Notifier"]
-  MQ --> AL["Audit Logger"]
-  MQ --> DU["Dashboard Updater"]
-  MQ --> SS["Situation Summarizer"]
-  U["Media, Tim Lapangan, Operator"] --> FE["Web Frontend"] --> CFA["Client-Facing API"]
+flowchart TB
+  U["Media, Tim Lapangan, Operator"]
+  subgraph EDGE["Edge"]
+    direction LR
+    FE["Web Frontend"] --> CFA["Client-Facing API"]
+    CFA --> AUTH["Auth Service"]
+  end
+  subgraph CORE["Core"]
+    direction LR
+    SRC["Sources<br/>BMKG, PVMBG,<br/>Sensor Pantai, Satelit"] --> AGG["Aggregator x3"]
+    FRP["Field Report<br/>Processor"] --> AGG
+  end
+  subgraph MSG["Messaging"]
+    direction LR
+    MQ{{"RabbitMQ"}} --> NO["Notifier"]
+    MQ --> AL["Audit Logger"]
+    MQ --> DU["Dashboard Updater"]
+    MQ --> SS["Situation Summarizer"]
+  end
+  subgraph DATA["Storage"]
+    direction LR
+    ST[("Canonical Store<br/>one per node")]
+    CDB[("coordination-db")]
+    UDB[("user-db")]
+  end
+  U --> FE
   CFA -->|gRPC| AGG
-  CFA -->|gRPC| AUTH["Auth Service"] --> UDB[("user-db")]
-  CFA -->|"POST /field-reports"| MQ
-  MQ --> FRP["Field Report Processor"] --> AGG
+  CFA -->|"field reports"| MQ
+  MQ --> FRP
+  AGG -->|publish| MQ
+  AGG --> ST
+  AGG -.-> CDB
+  AUTH --> UDB
   DU -->|SSE| CFA
 ```
 
