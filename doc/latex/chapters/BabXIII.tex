@@ -1,0 +1,228 @@
+% sumber: doc/P3_SCHEMA_POLICY.md, doc/IF4031 - Tugas Besar - M2.pdf, services/aggregator (mapper.go, guard.go, failure.go, failed_store.go, retry_worker.go, replay.go, fieldreport.go, migrations 003, 010, 013), services/client-facing-api (fieldreports.go, failedmessages.go), services/field-report-processor, tests/scenarios/problem3-k8s.sh
+\chapter[MILESTONE 2: PROBLEM 3]{Milestone 2: Problem 3, Surat dari Tetangga}
+
+Bab ini menjawab Problem 3 Milestone 2. Urutan subbab mengikuti butir ``Di laporan'' pada spesifikasi, lalu keterbatasan dan bukti per kriteria. Klaim diambil dari kode dan dari keluaran \texttt{tests/scenarios/problem3-k8s.sh} yang dijalankan pada klaster lokal tiga \textit{node} pada 22 November 2026. Kekurangan yang ditemukan skrip itu ditulis apa adanya.
+
+\section{Identifikasi Persoalan}
+
+Subbab ini menjawab butir 1 ``Di laporan'' untuk kriteria 2, 3, 4, dan 6.
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.1\linewidth}|>{\raggedright\arraybackslash}p{0.25\linewidth}|>{\raggedright\arraybackslash}p{0.3\linewidth}|>{\raggedright\arraybackslash}p{0.25\linewidth}|}
+\hline
+\textbf{Kriteria} & \textbf{Persoalan} & \textbf{Konsep dalam literatur} & \textbf{Wujud pada soal} \\
+\hline
+\endhead
+2 & Pesan yang tidak dapat diproses harus tersimpan utuh, dan pesan yang mungkin berhasil bila dicoba lagi harus dibedakan dari pesan yang tidak akan pernah berhasil & \textit{Dead letter queue}, kegagalan sementara melawan kegagalan permanen, \textit{retry} dengan \textit{exponential backoff} & Pesan PVMBG yang berubah skema, atau yang gagal disimpan karena \textit{store} mati \\
+\hline
+3 & Satu pesan rusak tidak boleh menjatuhkan penerimanya atau membuatnya \textit{restart} terus-menerus & \textit{Poison message}, validasi masukan di batas kepercayaan, dan isolasi kegagalan per rekaman & JSON terpotong, bersarang sangat dalam, UTF-8 tidak valid, dan ukuran berlebih \\
+\hline
+4 & Pesan yang gagal harus bisa diproses ulang tanpa duplikat dan dengan urutan per \texttt{source\_ref\_id} terjaga & \textit{Schema evolution}, \textit{idempotent consumer}, dan urutan per kunci \\
+& & & Pemrosesan ulang sesudah sistem disesuaikan \\
+\hline
+6 & Laporan yang sudah dibalas 202 tidak boleh hilang dan tidak boleh diproses dua kali walau penerimanya mati kapan saja & \textit{Durable acknowledgement} dengan \textit{publisher confirm}, \textit{at-least-once delivery} ditambah penerima idempoten sehingga efeknya \textit{effectively once}, dan \textit{commit first, ack last} & \texttt{POST /field-reports} dari Tim Lapangan \\
+\hline
+\end{longtable}
+
+\section{Kebijakan Perubahan Skema}
+
+Subbab ini menjawab butir 2 ``Di laporan''. Kebijakannya ada di \texttt{doc/P3\_SCHEMA\_POLICY.md} dan dijalankan oleh \texttt{checkContract} di \texttt{mapper.go}, di awal pemetaan PVMBG.
+
+Kontrak PVMBG terdiri dari enam \textit{field} wajib yang tidak boleh \textit{null}: \texttt{report\_id}, \texttt{volcano\_id}, \texttt{alert\_level}, \texttt{reported\_at} bertipe teks, serta \texttt{eruption\_count\_24h} dan \texttt{ash\_column\_height\_m} bertipe angka. \textit{Field} lain diterima dan masuk ke \texttt{attributes}.
+
+\textbf{Diterima otomatis:} penambahan \textit{field}, misalnya \texttt{confidence\_level} atau \texttt{sensor\_count}, \textit{field} opsional yang hilang, urutan \textit{field} yang berubah, dan nilai yang tidak ada di tabel acuan, yang dicatat sebagai nilai mentah di \texttt{attributes} dengan kolom kanoniknya \textit{null}.
+
+\textbf{Tidak diterima, disimpan:} \textit{field} kontrak yang diganti nama, berubah tipe, hilang, atau \textit{null}. Alasannya berbentuk \texttt{schema\_incompatible: field 'x' missing} atau \texttt{field 'x' changed from number to string}, dengan beberapa bagian digabung berurut nama \textit{field}.
+
+Alasannya: perubahan yang hanya menambah tidak mengubah arti rekaman lama, jadi aman diterima. Perubahan yang menghapus, mengganti nama, atau mengganti tipe mengubah arti rekaman, dan pemeta tidak dapat membedakan penggantian nama dari penghapusan. Menebaknya berisiko menyimpan nilai yang salah sebagai benar, jadi pesan itu disimpan sampai ada yang mengizinkan cara membacanya.
+
+Penyesuaian tanpa \textit{image} baru dilakukan lewat \texttt{PVMBG\_SCHEMA\_ADJUST} pada ConfigMap \texttt{bnpb-config}, berupa daftar suku \texttt{rename:<baru>=<kontrak>}, \texttt{type:<field>}, dan \texttt{default:<field>=<nilai>}. Rekaman yang disesuaikan diberi \texttt{attributes.schema\_adjusted} supaya terbedakan dari yang dikirim benar oleh sumber. BMKG tidak berubah dan tetap toleran.
+
+\section{Penyimpanan, Pemeriksaan, dan Pemrosesan Ulang}
+
+Subbab ini menjawab butir 3 ``Di laporan''.
+
+\subsection{Penyimpanan}
+
+Setiap pesan yang gagal masuk ke tabel \texttt{failed\_messages} sebagai \textit{bytes} apa adanya (\texttt{payload}), dengan \texttt{payload\_sha256}, sumber, waktu terima, alasan berkode, \texttt{retryable}, jumlah percobaan, status \texttt{retrying}, \texttt{parked}, atau \texttt{recovered}, dan \texttt{source\_ref\_id} bila ada. Muatan yang melebihi batas disimpan terpotong pada 64 KiB dengan penanda \texttt{oversize}, dan sha256-nya tetap atas isi penuh.
+
+Sebelum pemeta, \texttt{guard.go} memeriksa tiap rekaman: lebih dari 1 MiB menjadi \texttt{too\_large}, UTF-8 tidak valid menjadi \texttt{invalid\_utf8}, kedalaman lebih dari 64 menjadi \texttt{too\_deep}, dan JSON yang tidak sah menjadi \texttt{malformed\_json}. Satu rekaman rusak diparkir sendiri dan rekaman lain pada paket yang sama tetap diproses. Badan jawaban dari sumber dibatasi 8 MiB.
+
+\subsection{Dua Perlakuan}
+
+\texttt{classifyFailure} di \texttt{failure.go} menentukan apakah kegagalan dapat diulang. Yang dapat diulang: \texttt{timeout}, \texttt{store\_unavailable}, \texttt{upstream\_5xx}, \texttt{breaker\_open}, dan \texttt{unknown}. Yang tidak: \texttt{schema\_incompatible}, \texttt{malformed}, \texttt{malformed\_json}, \texttt{too\_deep}, \texttt{invalid\_utf8}, \texttt{too\_large}, dan \texttt{invalid\_value}, karena masukan yang sama gagal dengan cara yang sama sampai pemetaannya berubah.
+
+Pesan yang dapat diulang berstatus \texttt{retrying} dan dicoba lagi oleh \textit{retry worker} dengan jeda eksponensial, dasar 10 detik dan batas 10 menit, paling banyak 8 percobaan, lalu diparkir bila habis. Pesan yang tidak dapat diulang langsung berstatus \texttt{parked} dan tidak pernah dicoba otomatis.
+
+\subsection{Pemeriksaan}
+
+Hanya \textit{Operator} yang dapat memeriksa. \texttt{GET /admin/failed-messages} di Client-Facing API dilindungi \textit{login} dan peran Operator, dan muatannya dikirim dalam base64. Pengaudit memakai \texttt{GET /internal/audit/unprocessed} dengan token audit, yang tidak memuat muatan.
+
+\subsection{Pemrosesan Ulang dan Pencegahan Duplikat}
+
+\texttt{POST /internal/admin/replay?source=BMKG|PVMBG} memakai token admin. Ia membaca baris \texttt{parked} sumber itu, memetakan ulang tiap muatan mentah dengan pemeta yang berlaku sekarang, mengelompokkan hasilnya menurut \texttt{(source, source\_ref\_id)}, mengurutkan tiap kelompok menurut waktu sumber lalu waktu terima, dan menulisnya berurutan dengan \textit{upsert} yang menolak menimpa versi tersimpan yang lebih baru.
+
+Duplikat dicegah oleh kunci. \texttt{hazard\_id} adalah UUID v5 dari \texttt{source} dan \texttt{source\_ref\_id}, sehingga rekaman yang sama selalu mendapat id yang sama, dan \textit{upsert} memakai \texttt{ON CONFLICT} pada pasangan itu. Memproses ulang rekaman yang sudah tersimpan tidak menambah baris baru.
+
+\section{Jaminan Pengiriman pada Jalur Laporan Tim Lapangan}
+
+Subbab ini menjawab butir 4 ``Di laporan''.
+
+\texttt{POST /field-reports} di Client-Facing API memeriksa peran Lapangan atau Operator, lalu menerbitkan laporan ke antrean \texttt{field-reports} yang \textit{durable} dengan pesan \textit{persistent} dan \textit{publisher confirm}. Balasan 202 baru dikirim sesudah RabbitMQ mengonfirmasi bahwa pesan tertulis ke disk, jadi antrean itu adalah kotak masuk yang tahan mati dan API tidak menyimpan keadaan.
+
+\texttt{field-report-processor} membaca antrean dengan \textit{ack} manual. Ia menyimpan tiap laporan lewat \textit{rpc} \texttt{SaveFieldReport} ke Aggregator, yang menulis tabel \texttt{field\_reports} melalui jalur dua pemilik yang sama dengan \textit{hazard}, dan baru mengirim \textit{ack} sesudah baris tersimpan: \textit{commit first, ack last}. Bila penerima mati sebelum \textit{ack}, pesan dikirim ulang. Pesan yang \texttt{report\_id}-nya sudah tersimpan diberi \textit{ack} tanpa penulisan kedua.
+
+Jaminan yang berlaku: \textit{at-least-once} sampai antrean, dan \textit{effectively once} pada penyimpanan karena penyimpanan idempoten menurut \texttt{report\_id}. Laporan yang bertubuh rusak diparkir di \texttt{failed\_messages} dengan sumber \texttt{FIELD\_REPORT}. Jaminan ini berlaku selama RabbitMQ sendiri bertahan: kehilangan disk \textit{broker} tidak tercakup.
+
+\section{Keterbatasan yang Disadari}
+
+\begin{itemize}
+\item \texttt{failed\_messages} dibaca lewat \texttt{DATABASE\_URL} yang menunjuk \textit{headless service} \texttt{store}, yaitu satu Postgres per \textit{node} tanpa data bersama. Satu \textit{pod} hanya melihat satu \textit{node}. Akibatnya pesan yang diparkir tersebar menurut \textit{node} tempat \textit{pod} Aggregator tersambung, daftar Operator dan daftar pengaudit dapat berbeda, pesan parkir dapat tidak terlihat sesudah \textit{restart}, dan \textit{replay} hanya memulihkan baris yang berada pada \textit{node}-nya. Ini terukur pada skenario di bawah dan belum diperbaiki saat bab ini ditulis (isu \#409). Pilihannya adalah memindahkan tabel itu ke basis data koordinasi atau menulisnya lewat \textit{shard} berreplikasi dua seperti \textit{hazard}.
+\item Satu paket yang menghasilkan lebih dari 100 rekaman tersisih hanya menyimpan 100 baris parkir sendiri-sendiri dan merangkum sisanya dalam satu baris.
+\item Penyimpanan laporan lapangan dan antrean tidak menyelamatkan laporan bila disk RabbitMQ hilang.
+\item Token \textit{login} berlaku sekitar 60 detik pada klaster ini, jadi satu \textit{run} skrip yang panjang dapat berakhir dengan 401 palsu. Skenario karena itu dijalankan satu per satu dengan \textit{login} baru.
+\end{itemize}
+
+\section{Bukti per Kriteria}
+
+Keluaran di bawah disalin apa adanya dari terminal. Skrip menyebut \texttt{FAIL} bila implementasi salah dan \texttt{NOT RUN} bila skrip tidak dapat berjalan.
+
+Setiap skenario dijalankan sendiri dengan \textit{login} baru, kecuali skenario 1 dan 6 yang diambil dari satu \textit{run} penuh yang lebih awal. Klaster: tiga \textit{node}, Aggregator dua replika, \textit{image} dari \texttt{main} sesudah isu \#408 digabung. Hasilnya campuran, dan baris \texttt{FAIL} adalah temuan, bukan kesalahan skrip.
+
+\subsection{Kriteria 1: Deklarasi dan Perilaku pada PVMBG Mock}
+
+Skenario 1 menambah \textit{field} \texttt{confidence\_level} pada PVMBG mock. Perubahan itu termasuk yang diterima otomatis menurut kebijakan, jadi rekaman baru dilayani, rekaman lama tetap dilayani, tidak ada pesan baru yang diparkir, dan tidak ada komponen yang \textit{restart}.
+
+\begin{codebox}
+== Scenario 1: the source adds a field (accepted change)
+PASS: S1 a volcanic record with attributes.confidence_level is served
+PASS: S1 older volcanic records still served (200)
+PASS: S1 no new parked PVMBG message (0)
+PASS: S1 restart counts unchanged
+\end{codebox}
+
+Skenario 2 memicu tiga perubahan yang tidak diterima lewat mode baru \texttt{POST /admin/schema-version}: penggantian nama, perubahan tipe, dan \textit{field} wajib hilang.
+
+\begin{codebox}
+== Scenario 2: the source breaks the format, three ways
+PASS: S2 rename reason has the Appendix A form
+PASS: S2 rename retryable (false)
+PASS: S2 rename stored payload matches its sha256 (480ee91a...)
+PASS: S2 rename the stored payload still has the original field ("eruption_count")
+FAIL: S2 type: no parked row whose reason names field 'ash_column_height_m' changed from number to string
+PASS: S2 missing reason has the Appendix A form
+PASS: S2 missing retryable (false)
+FAIL: S2 missing: the Operator route does not list the parked message PVMBG:d28441d1...
+PASS: S2 hazards still served (200)
+PASS: S2 restart counts unchanged
+PASS 13, FAIL 2, NOT RUN 0
+\end{codebox}
+
+Pergantian nama dan \textit{field} hilang tersimpan dengan alasan berbentuk Lampiran A dan tidak dapat diulang, dan sistem tetap melayani. Dua \texttt{FAIL} berasal dari keterbatasan pertama di atas: pesan yang diparkir berada pada \textit{node} \textit{store} yang tidak dilihat daftar yang sedang ditanya, jadi baris perubahan tipe dan satu baris \textit{field} hilang tidak muncul pada daftar Operator dan pengaudit walau tersimpan.
+
+\subsection{Kriteria 2: Pesan Gagal Tersimpan dan Dua Perlakuan}
+
+Bukti kriteria 2 ada pada skenario 2 di atas untuk pesan yang tidak dapat diulang: alasan, sumber, waktu UTC, dan \textit{sha256} muatan tersimpan, \texttt{retryable} bernilai \textit{false}, dan percobaan tidak berubah. Skenario 3 menguji sisi yang dapat diulang dengan mematikan \textit{store} dan mengunci tabel \texttt{hazard\_events} pada semua \textit{node} selama 75 detik.
+
+\begin{codebox}
+== Scenario 3: retryable and never-retryable are treated differently
+INFO: S3 parked messages before: 1000, newest PVMBG sequence 003470
+INFO: S3 kill-store finished; most retrying rows seen at once: 0, highest attempts: 0
+INFO: S3 the second copy of the data absorbed kill-store, locking hazard_events on every store node for 75s instead
+PASS: S3 no message is left in the retrying state (0)
+FAIL: S3 holes in the PVMBG sequence after the outage (a lost record): got 2, want 0
+INFO: S3 missing sequence numbers and where they are: 3471=nowhere 3472=nowhere 3474=retrying/timeout,
+PASS: S3 repeated source_ref_id among the audit events (0)
+FAIL: S3 parked messages that disappeared from the auditor's list (#300, #304): got 1000, want 0
+PASS: S3 parked messages whose attempts changed (a never-retryable message was retried) (0)
+FAIL: S3 neither kill-store nor a 75s table lock produced a retrying row
+PASS 5, FAIL 3, NOT RUN 0
+\end{codebox}
+
+Pesan yang tidak dapat diulang tidak pernah dicoba lagi: percobaan tidak berubah pada satu pun dari 1.000 pesan parkir. Sisi yang dapat diulang tidak terbukti: \textit{kill-store} tidak menghasilkan baris \texttt{retrying}, karena salinan kedua data menyerap kematian satu \textit{store}, dan penguncian tabel selama 75 detik juga tidak menghasilkannya. Dua nomor urut (3471 dan 3472) tidak ditemukan di mana pun, dan 1.000 pesan parkir tidak terlihat pada daftar pengaudit sesudahnya. Keduanya sejalan dengan keterbatasan pertama, tetapi kami belum membuktikan bahwa kedua nomor itu hanya tersimpan di \textit{node} lain dan bukan hilang. Ini harus diperlakukan sebagai kemungkinan kehilangan data sampai diperiksa.
+
+\subsection{Kriteria 3: Pesan Rusak Tidak Menjatuhkan Komponen}
+
+Skenario 5 mengirim empat jenis pesan rusak, yaitu JSON terpotong, bersarang sangat dalam, UTF-8 tidak valid, dan ukuran berlebih, lewat tiga jalur: API Tim Lapangan, antrean \texttt{field-reports}, dan PVMBG mock sebagai sumber. Skenario ini dijalankan tiga kali, dua di antaranya sesudah \textit{image} PVMBG mock dibangun ulang dari \texttt{main}, dan hasilnya sama setiap kali. Keluaran di bawah dari \textit{run} terakhir.
+
+\begin{codebox}
+== Scenario 5: bad messages must not break anything
+PASS: S5 API truncated body answered 400 (400)
+PASS: S5 API deep body answered 400 (400)
+PASS: S5 API utf8 body answered 400 (400)
+PASS: S5 API huge body answered 400 (400)
+PASS: S5 queue truncated published (true)  ...  (deep, utf8, huge, dan satu laporan baik)
+PASS: S5 queue drained to 0
+FAIL: S5 queue: only 0 of 4 bad messages parked (#306)
+PASS: S5 source truncated: a parked PVMBG message with the code malformed_json
+PASS: S5 source truncated: a new normal record was stored while the bad one was served
+FAIL: S5 source deep: nothing parked with the code too_deep after 120s (#302)
+PASS: S5 source deep: a new normal record was stored while the bad one was served
+FAIL: S5 source utf8: nothing parked with the code invalid_utf8 after 120s (#302)
+FAIL: S5 source utf8: no new normal record in 60s, the good records did not keep flowing (#302)
+FAIL: S5 source huge: nothing parked with the code too_large after 120s (#302)
+FAIL: S5 source huge: no new normal record in 60s, the good records did not keep flowing (#302)
+PASS: S5 restart counts unchanged
+PASS 15, FAIL 6, NOT RUN 0
+\end{codebox}
+
+Yang terbukti: tidak ada komponen yang \textit{crash} atau \textit{restart} pada keempat jenis, API menolak keempatnya dengan 400, antrean terkuras sampai 0, dan JSON terpotong dari sumber diparkir dengan kode \texttt{malformed\_json} sambil rekaman normal tetap tersimpan.
+
+Yang belum terbukti dan harus dibaca sebagai kegagalan: pada jalur sumber, tidak ada baris parkir dengan kode \texttt{too\_deep}, \texttt{invalid\_utf8}, atau \texttt{too\_large} dalam 120 detik, dan untuk UTF-8 tidak valid serta ukuran berlebih rekaman normal berikutnya tidak tersimpan dalam 60 detik. Kode \texttt{guard.go} dan \texttt{poller.go} memang memeriksa ketiganya, dan pengujian unitnya lulus, tetapi perilaku pada klaster tidak sesuai. Penyebabnya belum kami temukan, dan isu \#302 masih terbuka. Pada antrean, baris parkir untuk pesan laporan rusak tidak terhitung lengkap, yang sejalan dengan keterbatasan pertama. Kriteria 3 karena itu hanya terpenuhi sebagian: komponen tidak jatuh, tetapi pesan rusak tertentu tidak tersimpan dan arus rekaman baik dapat terhenti.
+
+\subsection{Kriteria 4: Pemrosesan Ulang Sesudah Penyesuaian}
+
+Skenario 6 menyetel \texttt{PVMBG\_SCHEMA\_ADJUST} dengan tiga suku, memulai ulang Aggregator, lalu menjalankan \textit{replay}. \textit{Replay} tanpa token admin ditolak dengan 401. Sebelum penyesuaian \textit{replay} tidak memulihkan satu pun laporan uji, dan sesudahnya keempatnya tersimpan.
+
+\begin{codebox}
+== Scenario 6: replay after the system is adjusted
+PASS: S6 replay without the admin token (401)
+INFO: S6 replay before the adjustment: {"source":"PVMBG","scanned":16,"recovered":0,"superseded":0,"still_parked":16,"skipped_oversize":1}
+PASS: S6 replay before the adjustment stores none of the four test reports (0)
+INFO: S6 replay 1 after the adjustment: {"source":"PVMBG","scanned":11,"recovered":5,"superseded":0,"still_parked":6,"skipped_oversize":1}, 4 of 4 test reports stored
+PASS: S6 test reports stored after the replays (4)
+PASS: S6 replays needed to recover them all (1)
+PASS: S6 P3R-... was recovered and marked rename:eruption_count
+PASS: S6 P3T-... was recovered and marked type:ash_column_height_m
+PASS: S6 P3M-... was recovered and marked default:volcano_id
+PASS: S6 order: of two parked versions the newer one by source time is stored, although it was received first
+PASS: S6 repeated source_ref_id among the audit events (0)
+\end{codebox}
+
+Pemulihan berhasil untuk keempat laporan uji, tanpa duplikat, dengan urutan per \texttt{source\_ref\_id} terjaga: dari dua versi yang diparkir, yang lebih baru menurut waktu sumber tersimpan walau diterima lebih dulu. Satu catatan: \textit{replay} hanya memindai 11 dari 16 baris parkir, yaitu yang berada pada \textit{node} \textit{store} yang sedang ditanya. Lima sisanya tidak terlihat olehnya. Pada \textit{run} ini keempat laporan uji kebetulan ada pada \textit{node} itu. Ini keterbatasan pertama, dan pemulihan lengkap bergantung pada isu \#409.
+
+\subsection{Kriteria 5: Hanya Operator yang Dapat Memeriksa}
+
+\begin{codebox}
+== Scenario 4: who may inspect failed messages
+PASS: S4 Operator (200)
+PASS: S4 Media (403)
+PASS: S4 Tim Lapangan (403)
+PASS: S4 no cookie (401)
+PASS: S4 audit route with a login cookie (401)
+PASS: S4 the audit items carry no payload
+PASS 7, FAIL 0, NOT RUN 0
+\end{codebox}
+
+Hanya peran Operator mendapat 200. Peran Media dan Tim Lapangan mendapat 403, tanpa \textit{cookie} 401, dan rute audit menolak \textit{cookie} \textit{login} biasa karena memakai token audit sendiri, dengan butir yang tidak memuat muatan.
+
+\subsection{Kriteria 6: Laporan Berbalas 202 Tidak Hilang dan Tidak Ganda}
+
+Skenario 7 mengirim 200 laporan. Lima puluh pertama dikirim selagi pemroses dimatikan, lalu pemroses dinyalakan dan sisanya dikirim sambil \textit{pod} pemroses, Aggregator, dan Client-Facing API dihapus satu per satu.
+
+\begin{codebox}
+== Scenario 7: a field report answered 202 is never lost
+-- (a) downstream dead: processor scaled to 0
+PASS: S7 all 50 answers while the downstream is dead are 202 (50)
+PASS: S7 answers slower than 1000 ms (p95 is 24 ms) (0)
+-- (b) processor back, the rest is sent while pods die
+INFO: S7 deleted the processor pods after report 100
+INFO: S7 deleted the Aggregator pods after report 150
+INFO: S7 deleted the Client-Facing API pods after report 199
+PASS: S7 reports never acknowledged with 202 after retries (0)
+PASS: S7 distinct stored reports equal the keys that got a 202 (200) (200)
+PASS: S7 acknowledged reports missing from the store (0)
+PASS: S7 reports stored that no 202 acknowledged (0)
+PASS 7, FAIL 0, NOT RUN 0
+\end{codebox}
+
+Balasan tetap 202 dan cepat, dengan \textit{p95} 24 ms, ketika pemroses mati. Dari 200 laporan yang dibalas 202, 200 tersimpan, tidak ada yang hilang, dan tidak ada yang tersimpan tanpa 202. Dua balasan 202 tidak mungkin menghasilkan dua baris karena penyimpanan idempoten menurut \texttt{report\_id}. Keterbatasan: skenario tidak mematikan RabbitMQ atau \textit{store} sendiri pada saat penerbitan.
