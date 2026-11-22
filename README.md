@@ -27,265 +27,99 @@ Distributed Hazard Platform is the BNPB side of a disaster-information exchange.
 
 There are two ways to run it. Milestone 1 runs the whole stack with Docker Compose on one machine ([Quick start](#quick-start)). Milestone 2 runs it on a three node k3s cluster, with a sharded and replicated store, three Aggregator replicas that share polling through leases kept in `coordination-db`, a HorizontalPodAutoscaler, a third source (Sensor Pantai), an Audit API and the assistants' Tester Agent ([Kubernetes](#kubernetes-milestone-2)). The M2 picture is in [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md). The diagrams and per-problem sections below describe the Compose stack.
 
-## Architecture
+## Kubernetes architecture
+
+The Milestone 2 system runs on a three node k3s cluster. The VMs are VirtualBox guests on one host. The host reaches the cluster through forwarded ports, the nodes talk to each other on a private network.
 
 ```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-flowchart LR
-  BMKG["BMKG mock<br/>API key"]
-  PVMBG["PVMBG mock<br/>OAuth"]
-  AGG["Aggregator<br/>pollers, circuit breaker,<br/>mapper, gRPC read API"]
-  CS[("Canonical Store<br/>PostgreSQL")]
-  MQ{{"RabbitMQ<br/>fanout hazard.events"}}
-  AL["Audit Logger"]
-  NO["Notifier"]
-  DU["Dashboard Updater"]
-  CFA["Client-Facing API<br/>JWT cookies, rate limit,<br/>field projection"]
-  AUTH["Auth Service"]
-  UDB[("User DB<br/>PostgreSQL")]
-  CL["Client<br/>Media, Tim Lapangan, BNPB Ops"]
-  FE["Web Server<br/>nginx, static frontend"]
-
-  BMKG -->|HTTP poll| AGG
-  PVMBG -->|HTTP poll| AGG
-  AGG -->|upsert| CS
-  AGG -->|publish| MQ
-  MQ -->|queue| AL
-  MQ -->|queue| NO
-  MQ -->|queue| DU
-  DU -->|SSE| CFA
-  CFA -->|gRPC read| AGG
-  CFA -->|gRPC| AUTH
-  AUTH --> UDB
-  CL -->|"HTTP, static files"| FE
-  FE -->|"proxy /api"| CFA
-  CL -.->|"REST/JSON, direct"| CFA
-
-  classDef box fill:#ffffff,stroke:#000000,color:#000000;
-  class BMKG,PVMBG,AGG,CS,MQ,AL,NO,DU,CFA,AUTH,UDB,CL,FE box;
+flowchart TB
+  DEV["Host: kubectl, docker, scripts<br/>127.0.0.1:6443 API, :5000 registry, :2201-2203 ssh"]
+  subgraph HOST["VirtualBox host"]
+    subgraph NET["Private network k3s-net 10.77.0.0/24"]
+      subgraph A["node-a 10.77.0.11: control plane and worker"]
+        API["k3s API server :6443"]
+        REG["image registry :5000"]
+        SA[("store pod")]
+      end
+      subgraph B["node-b 10.77.0.12: worker"]
+        SB[("store pod")]
+      end
+      subgraph C["node-c 10.77.0.13: worker"]
+        SC[("store pod")]
+        CDB[("coordination-db-0")]
+      end
+    end
+  end
+  DEV --> API
+  DEV --> REG
 ```
 
-Every box except the client is its own container. The nginx container serves the static frontend and proxies `/api/*` to the Client-Facing API, which keeps the page and the API on one origin; the API can also be called directly on its own port. Each database is reachable only by its owner (`canonical-store` by the Aggregator, `user-db` by the Auth Service). The Client-Facing API is the only public API and the only place a JWT is verified. Jaeger and Prometheus sit beside the stack for traces and metrics.
-
-| Service | Role |
+| Namespace | What runs there |
 |:---|:---|
-| `bmkg-mock`, `pvmbg-mock` | The two external sources, with injected latency, an outage switch and a schema switch |
-| `aggregator` | One poller per source, circuit breaker, mapping to `HazardEvent`, upsert to the Canonical Store, event publishing, gRPC read API |
-| `canonical-store` | PostgreSQL with a JSONB `attributes` column, so unknown source fields need no migration |
-| `auth-service`, `user-db` | Login, refresh, logout, registration, accounts; salted password hashes |
-| `client-facing-api` | Public REST API, JWT in HttpOnly cookies, transparent refresh, token-bucket rate limit, global concurrency cap, per-role field projection |
-| `rabbitmq` | Fanout exchange `hazard.events`, one durable queue per consumer |
-| `dashboard-updater`, `notifier`, `audit-logger` | Independent consumers, each with its own dedup store |
-| `situation-summarizer` | Bonus consumer with its own queue: periodic summary of recent events, LLM or rule based, read through `GET /situation` |
-| `web-frontend` | SvelteKit static app served by nginx, which also proxies `/api/*` |
-| `jaeger`, `prometheus` | Traces (the trace ID is the `correlation_id` in logs) and request metrics |
-| `grafana` (k8s only) | One dashboard of all services. `kubectl port-forward svc/grafana 3000`, then http://localhost:3000, login `admin`, password from `deploy/make-secrets.sh` (see [OBSERVABILITY.md](docs/OBSERVABILITY.md)) |
+| `sistem-informasi-kebencanaan-bnpb` | The whole system |
+| `tester-agent` | The Tester Agent of the assistants, one pod per node, used to break things |
+| `registry`, `kube-system` | The image registry and k3s itself |
 
-## Tech stack
+| Kind | Workloads | Why this kind |
+|:---|:---|:---|
+| Deployment | `aggregator` (3 to 5 replicas by HPA), `client-facing-api`, `auth-service`, `notifier`, `audit-logger`, `dashboard-updater`, `field-report-processor` (2), `situation-summarizer`, `web-frontend`, `bmkg-mock`, `pvmbg-mock`, `sensor-pantai`, `prometheus`, `grafana`, `jaeger`, `kube-state-metrics` | Stateless, can be replaced or scaled at any time |
+| StatefulSet | `coordination-db`, `user-db`, `rabbitmq` | A fixed name and a disk that stays with the pod |
+| DaemonSet | `store` (updateStrategy `OnDelete`) | Exactly one Canonical Store database per node, so the data is spread over all three |
 
-| Layer | Technology |
+| How to reach it | Address |
 |:---|:---|
-| Services | Go, one module per service, tied by `go.work` |
-| Service-to-service | gRPC from the Client-Facing API to the Aggregator and the Auth Service, AMQP through RabbitMQ |
-| Public API | REST over HTTP, JWT HS256 in HttpOnly cookies |
-| Storage | PostgreSQL (Canonical Store, User DB) |
-| Broker | RabbitMQ, fanout exchange, durable queues, publisher confirms |
-| Live updates | Server-Sent Events from the Dashboard Updater through the Client-Facing API |
-| Frontend | SvelteKit (`adapter-static`) served by nginx |
-| Observability | OpenTelemetry, Jaeger, Prometheus, structured JSON logs with a correlation ID |
-| Orchestration | Docker Compose (M1), k3s on three VirtualBox VMs (M2) |
-| Tests | Go tests, shell scenario scripts, k6 load test, Tester Agent scenarios (M2) |
+| Web frontend | NodePort 30080 on any node |
+| Client-Facing API | NodePort 30081 on any node |
+| Grafana, Jaeger | `kubectl port-forward`, see [OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| Everything else | Only inside the cluster, with NetworkPolicies that allow only the owner to reach a database |
+
+Details: [TOPOLOGY.md](doc/TOPOLOGY.md) (nodes, ports, building and destroying the cluster), [DEPLOY.md](docs/DEPLOY.md) (what to apply and in which order), [ARCHITECTURE.md](doc/ARCHITECTURE.md) (how data moves).
+
+## Service architecture
+
+```mermaid
+flowchart LR
+  SRC["Sources: BMKG, PVMBG,<br/>Sensor Pantai, Satelit feed"] -->|poll, SSE| AGG["Aggregator x3<br/>one lease per source"]
+  AGG -->|"2 copies, 16 shards"| ST[("Canonical Store<br/>one per node")]
+  AGG -.->|"leases, cursors, failed messages"| CDB[("coordination-db")]
+  AGG -->|publish| MQ{{"RabbitMQ<br/>hazard.events"}}
+  MQ --> NO["Notifier"]
+  MQ --> AL["Audit Logger"]
+  MQ --> DU["Dashboard Updater"]
+  MQ --> SS["Situation Summarizer"]
+  U["Media, Tim Lapangan, Operator"] --> FE["Web Frontend"] --> CFA["Client-Facing API"]
+  CFA -->|gRPC| AGG
+  CFA -->|gRPC| AUTH["Auth Service"] --> UDB[("user-db")]
+  CFA -->|"POST /field-reports"| MQ
+  MQ --> FRP["Field Report Processor"] --> AGG
+  DU -->|SSE| CFA
+```
+
+| Service | Does | Owns |
+|:---|:---|:---|
+| `aggregator` | Polls the sources, circuit breaker, maps records, writes to the shards, publishes events, serves reads over gRPC, Audit API | Canonical Store, `coordination-db` |
+| `client-facing-api` | The only public API: JWT cookies, rate limit, load shedding, field projection per role | none |
+| `auth-service` | Login, refresh, accounts | `user-db` |
+| `field-report-processor` | Stores field reports idempotently after the broker has confirmed them | none |
+| `notifier`, `audit-logger`, `dashboard-updater` | Independent consumers of `hazard.events`, each with its own queue and dedup | their own file |
+| `situation-summarizer` | Bonus: summary of recent events, AI never on the alert path | none |
+| `web-frontend` | SvelteKit static app behind nginx | none |
+| `bmkg-mock`, `pvmbg-mock`, `sensor-pantai` | The sources. The first two are our mocks, the last is the assistants' image | none |
 
 ## What it solves
 
-Each problem is solved in the code and reproduced by a script in `tests/scenarios/`. The steps are under [Test scenarios](#test-scenarios-problems-1-to-5).
+| Problem | Decision in the architecture | Where | Test | More |
+|:---|:---|:---|:---|:---|
+| Data on one node is lost with that node | 16 shards, 2 copies each, rebalance and repair loops, Audit API with checksum | `aggregator`, `store` | `problem1-k8s.sh`, `audit-checksum.sh` | [P1_STORAGE_DESIGN.md](doc/P1_STORAGE_DESIGN.md) |
+| One replica or one source breaks the rest | Lease per source in `coordination-db`, fencing epoch, circuit breaker, HPA 3 to 5 | `aggregator` | `problem2-k8s.sh`, `autoscale.sh`, load scripts | [P2_LEASE_DESIGN.md](doc/P2_LEASE_DESIGN.md), [P2_FREEZE_TEST.md](doc/P2_FREEZE_TEST.md) |
+| A bad or changed message must not be lost or crash a service | Guard before mapping, failed messages kept whole in `coordination-db`, replay, 202 only after the broker confirms field reports | `aggregator`, `client-facing-api` | `problem3-k8s.sh` | [P3_SCHEMA_POLICY.md](doc/P3_SCHEMA_POLICY.md) |
+| A feed with late and corrected records | Event time, ordered micro-batches, versioned upsert, offset kept in `coordination-db` | `aggregator` | `tests/p4/` | [P4_FEED_NOTES.md](doc/P4_FEED_NOTES.md) |
+| A sensor that cannot be trusted | Contract validation, separate path for critical alerts, load shedding that keeps Tim Lapangan | `aggregator`, `notifier` | `gameday.sh`, `critical-alerts.sh` | [P5_SLO.md](doc/P5_SLO.md), [postmortems](doc/postmortems/) |
+| Bonus: nothing on the alert path waits for an AI | Separate consumer and queue, rule based fallback | `situation-summarizer` | `tests/bonus/ai-isolation.sh` | `tests/bonus/` |
 
-### Problem 1: the source changes its schema and nothing restarts
+The five Milestone 1 problems (schema change, a failing source, roles, service independence, fan-out) and their diagrams are in [PROBLEMS_M1.md](docs/PROBLEMS_M1.md).
 
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-flowchart LR
-  SRC["PVMBG record<br/>schema changes"] --> MAP{"Mapper"}
-  MAP -->|known field| CORE["canonical columns"]
-  MAP -->|new or retyped field| ATTR["attributes (JSONB)"]
-  MAP -->|missing field| NULL["null"]
-  CORE --> DB[("Canonical Store")]
-  ATTR --> DB
-  NULL --> DB
-```
-
-- Unknown fields go to a JSONB `attributes` column, so the table never needs a migration and the Aggregator never restarts.
-- Old rows stay as they were. A field that changes meaning, or a moved endpoint, is a documented limit.
-
-Problem 3 schema policy: a PVMBG record must carry all six contract fields with their contract types. A record that misses one, sends `null`, or changes a type is rejected with a `schema_incompatible: ...` reason instead of being stored with nulls. New fields still go to `attributes`, and BMKG keeps the tolerant policy above. See [doc/P3_SCHEMA_POLICY.md](doc/P3_SCHEMA_POLICY.md).
-
----
-
-### Problem 2: a slow or failing source must not drag the others down
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-stateDiagram-v2
-  [*] --> CLOSED
-  CLOSED --> OPEN: 3 failed polls
-  OPEN --> HALF_OPEN: after 10 s
-  HALF_OPEN --> CLOSED: trial call ok
-  HALF_OPEN --> OPEN: trial call fails
-```
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-flowchart LR
-  P1["BMKG poller"] --> CS[("Canonical Store")]
-  P2["PVMBG poller<br/>own timeout + breaker"] --> CS
-  CS --> AGG["Aggregator read API"]
-  AGG -->|gRPC| CFA["Client-Facing API"]
-  CFA -->|"stale data + DOWN<br/>or 503 when empty"| C["Client"]
-  CFA -->|"over the cap: 429 + Retry-After"| C
-```
-
-- One poller, timeout and circuit breaker per source. Reads come from the store, so an outage costs freshness and not availability.
-- Overload is shed on purpose: a global concurrency cap, a token bucket per account, and a cap on the gRPC read API.
-
----
-
-### Problem 3: authentication and per-field access
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-sequenceDiagram
-  participant B as Browser
-  participant N as nginx
-  participant C as Client-Facing API
-  participant A as Auth Service
-  B->>N: POST /api/auth/login
-  N->>C: proxy
-  C->>A: gRPC login
-  A-->>C: JWT + refresh token
-  C-->>B: HttpOnly cookies
-  Note over B,C: access token expires after 60 s
-  B->>C: GET /hazards (expired jwt)
-  C->>A: gRPC refresh (rotating token)
-  A-->>C: new JWT + new refresh token
-  C-->>B: 200 + new cookies
-```
-
-| Role | Fields | Accounts |
-|:---|:---|:---|
-| Media | summary only, 403 on raw fields | none |
-| Tim Lapangan | all | none |
-| Operator | all | can create |
-
-- BMKG takes a static key. PVMBG uses OAuth with a one-time code and rotating opaque tokens that the Aggregator renews by itself.
-- Only the Client-Facing API verifies the JWT.
-
----
-
-### Problem 4: independent services and storage ownership
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-flowchart LR
-  subgraph cn["canonical-net (internal)"]
-    AGG["Aggregator"] --- CS[("Canonical Store")]
-  end
-  subgraph un["userdb-net (internal)"]
-    AUTH["Auth Service"] --- UDB[("User DB")]
-  end
-  OTH["every other service"] -.-x CS
-  OTH -.-x UDB
-```
-
-- Every component is its own container and image, with a `/health` that reports depth. One can be stopped, rebuilt and restarted while the rest keep running.
-- Each database is reachable only by its owner and publishes no host port.
-
----
-
-### Problem 5: event fan-out to independent consumers
-
-```mermaid
-%%{init: {"theme":"base","themeVariables":{"primaryColor":"#f2f2f2","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#8b8b8b","secondaryColor":"#f2f2f2","tertiaryColor":"#ffffff","edgeLabelBackground":"#f2f2f2","noteBkgColor":"#d9d9d9","noteTextColor":"#000000","actorBkg":"#f2f2f2","actorBorder":"#000000","actorTextColor":"#000000","actorLineColor":"#8b8b8b","signalColor":"#8b8b8b","signalTextColor":"#8b8b8b","labelTextColor":"#000000","textColor":"#8b8b8b"}}}%%
-flowchart LR
-  AGG["Aggregator<br/>bounded buffer + confirms"] -->|publish once| EX{{"hazard.events<br/>fanout"}}
-  EX --> Q1["notifier queue"] --> N["Notifier"]
-  EX --> Q2["audit-logger queue"] --> L["Audit Logger"]
-  EX --> Q3["dashboard-updater queue"] --> D["Dashboard Updater"]
-```
-
-- One publish reaches every consumer through its own durable queue. A stopped consumer's queue keeps the backlog and it catches up on return, while the others carry on.
-- Consumers acknowledge after processing (at-least-once), so each one deduplicates. A new consumer only declares a queue on the exchange, with no change to the producer.
-
-## Screenshots
-
-Taken from a local `docker compose up` with the example `.env`.
-
-<div align="center">
-
-**Login**
-
-<img src="docs/screenshots/login.png" width="720" />
-
-Log in with the seeded Operator, or with an account created through Register.
-
-<br/>
-
-**Hazards, Seismic tab (BMKG)**
-
-<img src="docs/screenshots/hazards-seismic.png" width="720" />
-
-Live list from the Client-Facing API with a severity filter and search.
-
-<br/>
-
-**Hazards, Volcanic tab (PVMBG)**
-
-<img src="docs/screenshots/hazards-volcanic.png" width="720" />
-
-The same list for PVMBG reports.
-
-<br/>
-
-**Create an account (Operator only)**
-
-<img src="docs/screenshots/accounts.png" width="720" />
-
-The chosen role decides which fields the API returns.
-
-<br/>
-
-**RabbitMQ queues**
-
-<img src="docs/screenshots/rabbitmq-queues.png" width="720" />
-
-One durable queue per consumer.
-
-<br/>
-
-**Jaeger, recent traces**
-
-<img src="docs/screenshots/jaeger-search.png" width="720" />
-
-Latest Client-Facing API traces.
-
-<br/>
-
-**One GET /hazards end to end**
-
-<img src="docs/screenshots/jaeger-trace.png" width="720" />
-
-Client-Facing API, then the Aggregator over gRPC, then the Canonical Store query.
-
-<br/>
-
-**Jaeger Monitor**
-
-<img src="docs/screenshots/jaeger-monitor.png" width="720" />
-
-Latency, errors and request rate, read from Prometheus.
-
-</div>
-
-## Kubernetes (Milestone 2)
+## Deploy and test on Kubernetes
 
 Follow these steps from a fresh clone. The cluster scripts need VirtualBox, `kubectl`, `ssh`, `curl`, `mkfs.vfat` and `mcopy` on the machine that hosts the VMs, and Docker to build the images. About 30 GB of disk and 7 GiB of free RAM are needed with the default sizes. Details are in [doc/TOPOLOGY.md](doc/TOPOLOGY.md) and [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -376,18 +210,18 @@ Stop it with `docker compose down` (add `-v` to wipe the data).
 ## Documentation
 
 | Document | Contents |
-|---|---|
-| [docs/RUNNING.md](docs/RUNNING.md) | Prerequisites, running from a clean clone, repository layout, database isolation check, single service, web frontend |
-| [docs/DEPLOY.md](docs/DEPLOY.md) | Kubernetes: the namespace, ConfigMaps, Secrets, the order to apply them, autoscaling, rolling update, the one command deploy and `check.sh` |
+|:---|:---|
+| [docs/PROBLEMS_M1.md](docs/PROBLEMS_M1.md) | The five Milestone 1 problems with their diagrams |
+| [docs/RUNNING.md](docs/RUNNING.md) | Prerequisites, running from a clean clone, repository layout, single service, web frontend |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | The namespace, ConfigMaps, Secrets, the order to apply them, autoscaling, rolling update, `check.sh` |
 | [doc/TOPOLOGY.md](doc/TOPOLOGY.md) | The k3s cluster: nodes, ports, registry, how to build and destroy it |
-| [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | The M2 architecture on k3s and where each part is defined |
+| [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | How data moves on k3s and where each part is defined |
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Metrics, traces, the Grafana dashboard and the SLO rules |
-| [doc/TESTER_AGENT_NOTES.md](doc/TESTER_AGENT_NOTES.md) | What each Tester Agent scenario did on our cluster |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | The `.env` file and every variable |
-| [docs/TEST_SCENARIOS.md](docs/TEST_SCENARIOS.md) | Copy-paste walkthroughs for Problems 1 to 5 |
+| [docs/TEST_SCENARIOS.md](docs/TEST_SCENARIOS.md) | Walkthroughs for Problems 1 to 5 |
 | [docs/TESTING.md](docs/TESTING.md) | Integration, smoke, load and storage tests, pre-push checks |
+| [doc/TESTER_AGENT_NOTES.md](doc/TESTER_AGENT_NOTES.md) | What each Tester Agent scenario did on our cluster |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow and conventions |
-
 
 ## Authors
 
