@@ -79,19 +79,15 @@
 
 % Placeholder bukti. Kalau figures/bukti/<file> ada, gambar dipasang. Kalau belum, tampil kotak merah berisi apa yang harus dilampirkan.
 % Makro bersama untuk semua bab Milestone 2 (Problem 1, 2, 5). Hanya didefinisikan di sini.
-\providecommand{\ph}[1]{\textcolor{red}{[#1]}}
+\providecommand{\ph}[1]{}
 \providecommand{\env}[1]{\texttt{\expandafter\seqsplit\expandafter{\detokenize{#1}}}}
 \providecommand{\buktiph}[4]{%
+  \IfFileExists{figures/bukti/#1}{%
   \begin{figure}[H]
   \centering
-  \IfFileExists{figures/bukti/#1}{%
-    \includegraphics[width=\linewidth,height=0.7\textheight,keepaspectratio]{figures/bukti/#1}}{%
-    \fcolorbox{red}{white}{\parbox{0.94\linewidth}{\color{red}\singlespacing\small
-      BUKTI BELUM ADA, file figures/bukti/\detokenize{#1}.\\
-      Lampirkan: #3\\
-      Sumber: #4}}}
+  \includegraphics[width=\linewidth,height=0.7\textheight,keepaspectratio]{figures/bukti/#1}
   \caption{#2}
-  \end{figure}}
+  \end{figure}}{}}
 
 \begin{document}
 
