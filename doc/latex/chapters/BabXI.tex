@@ -165,31 +165,123 @@ Rancangan pada \texttt{doc/P1\_STORAGE\_DESIGN.md} menetapkan hal berikut. Pengh
 
 \section{Bukti per Kriteria}
 
-Bukti belum diambil. Setiap kotak merah di bawah menyebut apa yang harus dilampirkan dan sumbernya, dan akan terganti gambar sungguhan begitu \textit{file} dengan nama yang tertera ditaruh di \texttt{doc/latex/figures/bukti/}. Tidak ada angka atau keluaran yang ditulis sebelum bukti ada.
+Bukti diambil pada 22 November 2026 di klaster lokal tiga \textit{node}, yaitu VM \texttt{node-a}, \texttt{node-b}, dan \texttt{node-c}, dengan katalog gempa sintetis, karena katalog asli baru diberikan asisten saat demonstrasi. Keluaran di bawah disalin apa adanya dari terminal. Kriteria 7 masih berupa kotak merah karena membutuhkan tangkapan layar peramban.
 
 \subsection{Kriteria 1: Sebaran Data per Node}
 
-\buktiph{p1-k1-sebaran.png}{Sebaran \textit{shard} dan baris per \textit{node} setelah dataset dimuat}{keluaran perintah pemuatan dataset katalog gempa dari asisten, lalu nilai \texttt{store\_shard\_rows\{node,shard\}} dari \texttt{/metrics} Aggregator berupa satu tabel jumlah baris per \textit{node}, serta keluaran \texttt{deploy/cluster/topology.sh} untuk deklarasi topologi.}{skrip pemuat dataset (\#293, belum ada), \texttt{kubectl exec} ke \textit{pod} Aggregator atau Prometheus untuk \texttt{store\_shard\_rows}, dan panel Grafana.}
+Katalog sintetis 2.000 \textit{event}, 80 persen di dalam kotak busur Sunda, dimuat dengan \texttt{tools/load-quakes} ke rute \texttt{POST /internal/admin/ingest} milik Aggregator. Rute itu menjalankan pemetaan, pemarkiran, dan penulisan ganda yang sama dengan \textit{poller}, jadi tidak ada penulisan langsung ke \textit{shard}. \textit{Poller} sendiri tidak dapat dipakai untuk katalog historis: kursor \texttt{since}-nya naik ke \texttt{occurred\_at} terbaru yang sudah tersimpan, sehingga \textit{event} lama tidak pernah dikembalikan.
+
+Pemuatan selesai dalam 5 detik, sekitar 400 \textit{event} per detik. Pemeriksaan di bawah dijalankan ulang atas berkas yang sama sesudah penyimpanan dipindah ke folder baru seperti pada Kriteria 4, dan membaca semua \texttt{source\_ref\_id} dari Audit API.
+
+\begin{codebox}
+$ tools/load-quakes --file quakes2000.csv --url http://127.0.0.1:18091 --batch 500
+phase=catalog start=2026-11-22T13:29:12Z events=2000
+sent 2000 of 2000
+phase=catalog end=2026-11-22T13:29:17Z
+
+$ tools/load-quakes --file quakes2000.csv ...   (pemeriksaan ulang)
+rows_read=2000 unique_rows=2000 duplicates=0 rejected=0
+audit_listed=8352 sent=2000 missing=0 partial=false
+PASS: every sent id is in the Audit API
+
+$ tests/p1/distribution.sh units
+node            primary  replica       rows
+node-a                8        0      38518
+node-b                3       10      62813
+node-c                5        6      53103
+PASS: 16 primary units spread over 3 nodes
+\end{codebox}
+
+Setiap \textit{node} memegang sebagian unit, tidak ada \textit{node} yang menjadi \textit{primary} bagi semua 16 unit, dan peran \textit{primary} tersebar ke tiga \textit{node} (8, 3, dan 5 unit). \textit{Node} boleh memegang \textit{replica} unit milik \textit{node} lain: \texttt{node-b} memegang 10 dan \texttt{node-c} 6. Kolom baris menjumlahkan \texttt{store\_shard\_rows} untuk \textit{node} itu, yaitu semua \textit{event} dari semua sumber (BMKG, PVMBG, dan lainnya), bukan hanya katalog ini.
 
 \subsection{Kriteria 2: Ketidakmerataan dan Lonjakan}
 
-\buktiph{p1-k2-lonjakan.png}{Beban tiap \textit{node} saat dataset dimuat dan saat lonjakan gempa satu wilayah}{dua grafik Grafana berupa CPU atau tulisan per detik per \textit{node} untuk dua periode, yaitu pemuatan dataset dan simulasi lonjakan di satu wilayah, dengan rentang waktu terlihat.}{skrip simulasi lonjakan (\#293, belum ada) dan dasbor Grafana pada \texttt{deploy/observability}.}
+Lonjakan disimulasikan dengan \texttt{tools/load-quakes --burst 3000 --batch 100 --pause 6s}: 3.000 \textit{event} di dalam kotak busur Sunda yang sama, dikirim selama 189 detik, sementara \texttt{tests/p1/distribution.sh watch} mengambil jumlah tulisan tiap \textit{node} dari \texttt{store\_node\_writes\_total}, dijumlah lintas semua \textit{pod} Aggregator, setiap 10 detik. Audit API menambah 3.019 \textit{event} untuk 3.000 yang dikirim, dan 19 sisanya berasal dari umpan BMKG yang hidup pada sumber yang sama. Pengecekan id demi id lulus.
+
+\begin{codebox}
+t=10s writes gained per node: node-a=83 node-b=148 node-c=115
+t=20s writes gained per node: node-a=109 node-b=157 node-c=138
+t=30s writes gained per node: node-a=46 node-b=91 node-c=67
+t=40s writes gained per node: node-a=104 node-b=157 node-c=143
+...  (20 sampel, stabil)
+total over 200s (node, writes, share):
+node-a 1535 25%
+node-b 2462 41%
+node-c 2025 34%
+\end{codebox}
+
+Setiap \textit{event} ditulis ke dua \textit{node}, sehingga jumlah tulisan (6.022) kira-kira dua kali jumlah \textit{event}. Bagian tiap \textit{node} sama dengan bagian unit yang dipegangnya: 8, 13, dan 11 dari 32 unit, yaitu 25, 41, dan 34 persen. Jadi beban tulis mengikuti penempatan unit, bukan lokasi gempa. Itulah cara sistem menyikapi ketidakmerataan alami: \textit{shard} ditentukan oleh \textit{hash} \texttt{hazard\_id}, bukan oleh wilayah atau waktu, sehingga lonjakan di satu wilayah tidak menumpuk di satu \textit{node}. Ketimpangan yang tersisa (25 berbanding 41 persen) berasal dari pembagian 16 \textit{shard} ke tiga \textit{node} dengan \textit{rendezvous hashing}, bukan dari sebaran gempa. Grafik Grafana tidak dilampirkan.
 
 \subsection{Kriteria 3: Kueri Lintas Lokasi dan Urutan}
 
-\buktiph{p1-k3-lintas.png}{50 \textit{event} terbaru lintas jenis bahaya dengan \textit{pagination}}{keluaran dua halaman berurutan dari \texttt{ListHazards} atau endpoint kliennya, dengan \textit{cursor} halaman pertama dipakai pada halaman kedua, disertai pemeriksaan bahwa urutan \texttt{(ingested\_at, hazard\_id)} menurun dan tidak ada \textit{id} ganda.}{\texttt{grpcurl} atau Client-Facing API bila \textit{route}-nya sudah ada, atau \texttt{/internal/audit/events} dengan \texttt{cursor} untuk urutan naik.}
+Skenario A pada \texttt{tests/scenarios/problem1-k8s.sh} membaca daftar \textit{hazard} milik klien halaman demi halaman (1.000 id) dan \textit{endpoint} audit dengan \textit{cursor}, lalu memeriksa tidak ada id ganda.
+
+\begin{codebox}
+== A: read across all shards, page by page
+PASS: A the hazard list answered every page with data (0)
+PASS: A repeated ids across the pages of the hazard list (1000 ids) (0)
+PASS: A the audit events listed some hazards (yes)
+PASS: A repeated hazard ids in the audit events (0)
+\end{codebox}
 
 \subsection{Kriteria 4: Node Dimatikan dan Datanya Dihapus}
 
-\buktiph{p1-k4-node-hilang.png}{Satu \textit{node worker} dimatikan dan datanya dihapus, tidak ada \textit{HazardEvent} yang hilang}{log Tester Agent yang menunjukkan aksi (\texttt{kubectl logs -n tester-agent daemonset/tester-agent}), keluaran \texttt{tests/scenarios/audit-checksum.sh} sebelum dan sesudah dengan checksum yang sama dan \texttt{count} yang sama, dan beberapa respons permintaan selama pemulihan yang menunjukkan jawaban lengkap atau \texttt{partial=true}, tanpa 500.}{\texttt{kubectl exec -n tester-agent daemonset/tester-agent -{}- /app run practice <nama>} (nama dari \texttt{/app list}), \texttt{tests/scenarios/audit-checksum.sh}, dan \texttt{curl} berulang pada endpoint baca.}
+\textit{Tester Agent} mengosongkan \texttt{/var/lib/rancher/k3s/storage} pada \textit{wipe-node}. Penyimpanan kami dipindah ke \texttt{/var/lib/rancher/k3s/storage/bnpb-store}, folder di dalamnya, supaya penghapusan itu mengenai data \textit{store}. Skenario B menghentikan \textit{store} di \texttt{node-b}, mengosongkan folder itu dengan satu \textit{pod} sekali jalan, lalu menyalakan \textit{store} pada disk kosong, sementara \textit{probe} menanyakan daftar dan Audit API setiap detik.
+
+\begin{codebox}
+== B: node-b loses all its data and returns with an empty disk
+INFO: B: 77232 audit events saved before the loss
+INFO: node-b loses its data: store stopped, /var/lib/rancher/k3s/storage/bnpb-store emptied, store started again
+PASS: B recovery in 90s: every store pod is ready, no partial answer, every sampled id has two copies and node-b holds some
+PASS: B no audit event from before the loss is missing (#289, #294) (0)
+INFO: B: 77232 events before, 77255 after (the sources keep writing)
+PASS: B writes continued during the loss (more events after than before) (yes)
+PASS: B audit checksum of BMKG equals an independent SHA-256 over its ids
+PASS: B audit checksum of PVMBG equals an independent SHA-256 over its ids
+PASS: B audit checksum of SENSOR_PANTAI equals an independent SHA-256 over its ids
+INFO: B probe: 158 answers, 5 partial
+PASS: B probe answers that were a 5xx or a hang (#291, #292) (0)
+PASS 14, FAIL 0, NOT RUN 0
+\end{codebox}
+
+Tidak ada \textit{event} yang hilang, penulisan terus berjalan, dan dari 158 jawaban \textit{probe} selama pemulihan 5 di antaranya \textit{partial}, yaitu ditandai dan bukan galat, dan tidak ada yang 500 atau menggantung. Keterbatasan: aksi \texttt{wipe-node} milik \textit{Tester Agent} sendiri belum dijalankan karena ia mematikan VM dan \textit{node} harus dinyalakan lagi manual. Yang dijalankan adalah penghapusan folder yang sama oleh skrip kami.
 
 \subsection{Kriteria 5: Node Baru Ikut Menanggung Data}
 
-\buktiph{p1-k5-node-baru.png}{Node baru atau \textit{node} berdisk kosong ikut memegang data dan beban}{\texttt{store\_shard\_rows} per \textit{node} sebelum dan sesudah \textit{node} bergabung, \texttt{kubectl get pods -o wide -n sistem-informasi-kebencanaan-bnpb -l role=store}, dan bukti bahwa penulisan dan pembacaan terus berjalan selama itu (hasil permintaan berkala tanpa kegagalan).}{\texttt{kubectl}, \textit{endpoint} metrik Aggregator, dan skrip permintaan berkala.}
+Pada skenario B yang sama, \textit{node-b} kembali dengan disk kosong dan diisi ulang oleh \textit{rebalancer} tanpa menghentikan penulisan atau pembacaan. Pemeriksaan sampel 20 id memakai \textit{endpoint} lokasi.
+
+\begin{codebox}
+PASS: B recovery in 90s: ... node-b holds some
+INFO: copies per node among 20 sampled ids: node-a=7 node-b=17 node-c=16
+PASS: B sampled ids with fewer than two copies after recovery (#294) (0)
+PASS: B the returned node holds copies again (yes)
+\end{codebox}
+
+Pemulihan memakan 90 detik. \textit{Node} yang kembali memegang salinan lagi, 17 dari 40 salinan pada sampel, dan setiap id yang diperiksa punya dua salinan pada dua \textit{node}. Yang diuji adalah \textit{node} berdisk kosong. \textit{Node} yang benar-benar baru belum dicoba pada klaster ini, tetapi jalur pemulihannya sama: \textit{node} baru tidak punya \textit{shard} dan diisi oleh \textit{rebalancer}.
 
 \subsection{Kriteria 6: Tahan Kehilangan Satu Node Berikutnya}
 
-\buktiph{p1-k6-node-kedua.png}{Setelah pulih, kehilangan satu \textit{node} berikutnya tidak menghilangkan data}{nilai \texttt{store\_shards\_underreplicated} sama dengan 0 sebelum aksi kedua, lalu keluaran \texttt{tests/scenarios/audit-checksum.sh} sesudah \textit{node} kedua dimatikan.}{metrik Aggregator, \texttt{tests/scenarios/audit-checksum.sh}, dan Tester Agent.}
+Sesudah \texttt{node-b} pulih pada skenario B dan tidak ada \textit{shard} yang kurang replika, skenario E dijalankan sebagai \textit{run} terpisah beberapa menit kemudian dan mengosongkan folder \textit{store} milik \texttt{node-c} dengan cara yang sama.
+
+\begin{codebox}
+== E: node-c loses all its data and returns with an empty disk
+INFO: E: 77385 audit events saved before the loss
+INFO: node-c loses its data: store stopped, /var/lib/rancher/k3s/storage/bnpb-store emptied, store started again
+PASS: E recovery in 47s: every store pod is ready, no partial answer, every sampled id has two copies and node-c holds some
+PASS: E no audit event from before the loss is missing (#289, #294) (0)
+INFO: E: 77385 events before, 77399 after (the sources keep writing)
+PASS: E writes continued during the loss (more events after than before) (yes)
+PASS: E audit checksum of BMKG equals an independent SHA-256 over its ids
+PASS: E audit checksum of PVMBG equals an independent SHA-256 over its ids
+PASS: E audit checksum of SENSOR_PANTAI equals an independent SHA-256 over its ids
+INFO: E probe: 80 answers, 6 partial
+PASS: E probe answers that were a 5xx or a hang (#291, #292) (0)
+INFO: copies per node among 20 sampled ids: node-a=13 node-b=15 node-c=12
+PASS: E sampled ids with fewer than two copies after recovery (#294) (0)
+PASS 10, FAIL 0, NOT RUN 0
+\end{codebox}
+
+Kehilangan \textit{node} kedua setelah \textit{node} pertama pulih tidak menghilangkan \textit{event}: tidak ada id yang hilang, \textit{checksum} ketiga sumber sama dengan hitungan SHA-256 independen atas id yang terdaftar, dan 6 dari 80 jawaban \textit{probe} berstatus \textit{partial} tanpa 500 atau penggantungan. Keterbatasan: dua kehilangan ini tidak terjadi bersamaan, dan sebelum yang kedua skrip tidak menampilkan nilai \texttt{store\_shards\_underreplicated} secara terpisah.
 
 \subsection{Kriteria 7: Dasbor Analitik}
 
