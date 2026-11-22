@@ -73,7 +73,7 @@ Subbab ini menjawab butir 4 ``Di laporan''.
 
 Jaminan yang berlaku: \textit{at-least-once} sampai antrean, dan \textit{effectively once} pada penyimpanan karena penyimpanan idempoten menurut \texttt{report\_id}. Laporan yang bertubuh rusak diparkir di \texttt{failed\_messages} dengan sumber \texttt{FIELD\_REPORT}. Jaminan ini berlaku selama RabbitMQ sendiri bertahan: kehilangan disk \textit{broker} tidak tercakup.
 
-\texttt{failed\_messages} semula dibaca lewat \textit{headless service} \texttt{store}, sehingga tiap koneksi hanya melihat satu \textit{node} dan daftar Operator, daftar pengaudit, serta \textit{replay} dapat melihat baris yang berbeda (isu \#409). Tabel itu kini berada di \texttt{coordination-db} bersama \textit{lease}, kursor, dan token (PR \#442 dan \#443), sehingga semua \textit{pod} Aggregator membaca dan menulis satu kumpulan baris. \textit{Replay} juga kini menjalankan pemeriksaan ukuran, UTF-8, dan kedalaman yang sama dengan jalur masuk sebelum memetakan rekaman, sehingga rekaman yang disisihkan tetap memakai kode alasannya (isu \#302, PR \#444).
+\texttt{failed\_messages} semula dibaca lewat \textit{headless service} \texttt{store}, sehingga tiap koneksi hanya melihat satu \textit{node} dan daftar Operator, daftar pengaudit, serta \textit{replay} dapat melihat baris yang berbeda (isu \#409). Tabel itu kini berada di \texttt{coordination-db} bersama \textit{lease}, kursor, dan token (PR \#442 dan \#443), sehingga semua \textit{pod} Aggregator membaca dan menulis satu kumpulan baris. \textit{Replay} juga kini menjalankan pemeriksaan ukuran, UTF-8, dan kedalaman yang sama dengan jalur masuk sebelum memetakan rekaman, sehingga rekaman yang disisihkan tetap memakai kode alasannya (isu \#302, PR \#446).
 
 \section{Keterbatasan yang Disadari}
 
@@ -87,7 +87,7 @@ Jaminan yang berlaku: \textit{at-least-once} sampai antrean, dan \textit{effecti
 
 Keluaran di bawah disalin apa adanya dari terminal. Skrip menyebut \texttt{FAIL} bila implementasi salah dan \texttt{NOT RUN} bila skrip tidak dapat berjalan.
 
-Setiap skenario dijalankan sendiri dengan \textit{login} baru pada klaster tiga VM milik Nathanael. Skenario 2, 3, dan 5 dijalankan ulang pada 23 November 2026 dengan \textit{image} Aggregator dan Client-Facing API dari cabang PR \#442 dan \#444, sesudah \texttt{deploy/migrate-failed-messages.sh} memindahkan baris lama ke \texttt{coordination-db}. Skenario 1, 4, 6, dan 7 juga lulus pada \textit{image} yang sama. Keluaran dipotong pada baris yang berulang.
+Setiap skenario dijalankan sendiri dengan \textit{login} baru pada klaster tiga VM milik Nathanael. Skenario 2, 3, dan 5 dijalankan ulang pada 23 November 2026 dengan \textit{image} Aggregator dan Client-Facing API dari cabang PR \#442 dan \#446, sesudah \texttt{deploy/migrate-failed-messages.sh} memindahkan baris lama ke \texttt{coordination-db}. Skenario 1, 4, 6, dan 7 juga lulus pada \textit{image} yang sama. Keluaran dipotong pada baris yang berulang.
 
 \subsection{Kriteria 1: Deklarasi dan Perilaku pada PVMBG Mock}
 
