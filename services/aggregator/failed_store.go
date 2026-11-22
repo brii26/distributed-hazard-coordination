@@ -95,7 +95,7 @@ func (s *store) insertFailed(ctx context.Context, m failedMessage) error {
 		next = &m.NextAttemptAt
 	}
 
-	_, err := s.db.ExecContext(ctx, insertFailedSQL, m.MessageID, m.Source, m.ReceivedAt, m.Payload,
+	_, err := s.coordDB().ExecContext(ctx, insertFailedSQL, m.MessageID, m.Source, m.ReceivedAt, m.Payload,
 		m.PayloadSHA, m.PayloadSize, m.Oversize, m.Reason, m.Retryable, m.Attempts, m.Status, m.SourceRefID, m.LastErrorAt,
 		string(m.MappedEvent), next, m.CorrelationID)
 
@@ -146,7 +146,7 @@ func (s *store) listFailed(ctx context.Context, f failedFilter, cursor string, l
 		}
 	}
 
-	q, err := s.db.QueryContext(ctx, `
+	q, err := s.coordDB().QueryContext(ctx, `
 SELECT message_id, source, received_at, payload, payload_sha256, payload_size, oversize,
        reason, retryable, attempts, status, COALESCE(source_ref_id, ''), last_error_at
 FROM failed_messages
@@ -195,7 +195,7 @@ func (s *store) updateFailed(ctx context.Context, query, id string) (bool, error
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	res, err := s.db.ExecContext(ctx, query, id)
+	res, err := s.coordDB().ExecContext(ctx, query, id)
 	if err != nil {
 		return false, err
 	}
