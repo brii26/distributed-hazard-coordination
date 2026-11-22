@@ -45,6 +45,7 @@ message ListFailedMessagesRequest {
   string status = 1; // optional: retrying | parked | recovered; empty means all three
   int32 limit = 2;   // 0 means the default (50), capped at 100
   string cursor = 3; // opaque, from the previous page's next_cursor
+  string source = 4; // optional: BMKG, PVMBG, SATELIT, SENSOR_PANTAI or FIELD_REPORT; empty means every source
 }
 
 message ListFailedMessagesResponse {

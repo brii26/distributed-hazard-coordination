@@ -43,6 +43,7 @@ type ListFailedMessagesRequest struct {
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"` // optional: retrying | parked | recovered; empty means all three
 	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`  // 0 means the default (50), capped at 100
 	Cursor        string                 `protobuf:"bytes,3,opt,name=cursor,proto3" json:"cursor,omitempty"` // opaque, from the previous page's next_cursor
+	Source        string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"` // optional: BMKG, PVMBG, SATELIT, SENSOR_PANTAI or FIELD_REPORT; empty means every source
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -94,6 +95,13 @@ func (x *ListFailedMessagesRequest) GetLimit() int32 {
 func (x *ListFailedMessagesRequest) GetCursor() string {
 	if x != nil {
 		return x.Cursor
+	}
+	return ""
+}
+
+func (x *ListFailedMessagesRequest) GetSource() string {
+	if x != nil {
+		return x.Source
 	}
 	return ""
 }
@@ -1299,11 +1307,12 @@ var File_aggregator_proto protoreflect.FileDescriptor
 
 const file_aggregator_proto_rawDesc = "" +
 	"\n" +
-	"\x10aggregator.proto\x12\raggregator.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"a\n" +
+	"\x10aggregator.proto\x12\raggregator.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"y\n" +
 	"\x19ListFailedMessagesRequest\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06cursor\x18\x03 \x01(\tR\x06cursor\"o\n" +
+	"\x06cursor\x18\x03 \x01(\tR\x06cursor\x12\x16\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\"o\n" +
 	"\x1aListFailedMessagesResponse\x120\n" +
 	"\x04data\x18\x01 \x03(\v2\x1c.aggregator.v1.FailedMessageR\x04data\x12\x1f\n" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +

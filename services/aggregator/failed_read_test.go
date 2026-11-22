@@ -267,7 +267,18 @@ func TestListFailedMessagesRPC(t *testing.T) { //nolint:gocyclo // one table of 
 		t.Fatalf("fields not carried: %v", m)
 	}
 
-	for _, req := range []*aggregatorpb.ListFailedMessagesRequest{{Status: "bogus"}, {Limit: -1}, {Cursor: "!!"}} {
+	reports, err := listFailedRPC(t, rows, &aggregatorpb.ListFailedMessagesRequest{Source: sourceFieldReport})
+	if err != nil || len(reports.GetData()) != 3 {
+		t.Fatalf("source filter: %v %v", reports, err)
+	}
+
+	for _, m := range reports.GetData() {
+		if m.GetSource() != sourceFieldReport {
+			t.Fatalf("source filter let %s through", m.GetSource())
+		}
+	}
+
+	for _, req := range []*aggregatorpb.ListFailedMessagesRequest{{Status: "bogus"}, {Limit: -1}, {Cursor: "!!"}, {Source: "bmkg"}} {
 		if _, err := listFailedRPC(t, rows, req); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("%v: %v", req, err)
 		}
