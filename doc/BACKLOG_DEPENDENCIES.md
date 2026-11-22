@@ -194,6 +194,7 @@ graph TD
   305["#305 F7 POST /field-reports answers 202 with a.."]
   306["#306 F8 Field reports consumer that is idempot.."]
   307["#307 F9 P3 end-to-end test script"]
+  403["#403 Adjustable PVMBG schema mapping"]
 
   %% P4 satellite feed
   308["#308 G1 read the live satellite feed and recor.."]
@@ -283,6 +284,9 @@ graph TD
   305 --> 306
   306 --> 307
   307 --> 328
+  299 --> 403
+  303 --> 403
+  403 -.->|informs, not blocking| 307
   309 --> 313
   310 --> 311
   311 --> 312

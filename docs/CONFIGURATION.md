@@ -85,6 +85,7 @@ Every variable in `.env.example`. Compose reads `.env` and passes each one to th
 | `AUDIT_TOKEN` | Kubernetes Secret `audit-token` | change-me | Token for the Internal Audit API |
 | `ADMIN_TOKEN` | Kubernetes Secret `admin-token`, aggregator | change-me | Bearer token for `POST /internal/admin/replay`. Separate from `AUDIT_TOKEN`; unset means the endpoint refuses every call |
 | `REPLAY_BATCH` | aggregator | 500 | Parked rows read per page when replaying |
+| `PVMBG_SCHEMA_ADJUST` | aggregator (ConfigMap `bnpb-config`) | unset | Accepts a renamed, text-typed or missing PVMBG contract field: `rename:<new>=<field>`, `type:<field>`, `default:<field>=<value>`, comma separated. Read at start, so restart the Aggregator after a change. See [P3_SCHEMA_POLICY.md](../doc/P3_SCHEMA_POLICY.md) |
 | `SATELLITE_GROUP_TOKEN` | Kubernetes Secret `satellite-token` | change-me | Group token for the assistants' satellite feed. The Aggregator sends it as `Authorization: Bearer` and never logs it |
 | `SATELIT_ENABLED` | aggregator | false | Turns the satellite fire pipeline (P4) on. Turn it on in one deployment only: the feed allows one stream per group, and a second evicts the first. Needs `SATELLITE_BASE_URL` and `SATELLITE_GROUP_TOKEN` |
 | `SATELLITE_BASE_URL` | aggregator | https://satellite.naufarrel.dev (configmap) | Base URL of the satellite feed |

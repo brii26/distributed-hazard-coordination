@@ -415,6 +415,7 @@ type pollConfig struct {
 	pantaiToken       string
 	sensor            sensorConfig
 	pantai            *sensorClient // built in run once the store is open
+	adjust            schemaAdjust
 }
 
 // Builds the BMKG and PVMBG pollers, and Sensor Pantai's when configured, each with its own circuit breaker.

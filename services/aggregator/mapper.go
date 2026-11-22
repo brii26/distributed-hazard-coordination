@@ -13,8 +13,9 @@ import (
 
 // Turns raw source records into HazardEvents, working on generic maps. Clock and ID generator are fields so tests can pin them.
 type mapper struct {
-	now   func() time.Time
-	newID func(source, ref string) string
+	now    func() time.Time
+	newID  func(source, ref string) string
+	adjust schemaAdjust
 }
 
 func newMapper() *mapper {
@@ -224,6 +225,8 @@ func (m *mapper) mapVolcanic(reports []map[string]any) ([]HazardEvent, error) {
 }
 
 func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
+	r, adjusted := m.adjust.apply(r)
+
 	if err := checkContract(sourcePVMBG, r); err != nil {
 		return HazardEvent{}, err
 	}
@@ -248,6 +251,10 @@ func (m *mapper) volcanic(r map[string]any) (HazardEvent, error) {
 	}
 
 	h.addLeftovers(r, used)
+
+	if len(adjusted) > 0 {
+		h.Attributes["schema_adjusted"] = adjusted
+	}
 
 	return h, nil
 }
