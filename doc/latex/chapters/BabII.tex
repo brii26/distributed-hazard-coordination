@@ -23,7 +23,7 @@ Gambar \ref{fig:arsitektur} menunjukkan komponen logis sistem pada Milestone 2, 
 \item \textit{Client-Facing API}, Auth Service, dan \textit{user-db}: fungsinya sama seperti Milestone 1. Client-Facing API kini juga membatasi beban dengan prioritas, yaitu Tim Lapangan didahulukan daripada Media (\texttt{MEDIA\_MAX\_INFLIGHT} di \texttt{deploy/configmap.yaml}).
 \item \textit{Web Frontend}: nginx yang menyajikan aplikasi SvelteKit dan meneruskan \texttt{/api} (\texttt{deploy/web-frontend.yaml}).
 \item RabbitMQ (StatefulSet) dengan \textit{fanout exchange} \texttt{hazard.events}, dan tiga \textit{consumer}: Dashboard Updater, Notifier, Audit Logger. Tiap \textit{consumer} punya \textit{queue} durable sendiri.
-\item BMKG \textit{mock}, PVMBG \textit{mock}, dan Sensor Pantai: tiga sumber yang di-\textit{poll}. Sensor Pantai memakai \textit{image} dari asisten (\texttt{deploy/sensor-pantai/sensor-pantai.yaml}). Sumber satelit untuk kebakaran hutan dibahas di Bab XIV dan belum ada manifest-nya di \texttt{deploy/}, sehingga belum tergambar. \ph{Tambahkan komponen satelit ke gambar setelah manifest Problem 4 masuk}
+\item BMKG \textit{mock}, PVMBG \textit{mock}, dan Sensor Pantai: tiga sumber yang di-\textit{poll}. Sensor Pantai memakai \textit{image} dari asisten (\texttt{deploy/sensor-pantai/sensor-pantai.yaml}). Sumber satelit untuk kebakaran hutan dibahas di Bab XIV dan belum ada manifest-nya di \texttt{deploy/}, sehingga belum tergambar. Feed satelit dibaca lewat SSE hanya oleh replika Aggregator yang memegang \textit{lease} SATELIT (Bab Problem 4).
 \item Jaeger, Prometheus, Grafana, dan kube-state-metrics (\texttt{deploy/observability/}). Prometheus mengambil metrik tiap replika \textit{Aggregator} lewat DNS headless Service \texttt{aggregator}.
 \item Tester Agent dari asisten, di \textit{namespace} \texttt{tester-agent}, dipasang tanpa mengubah manifest-nya. Catatan pemasangannya ada di \texttt{doc/TESTER\_AGENT\_NOTES.md}.
 \end{itemize}
@@ -38,7 +38,7 @@ Jalur \textit{client} dimulai dari \textit{browser} ke \textit{Web Frontend} ata
 
 \subsection{Kepemilikan Storage dan Batas Isolasi}
 
-Ketentuan Milestone 2 meminta kepemilikan \textit{storage} oleh satu \textit{service} ditegakkan oleh platform. Di Milestone 1 ini dilakukan dengan \textit{network} Compose yang bersifat \textit{internal}. Di Kubernetes, \texttt{deploy/networkpolicy.yaml} memuat tiga NetworkPolicy ingress: pod \textit{store} hanya menerima koneksi dari pod berlabel \texttt{role=aggregator} (ditambah rentang alamat node 10.77.0.0/24 agar Tester Agent yang memakai \texttt{hostNetwork} tetap dapat menjangkaunya), \textit{user-db} hanya dari \textit{auth-service}, dan \textit{coordination-db} hanya dari \textit{Aggregator}. Policy tidak memuat aturan egress, sehingga DNS dan \textit{probe} \textit{kubelet} tidak terganggu. Uji pada klaster lokal 22 November 2026 dengan \texttt{nc -z -w 3} dari dalam \textit{pod}: \texttt{auth-service} ke \texttt{user-db:5432} terbuka, sedangkan \texttt{client-facing-api}, \texttt{notifier}, dan \texttt{web-frontend} ke \texttt{user-db:5432} ditolak. \texttt{web-frontend} ke \texttt{client-facing-api:8080} terbuka.
+Ketentuan Milestone 2 meminta kepemilikan \textit{storage} oleh satu \textit{service} ditegakkan oleh platform. Di Milestone 1 ini dilakukan dengan \textit{network} Compose yang bersifat \textit{internal}. Di Kubernetes, \texttt{deploy/networkpolicy.yaml} memuat tiga NetworkPolicy ingress: pod \textit{store} hanya menerima koneksi dari pod berlabel \texttt{role=aggregator} (ditambah rentang alamat node 10.77.0.0/24 agar Tester Agent yang memakai \texttt{hostNetwork} tetap dapat menjangkaunya), \textit{user-db} hanya dari \textit{auth-service}, dan \textit{coordination-db} hanya dari \textit{Aggregator}. Policy tidak memuat aturan egress, sehingga DNS dan \textit{probe} \textit{kubelet} tidak terganggu. Uji pada klaster tiga VM milik Nathanael yang dibangun dari manifest yang sama, 22 November 2026, dengan \texttt{nc -z -w 3} dari dalam \textit{pod}: \texttt{auth-service} ke \texttt{user-db:5432} terbuka, sedangkan \texttt{client-facing-api}, \texttt{notifier}, dan \texttt{web-frontend} ke \texttt{user-db:5432} ditolak. \texttt{web-frontend} ke \texttt{client-facing-api:8080} terbuka.
 
 \section{Diagram Deployment}
 
@@ -51,7 +51,7 @@ Gambar \ref{fig:deployment} menunjukkan penempatan pod pada tiga node dan jalur 
 \label{fig:deployment}
 \end{figure}
 
-Penempatan yang pasti dari manifest hanya untuk tiga hal. Pod \textit{store} berjalan satu per node karena berupa DaemonSet, Tester Agent juga DaemonSet, dan \textit{registry} \textit{image} (\texttt{registry:2}, port 5000) berada di node-a lewat \texttt{deploy/cluster/registry.yaml}. Replika \textit{Aggregator} memakai \textit{topology spread constraint} pada \texttt{kubernetes.io/hostname} dengan \texttt{maxSkew} 1 dan \texttt{ScheduleAnyway}, sehingga penjadwal berusaha menyebar tiga replika ke tiga node tetapi tidak menjamin. Pod lain tidak dipin ke node tertentu di manifest, jadi letaknya ditentukan penjadwal k3s dan harus dibaca dari cluster. \ph{Ganti kotak tanpa pin pada Gambar \ref{fig:deployment} dengan letak sebenarnya dari kubectl get pods -o wide pada run akhir, dan lampirkan keluarannya}
+Penempatan yang pasti dari manifest hanya untuk tiga hal. Pod \textit{store} berjalan satu per node karena berupa DaemonSet, Tester Agent juga DaemonSet, dan \textit{registry} \textit{image} (\texttt{registry:2}, port 5000) berada di node-a lewat \texttt{deploy/cluster/registry.yaml}. Replika \textit{Aggregator} memakai \textit{topology spread constraint} pada \texttt{kubernetes.io/hostname} dengan \texttt{maxSkew} 1 dan \texttt{ScheduleAnyway}, sehingga penjadwal berusaha menyebar tiga replika ke tiga node tetapi tidak menjamin. Pod lain tidak dipin ke node tertentu di manifest, jadi letaknya ditentukan penjadwal k3s dan harus dibaca dari cluster. Contoh letak yang dipilih \textit{scheduler}, dari \texttt{kubectl get pods -o wide} pada klaster tiga VM milik Nathanael tanggal 23 November 2026: node-a menjalankan dua replika \texttt{aggregator}, \texttt{coordination-db-0}, \texttt{jaeger}, dan \texttt{store}; node-b menjalankan \texttt{audit-logger}, \texttt{bmkg-mock}, \texttt{pvmbg-mock}, \texttt{sensor-pantai}, \texttt{situation-summarizer}, \texttt{user-db-0}, \texttt{grafana}, \texttt{prometheus}, \texttt{kube-state-metrics}, dan \texttt{store}; node-c menjalankan \texttt{auth-service}, \texttt{client-facing-api}, \texttt{web-frontend}, \texttt{dashboard-updater}, \texttt{notifier}, dua replika \texttt{field-report-processor}, \texttt{rabbitmq-0}, dan \texttt{store}. Letak ini dapat berbeda pada klaster lain atau sesudah \textit{restart}.
 
 Jalur data antar node yang tampil pada gambar:
 
@@ -116,6 +116,18 @@ GET & \texttt{/hazards} & Satu halaman \texttt{HazardEvent} sesuai role. Paramet
 \hline
 GET & \texttt{/hazards/stream} & Aliran \textit{event} langsung lewat SSE, difilter per \texttt{type} dan per role \\
 \hline
+GET & \texttt{/hazards/{id}} & Satu \texttt{HazardEvent} menurut id, sesuai role \\
+\hline
+GET & \texttt{/analytics} & Hitungan untuk dasbor analitik per rentang \texttt{1h}, \texttt{6h}, \texttt{24h}, atau \texttt{7d} (Bab Problem 1) \\
+\hline
+POST & \texttt{/field-reports} & Laporan Tim Lapangan, dibalas 202 sesudah tersimpan di \textit{broker} (Bab Problem 3) \\
+\hline
+GET & \texttt{/admin/failed-messages} & Daftar pesan gagal, hanya untuk Operator (Bab Problem 3) \\
+\hline
+GET & \texttt{/alerts/stream} & Aliran peringatan kritis dari Notifier lewat SSE (Bab Problem 5) \\
+\hline
+GET & \texttt{/situation} & Ringkasan situasi dari Situation Summarizer (Bab Bonus) \\
+\hline
 GET & \texttt{/me} & Email dan role dari sesi, sebagai petunjuk tampilan \\
 \hline
 GET & \texttt{/health} & Status \textit{service} \\
@@ -147,7 +159,7 @@ Web Frontend berupa aplikasi \textit{client-side rendering}: nginx hanya menyaji
 
 Pembaruan data masuk lewat SSE. Frontend membuka \texttt{EventSource} ke \texttt{GET /hazards/stream}. Client-Facing API meneruskan aliran dari Dashboard Updater, menyaring per \texttt{type}, dan memproyeksikan field menurut role seperti pada \texttt{GET /hazards}. Aliran ditutup server saat token kedaluwarsa, dan \textit{browser} menyambung ulang sehingga sesi disegarkan secara transparan atau dijawab 401. \textit{Event} yang terlewat saat putus tidak diputar ulang. Saat aliran terbuka atau tersambung ulang, frontend memuat ulang \texttt{GET /hazards} yang bersumber dari Canonical Store, dan polling berkala pada \texttt{FRONTEND\_POLL\_INTERVAL\_MS} tetap berjalan sebagai cadangan bila aliran putus. SSE dipilih dibandingkan WebSocket karena komunikasinya satu arah, berjalan di atas HTTP biasa melalui nginx dan cookie \textit{HttpOnly}, dan penyambungan ulang sudah ada di \textit{browser}. Jumlah aliran dibatasi 500 secara total dan 5 per akun, di luar batas konkurensi global.
 
-Endpoint yang ditambahkan Milestone 2, yaitu Audit API, \texttt{POST /field-reports}, dan pemeriksaan pesan gagal, dibahas pada bab problem masing-masing. \ph{Tambahkan baris endpoint tersebut ke tabel di atas setelah isu \#296, \#304, dan \#305 selesai dan tercatat di README}
+Endpoint Milestone 2 pada tabel di atas dibahas pada bab problem masing-masing. Audit API (\texttt{/internal/audit/events}, \texttt{/internal/audit/checksum}, \texttt{/internal/audit/location}, \texttt{/internal/audit/unprocessed}) dan \texttt{POST /internal/admin/replay} ada pada HTTP internal Aggregator, tidak lewat Client-Facing API.
 
 \section{Konfigurasi}
 

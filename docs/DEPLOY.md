@@ -357,3 +357,4 @@ kubectl run np-agg -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels
 kubectl run np-auth -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels=app=auth-service -- nc -zvw2 user-db 5432     # open
 kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice kill-store                                              # still works
 ```
+

@@ -299,8 +299,8 @@ deploy/cluster/k3s.sh
 export KUBECONFIG=$HOME/vms/k3s/kubeconfig
 kubectl get nodes
 
-# 2. Images: build the nine service images and push them to the registry on node-a
-for s in aggregator bmkg-mock pvmbg-mock auth-service client-facing-api web-frontend dashboard-updater notifier audit-logger; do
+# 2. Images: build the eleven service images and push them to the registry on node-a
+for s in aggregator bmkg-mock pvmbg-mock auth-service client-facing-api web-frontend dashboard-updater notifier audit-logger field-report-processor situation-summarizer; do
   docker build -t 127.0.0.1:5000/$s:0.1.0 services/$s
   docker push 127.0.0.1:5000/$s:0.1.0
 done
