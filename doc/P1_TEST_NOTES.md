@@ -11,14 +11,14 @@ DRY_RUN=1 tests/scenarios/problem1-k8s.sh    # the plan only
 ```
 
 - **A** pages through the cross-shard list (`GET /hazards?limit=50`) and the audit events, and checks status 200 and no repeated id.
-- **B** saves the audit ids, starts a probe (a list page and an audit page every second), stops the store on the first worker, empties `/var/lib/bnpb-store` there with a one-shot pod, starts the store on the empty disk, waits for the recovery and checks: no saved id is missing, the writes continued, the audit checksum equals a SHA-256 over the listed ids, the probe saw no 5xx and no hang, every sampled id has two copies, and the returned node holds copies again.
+- **B** saves the audit ids, starts a probe (a list page and an audit page every second), stops the store on the first worker, empties `/var/lib/rancher/k3s/storage/bnpb-store` there with a one-shot pod, starts the store on the empty disk, waits for the recovery and checks: no saved id is missing, the writes continued, the audit checksum equals a SHA-256 over the listed ids, the probe saw no 5xx and no hang, every sampled id has two copies, and the returned node holds copies again.
 - **E** does the same for the second worker, so the system is shown to survive the next loss (criterion 6).
 
 A FAIL means the implementation is wrong, NOT RUN means the script could not run. Exit codes: 0, 1 (a FAIL), 2 (cluster not ready). Run it on a cluster nobody else uses: it stops the store on one node and restores the DaemonSet on exit.
 
 ## Why the script wipes the folder itself
 
-The Tester Agent's `wipe-node` empties `/var/lib/rancher/k3s/storage` (the local-path volumes), and the store keeps its data in `/var/lib/bnpb-store`, see [TESTER_AGENT_NOTES.md](TESTER_AGENT_NOTES.md). Only a wipe of the store folder shows a real loss and recovery. The M2 text allows a `hostPath` for `role=store` data (Tester Agent contract, item 7). Moving the `hostPath` under the folder the agent wipes would make the agent's wipe real too; that needs the team to agree and a `pg_dump` of every store node as a copy first.
+The Tester Agent's `wipe-node` empties `/var/lib/rancher/k3s/storage` (the local-path volumes), and the store keeps its data in `/var/lib/rancher/k3s/storage/bnpb-store`, a folder under it, so the agent's wipe is real (the first measurement in [TESTER_AGENT_NOTES.md](TESTER_AGENT_NOTES.md) was made when the store was still in `/var/lib/bnpb-store`, which the agent never touched). The M2 text allows a `hostPath` for `role=store` data (Tester Agent contract, item 7). Take a `pg_dump` of every store node with `deploy/store-dump.sh` before the exam.
 
 ## Joining a new node by hand (criterion 5)
 

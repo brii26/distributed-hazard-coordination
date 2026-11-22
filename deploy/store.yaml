@@ -5,7 +5,8 @@
 #   password  -> POSTGRES_PASSWORD
 # ConfigMap `store-schema`: content is owned by P1 and created from services/aggregator/migrations
 #   (the whole folder is mounted, including 011_shard_state.sql); #270 only adds it to the kustomization.
-# hostPath /var/lib/bnpb-store must match the Tester Agent wipe-node path (verify in #269).
+# hostPath /var/lib/rancher/k3s/storage/bnpb-store sits under the folder the Tester Agent wipe-node empties, so a wiped node really loses its store data.
+# updateStrategy OnDelete: a changed manifest never restarts a store, see docs/DEPLOY.md.
 # Memory stays 512Mi requests / 1Gi limits (Appendix B, checked by #275); shared_buffers=128MB.
 apiVersion: v1
 kind: Service
@@ -27,6 +28,8 @@ metadata:
   namespace: sistem-informasi-kebencanaan-bnpb
   name: store
 spec:
+  updateStrategy:
+    type: OnDelete
   selector:
     matchLabels:
       role: store
@@ -84,7 +87,7 @@ spec:
       volumes:
         - name: data
           hostPath:
-            path: /var/lib/bnpb-store
+            path: /var/lib/rancher/k3s/storage/bnpb-store
             type: DirectoryOrCreate
         - name: schema
           configMap:

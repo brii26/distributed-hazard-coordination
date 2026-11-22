@@ -21,7 +21,7 @@ PROBE_TIMEOUT=${PROBE_TIMEOUT:-8}      # seconds a probe call may take before it
 RECOVER_WAIT=${RECOVER_WAIT:-900}      # seconds the system gets to heal after a node returns empty
 SAMPLE=${SAMPLE:-20}                   # ids whose copies are checked with the location endpoint
 TICK=${TICK:-3}                        # seconds between two tries of a wait
-HOSTPATH=${HOSTPATH:-/var/lib/bnpb-store}
+HOSTPATH=${HOSTPATH:-/var/lib/rancher/k3s/storage/bnpb-store}
 RUN=${RUN:-p1-$(date +%s)}
 
 PASSED=0 FAILED=0 NOTRUN=0

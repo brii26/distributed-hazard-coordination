@@ -26,7 +26,7 @@ graph TD
 
 ## Engine and topology
 
-- Postgres 16 (`postgres:16-alpine`) as a DaemonSet with `role=store`, one pod per node, data on a hostPath (`/var/lib/bnpb-store`, one ConfigMap value).
+- Postgres 16 (`postgres:16-alpine`) as a DaemonSet with `role=store`, one pod per node, data on a hostPath (`/var/lib/rancher/k3s/storage/bnpb-store`, one ConfigMap value).
 - Requests 512Mi, limit 1Gi, `shared_buffers=128MB`, `max_connections=60`.
 - A DaemonSet means a node that joins k3s gets a store pod automatically.
 - All 16 shards live in one table as a `shard` column. Same schema on every node. A `shard_state(shard, synced)` table says whether a copy can be trusted for reads.
@@ -123,7 +123,7 @@ With one store node, `cluster` behaves like the single-DB version (every shard h
 
 ## Kubernetes
 
-`deploy/store.yaml` lives in namespace `sistem-informasi-kebencanaan-bnpb`. It reads Secret `store-credentials` keys `user` and `password` (created by #270 from `.env`). ConfigMap `store-schema` is owned by P1 and built from `services/aggregator/migrations` (`001_hazard_events.sql`, `002_shard.sql`); #270 only adds it to the kustomization. Memory stays 512Mi requests / 1Gi limits and `shared_buffers=128MB`. The hostPath `/var/lib/bnpb-store` must match the Tester Agent wipe-node path (to be verified in #269).
+`deploy/store.yaml` lives in namespace `sistem-informasi-kebencanaan-bnpb`. It reads Secret `store-credentials` keys `user` and `password` (created by #270 from `.env`). ConfigMap `store-schema` is owned by P1 and built from `services/aggregator/migrations` (`001_hazard_events.sql`, `002_shard.sql`); #270 only adds it to the kustomization. Memory stays 512Mi requests / 1Gi limits and `shared_buffers=128MB`. The hostPath `/var/lib/rancher/k3s/storage/bnpb-store` sits under the folder the Tester Agent `wipe-node` empties, so a wiped node loses its store data and the recovery code has real work to do.
 
 ## Loading the earthquake catalog and the skew
 
