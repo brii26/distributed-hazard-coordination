@@ -49,7 +49,7 @@ func resetNode(t *testing.T, n *node) {
 
 	ctx := context.Background()
 
-	if _, err := n.db.ExecContext(ctx, `DROP TABLE IF EXISTS hazard_events, shard_state, source_lease, failed_messages CASCADE`); err != nil {
+	if _, err := n.db.ExecContext(ctx, `DROP TABLE IF EXISTS hazard_events, shard_state, source_lease, failed_messages, field_reports CASCADE`); err != nil {
 		t.Fatal(err)
 	}
 

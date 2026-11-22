@@ -25,6 +25,7 @@ func newRBFake(t *testing.T, f *fakeStore, c *cluster, del bool) (*rebalancer, *
 	x := &rbFake{fakeStore: f, synced: map[string]map[int]bool{}}
 	rb := newRebalancer(c, 0, del)
 	rb.pageSize, rb.verifyWait = 7, 0
+	rb.listReports, rb.copyReportsTo = nil, nil // the fake nodes hold no database
 
 	rb.scan = func(ctx context.Context, n *node) (map[int]shardStat, error) {
 		if err := f.gate(ctx, n); err != nil {
