@@ -63,3 +63,6 @@ tests/bonus/results/*
 tests/p4/results/*
 !tests/p4/results/README.md
 tests/results/
+
+# store dumps taken by deploy/store-dump.sh
+store-dump-*/
