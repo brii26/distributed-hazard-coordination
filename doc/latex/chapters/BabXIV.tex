@@ -1,0 +1,58 @@
+% sumber: doc/P4_FEED_NOTES.md, isu #308 sampai #316, komentar Brian pada isu #401 (uji coba P4 pada klaster tiga VM), services/aggregator (fire_*.go)
+\chapter[MILESTONE 2: PROBLEM 4]{Milestone 2: Problem 4, Titik Api dari Satelit}
+
+Bab ini menjawab Problem 4 Milestone 2. Fakta tentang aliran satelit diambil dari pengukuran di \texttt{doc/P4\_FEED\_NOTES.md} (profil latihan, kecepatan 60). Bukti pemulihan diambil dari uji coba Brian pada klaster tiga VM yang dicatat di isu \#401. Bagian yang belum ada buktinya ditandai.
+
+\section{Identifikasi Persoalan}
+
+\begin{longtable}[]{|>{\raggedright\arraybackslash}p{0.3\linewidth}|>{\raggedright\arraybackslash}p{0.3\linewidth}|>{\raggedright\arraybackslash}p{0.3\linewidth}|}
+\hline
+\textbf{Persoalan} & \textbf{Konsep dalam literatur} & \textbf{Wujud pada soal} \\
+\hline
+\endhead
+Deteksi datang terlambat dan tidak berurutan & \textit{Event time} melawan \textit{processing time}, \textit{allowed lateness}, \textit{watermark} & Keterlambatan p99,9 sekitar 4 jam, maksimum 5 jam 1 menit \\
+\hline
+Deteksi dikirim ulang, diperbarui, atau ditarik & \textit{Idempotent consumer}, \textit{tombstone} & 6,5\% deteksi adalah kiriman ulang; ada \texttt{update} dan \texttt{retract} per kunci \\
+\hline
+Hanya satu koneksi aliran per kelompok & \textit{Leader election} dengan \textit{lease} & Koneksi kedua mendapat 429 dan mengusir koneksi pertama \\
+\hline
+Pembaca bisa mati kapan saja & Pemulihan dengan membaca ulang log dan \textit{offset} yang tersimpan & Hasil titik api harus sama dengan atau tanpa \textit{crash} \\
+\hline
+\end{longtable}
+
+\section{Rancangan}
+
+\textbf{Satu pembaca.} Hanya pemegang \textit{lease} SATELIT yang membuka aliran, karena koneksi kedua mengusir koneksi pertama dan keduanya akan saling menjatuhkan. Pembaca menyambung ulang dengan \texttt{Last-Event-ID} sesudah server menutup aliran, yang terjadi tiap 9 sampai 90 detik.
+
+\textbf{Kunci deteksi.} Deteksi dikenali dengan kunci lima \textit{field} \texttt{satellite|acq\_date|acq\_time|latitude|longitude}, dengan koordinat ditulis desimal biasa lima angka seperti kunci pada \texttt{update} dan \texttt{retract}. Kiriman ulang dengan isi sama dilewati. \texttt{retract} meninggalkan \textit{tombstone} yang menang atas kiriman ulang berikutnya.
+
+\textbf{Jam umpan dan keterlambatan.} Jam umpan adalah nilai terbesar dari \texttt{virtual\_now} \textit{heartbeat} terakhir dan \texttt{acq} terbaru. Batas keterlambatan $L = 12$ jam, lebih dari dua kali keterlambatan terbesar yang terukur. Peristiwa yang lebih terlambat disimpan di \texttt{failed\_messages} dan dihitung. Titik api dinyatakan selesai bila jam umpan melewati deteksi terbarunya ditambah 360 menit dan $L$.
+
+\textbf{Pemulihan.} Setiap mulai, pembaca membaca ulang dari \textit{offset} 0. Sampai \textit{offset} yang tersimpan, memori dibangun ulang tanpa menyimpan atau menerbitkan apa pun, lalu pemrosesan berlanjut biasa. Penyimpanan bersifat idempoten, jadi \textit{batch} yang diproses dua kali tidak mengubah hasil.
+
+\section{Alasan}
+
+Membaca ulang dari awal dipilih karena server menyimpan seluruh riwayat sesi dan riwayat 436 ribu peristiwa terbaca ulang dalam 169 detik. Memulai dari \textit{offset} yang lebih besar dapat salah menilai keterlambatan atau membentuk ulang sebagian titik api yang sudah selesai. Jam umpan diambil hanya dari isi aliran supaya pembacaan ulang mengambil keputusan yang sama, sedangkan jam dinding tidak dapat diulang.
+
+\section{Keterbatasan}
+
+\begin{itemize}
+\item Semua angka berasal dari profil latihan. Profil ujian dapat berbeda, misalnya jam satelit yang tidak sepakat, yang tidak terlihat pada profil latihan.
+\item Asumsi tentang kunci, \textit{retract} yang final, dan target yang tidak dikenal belum dikonfirmasi asisten (\texttt{doc/P4\_FEED\_NOTES.md} bagian 4 dan 5).
+\item Waktu pemulihan tumbuh seiring panjang riwayat sesi.
+\end{itemize}
+
+\section{Bukti per Kriteria}
+
+\textbf{Kriteria 5, hasil sama sesudah \textit{crash}.} Brian menjalankan aliran sampai \textit{offset} 1.500.000 pada klaster tiga VM dari \texttt{main} \texttt{15e616f}. Satu proses tanpa \textit{crash} dan dua proses dengan dua kali \textit{pod} pemegang \textit{lease} dihapus paksa menghasilkan 23.561 titik api dengan sha256 yang sama, \texttt{cb75381e\ldots e8617}. Epoch \textit{lease} SATELIT naik dari 14 ke 15 sekitar 8 detik sesudah \textit{kill} pertama dan ke 16 sesudah \textit{kill} kedua.
+
+\textbf{Mengikuti aliran langsung.} Sesudah batas \textit{offset} dilepas, selisih \textit{offset} turun dari 1.719.453 ke 3 dalam 832 detik, dan selisih waktu umpan menjadi 138 detik.
+
+\textbf{\textit{Dashboard}.} Gambar \ref{fig:p4-grafana} diambil pada klaster lokal tiga VM pada 22 November 2026 pukul 23.48 WIB, sekitar lima menit sesudah pipeline satelit dinyalakan dan mulai membaca dari \textit{offset} 0. Penyimpanan mencapai sekitar 2.000 rekaman per detik saat membaca ulang, dan tumpukan tertahan pada batas 2.048. Pada saat itu tercatat 13 ribu kiriman ulang dan 367 kiriman yang ditolak \textit{tombstone}, sedangkan \texttt{too\_late}, \texttt{unknown\_or\_closed\_target}, dan rekaman yang disimpan sebagai gagal masih 0. Selisih \textit{offset} dan waktu umpan masih besar karena pembacaan ulang riwayat belum selesai.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth,height=0.72\textheight,keepaspectratio]{figures/bukti/p4-grafana-satelit.png}
+\caption{Baris \textit{Satellite fires} pada Grafana saat pembacaan ulang}
+\label{fig:p4-grafana}
+\end{figure}
