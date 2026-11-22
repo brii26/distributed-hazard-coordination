@@ -80,7 +80,9 @@ func (m *mapper) base(source, hazardType string, r map[string]any, idKey, timeKe
 	}
 
 	// A report from the far future would sort to the top for good, and an over-long id is a database error.
-	if at.After(m.now().Add(maxFutureSkew)) || len(id) > maxRefIDLen {
+	// Sensor Pantai has its own clock that is not ours (the contract promises none), and its observed_at is checked against its generated_at before mapping, so only the id is checked here.
+	future := source != sourceSensorPantai && at.After(m.now().Add(maxFutureSkew))
+	if future || len(id) > maxRefIDLen {
 		return HazardEvent{}, fmt.Errorf("%s record %.40s: implausible id or %s", source, id, timeKey)
 	}
 

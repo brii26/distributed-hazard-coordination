@@ -585,3 +585,29 @@ func FuzzVolcanic(f *testing.F) {
 		_, _ = testMapper().volcanic(r)
 	})
 }
+
+// Sensor Pantai has a clock of its own, so an observed_at far ahead of ours is kept. Other sources still reject it.
+func TestCoastalKeepsAnObservedAtAheadOfOurClock(t *testing.T) {
+	t.Parallel()
+
+	m := testMapper()
+	rec := map[string]any{
+		"observation_id": "obs-000001", "station_id": "stn-padang-01", "quality": "ok", "critical": false,
+		"observed_at": fixedNow.Add(22 * 24 * time.Hour).Format(time.RFC3339), "wave_height_m": 1.2, "sea_level_anomaly_m": 0.1,
+	}
+
+	h, err := m.coastal(rec, station{Province: "Sumatera Barat"})
+	if err != nil {
+		t.Fatalf("coastal: %v", err)
+	}
+
+	if !h.OccurredAt.Equal(fixedNow.Add(22 * 24 * time.Hour)) {
+		t.Errorf("occurred_at = %v, want the sensor's observed_at", h.OccurredAt)
+	}
+
+	rec["observation_id"] = strings.Repeat("x", maxRefIDLen+1)
+
+	if _, err = m.coastal(rec, station{}); err == nil {
+		t.Error("an over-long id must still be rejected")
+	}
+}
