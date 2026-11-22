@@ -61,8 +61,17 @@ type replayer struct {
 	recovered, superseded, stillParked atomic.Int64
 }
 
-// Decodes the stored record and maps it with the current mapper into exactly one event.
+// Decodes the stored record and maps it with the current mapper into exactly one event. The same guards as at ingest run
+// first, so a record set aside as too deep, not UTF-8 or too large keeps that reason instead of a schema error.
 func (m *mapper) mapParked(row failedMessage) (HazardEvent, error) {
+	if row.Oversize {
+		return HazardEvent{}, errOversize
+	}
+
+	if err := checkRecord(row.Payload); err != nil {
+		return HazardEvent{}, err
+	}
+
 	var rec map[string]any
 
 	if err := json.Unmarshal(row.Payload, &rec); err != nil {
