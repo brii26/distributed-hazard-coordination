@@ -283,6 +283,20 @@ PASS 10, FAIL 0, NOT RUN 0
 
 Kehilangan \textit{node} kedua setelah \textit{node} pertama pulih tidak menghilangkan \textit{event}: tidak ada id yang hilang, \textit{checksum} ketiga sumber sama dengan hitungan SHA-256 independen atas id yang terdaftar, dan 6 dari 80 jawaban \textit{probe} berstatus \textit{partial} tanpa 500 atau penggantungan. Keterbatasan: dua kehilangan ini tidak terjadi bersamaan, dan sebelum yang kedua skrip tidak menampilkan nilai \texttt{store\_shards\_underreplicated} secara terpisah.
 
+\subsection{Run pada Path Store Baru (22 November 2026)}
+
+\texttt{problem1-k8s.sh} dijalankan pada \textit{cluster} tiga VM sesudah hostPath store dipindah ke \texttt{/var/lib/rancher/k3s/storage/bnpb-store}, di bawah folder yang dikosongkan \texttt{wipe-node}. Skenario B menghapus seluruh data node-b lalu mengembalikannya kosong, dan skenario E menghapus node-c sesudahnya, dengan sekitar 104.000 kejadian Audit API dan sumber yang terus menulis. Batas tunggu pemulihan diperpendek dari 900 detik (bawaan) menjadi 300 detik per skenario.
+
+Hasil skrip: 15 PASS dan 10 FAIL. Yang lulus pada kedua skenario: tidak ada kejadian sebelum kehilangan yang hilang (selisih 0), penulisan tetap berjalan (104.236 menjadi 104.310 pada B dan 104.443 menjadi 104.449 pada E), tidak ada jawaban 5xx atau macet pada probe (478 jawaban, 0 parsial pada E), dan node yang kembali menyimpan salinan lagi. Yang gagal: pemulihan penuh dengan dua salinan per id belum selesai dalam 300 detik pada kedua skenario, checksum Audit API tidak sama dengan id yang terdaftar untuk keempat sumber pada B dan untuk BMKG, PVMBG, dan SATELIT pada E, dan pada B ada 4 dari 20 id contoh dengan kurang dari dua salinan.
+
+Sekitar 4 menit setelah skrip selesai, \texttt{store\_shards\_underreplicated} dan \texttt{store\_shards\_misplaced} bernilai 0, dan \texttt{audit-checksum.sh} untuk BMKG lulus (5.082 id pada daftar dan pada endpoint checksum, SHA-256 sama). Jadi kegagalan di atas adalah pemulihan yang lebih lama dari batas 300 detik pada data sebesar itu, bukan data yang hilang. Waktu pemulihan penuh pada ukuran data ini tidak diukur dan dibatasi oleh memori node, karena tiap node store sudah memakai sekitar 90\% memori dalam bentuk \textit{request}.
+
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/p1-k4-wipe-run.png}{\includegraphics[width=\linewidth,height=0.6\textheight,keepaspectratio]{figures/bukti/p1-k4-wipe-run.png}}{\ph{belum ada}}
+\caption{Keluaran \texttt{problem1-k8s.sh} untuk skenario B dan E dengan batas tunggu 300 detik}
+\end{figure}
+
 \subsection{Kriteria 7: Dasbor Analitik}
 
 \buktiph{p1-k7-dasbor.png}{Dasbor analitik: \textit{line chart}, severity, dan wilayah, termasuk penanda saat sebagian data tidak terjangkau}{tangkapan layar peramban pada keadaan normal dan keadaan satu \textit{node} mati (penanda angka belum lengkap terlihat), serta perbandingan angka dengan hitungan langsung dari Audit API.}{halaman dasbor (\#297, belum ada) dan \texttt{/internal/audit/events}.}
