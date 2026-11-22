@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 NAMESPACE="${NAMESPACE:-sistem-informasi-kebencanaan-bnpb}"
 MIGRATIONS="$ROOT/services/aggregator/migrations"
-FILES=(004_source_lease.sql 005_source_lease_sources.sql 006_source_cursors.sql 011_shard_state.sql 012_source_token.sql)
+FILES=(003_failed_messages.sql 004_source_lease.sql 005_source_lease_sources.sql 006_source_cursors.sql 011_shard_state.sql 012_source_token.sql 016_failed_messages_coordination.sql)
 
 args=()
 for f in "${FILES[@]}"; do

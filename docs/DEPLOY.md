@@ -13,7 +13,7 @@ The short way is `deploy/deploy.sh` after the images are pushed, see [One comman
 2. `kubectl apply -k deploy/` creates the namespace, the ConfigMap `bnpb-config`, the sharded store, the Aggregator and the observability stack.
 3. `deploy/make-secrets.sh` creates the Secrets from `.env`. Run it again after a change, it updates in place.
 4. `deploy/make-schema.sh` creates the ConfigMap `store-schema` from `services/aggregator/migrations`. The store pods start once it and `store-credentials` exist.
-5. `deploy/make-coordination.sh` creates the ConfigMap `coordination-db-init` from the coordination migrations only. The pod `coordination-db` starts once it and `store-credentials` exist.
+5. `deploy/make-coordination.sh` creates the ConfigMap `coordination-db-init` from the coordination migrations only. The pod `coordination-db` starts once it and `store-credentials` exist. Failed messages live there too (#409), so every Aggregator pod sees the same parked and retrying rows. A cluster deployed before #409 has an initialised coordination-db volume that never runs the new files: run `deploy/migrate-failed-messages.sh` once, which creates the table and copies the rows from every store pod.
 
 Postgres builds the tables from `store-schema` only on an empty data directory. A migration added later does not run on a node that already has data.
 
@@ -23,7 +23,7 @@ Postgres builds the tables from `store-schema` only on an empty data directory. 
 |---|---|---|---|
 | `bnpb-config` | ConfigMap | `kubectl apply -k` | Non-secret settings, same names as `.env.example` |
 | `store-schema` | ConfigMap | `make-schema.sh` | The SQL migrations |
-| `coordination-db-init` | ConfigMap | `make-coordination.sh` | `004_source_lease.sql`, `005_source_lease_sources.sql`, `006_source_cursors.sql`, `011_shard_state.sql`, `012_source_token.sql` |
+| `coordination-db-init` | ConfigMap | `make-coordination.sh` | `003_failed_messages.sql`, `004_source_lease.sql`, `005_source_lease_sources.sql`, `006_source_cursors.sql`, `011_shard_state.sql`, `012_source_token.sql`, `016_failed_messages_coordination.sql` |
 | `rabbitmq-definitions` | ConfigMap | `make-rabbitmq.sh` | The broker topology template, render script and config from `infra/rabbitmq` |
 | `bmkg-credentials` | Secret | `make-secrets.sh` | `api_key` |
 | `pvmbg-credentials` | Secret | `make-secrets.sh` | `client_id`, `client_secret`, `one_time_code` |
