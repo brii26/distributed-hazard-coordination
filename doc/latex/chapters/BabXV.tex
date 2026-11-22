@@ -269,11 +269,17 @@ Bukti belum diambil. Setiap kotak merah di bawah menyebut apa yang harus dilampi
 
 \subsection{Kriteria 6: Kombinasi Kegagalan Tanpa Intervensi}
 
-\buktiph{p5-k6-gameday.png}{\textit{Game day} dengan kombinasi kegagalan dan pemulihan tanpa intervensi}{log skrip \textit{game day} yang memuat kegagalan apa yang disuntikkan dan jam mulai serta selesainya, penegasan bahwa tidak ada perintah dari anggota kelompok selama jendela pemulihan, dan keadaan akhir sistem, yaitu semua \textit{pod} Ready, sumber UP, dan peringatan kritis terkirim.}{skrip \textit{game day} (\#324) dan \texttt{kubectl get pods} sebelum dan sesudah jendela pemulihan.}
+\textit{Game day} dijalankan sekali pada 22 November 2026 pukul 22.00 sampai 22.36 pada tiga VM, dengan \texttt{SEED=42} (urutan dan jeda sama bila diulang dengan seed itu), tanpa langkah manual selama \textit{recovery window}. Enam skenario Tester Agent berjalan: \texttt{kill-leader} bersama \textit{outage} PVMBG, \texttt{schema}, \texttt{partition}, \texttt{clock-skew}, \texttt{wipe-node} bersama sensor mati, dan \texttt{kill-store}. Empat selesai bersih dalam 7 sampai 36 detik, \texttt{clock-skew} berakhir sebagai \textit{timeout} 600 detik karena penanda akhir tidak ditemukan, dan \texttt{wipe-node} mematikan node-c. Satu-satunya tindakan skrip pada masa pemulihan adalah menghapus \texttt{tester-run} dan menyalakan VM node-c, karena tanpa itu agen mematikan node lagi pada setiap boot. Lonjakan k6 tidak berjalan karena login pengguna Media dan Lapangan gagal setelah \texttt{user-db} dibuat ulang.
+
+\begin{figure}[H]
+\centering
+\IfFileExists{figures/bukti/p5-k6-gameday.png}{\includegraphics[width=\linewidth,height=0.7\textheight,keepaspectratio]{figures/bukti/p5-k6-gameday.png}}{\ph{figures/bukti/p5-k6-gameday.png belum ada}}
+\caption{Ringkasan \textit{game day}: hasil tiap skenario dan ketersediaan probe per endpoint}
+\end{figure}
 
 \subsection{Kriteria 7: Kegagalan Dijelaskan dari Dashboard dan Trace}
 
-\buktiph{p5-k7-trace.png}{\textit{Dashboard} dan trace dari permintaan yang terdampak}{tangkapan layar \textit{dashboard} \texttt{hazard-overview} pada saat \textit{game day} dan satu \textit{trace} Jaeger dari permintaan yang terdampak, dengan ID korelasi yang sama pada log layanan, serta catatan anggota kelompok yang menjelaskan kegagalan dari bukti itu dan siapa penulis lainnya.}{\env{tests/scenarios/trace-check.sh}, Grafana, dan Jaeger.}
+Penjelasan kegagalan dari \textit{dashboard} dan \textit{trace} oleh anggota selain penyebab kegagalan belum dilakukan. Yang ada adalah checklist per jenis kegagalan di \texttt{doc/EXPLAIN\_FAILURE.md} dan post-mortem yang diisi dari log, ringkasan, dan CSV probe, bukan dari \textit{trace} Jaeger.
 
 \subsection{Kriteria 8: Target Keandalan dan Pemakaiannya}
 
@@ -281,27 +287,27 @@ Target didefinisikan pada bagian Target Keandalan di atas. Pemakaiannya selama \
 
 \subsubsection*{Pemakaian Target pada Game Day}
 
-\ph{BELUM ADA. Isi setelah \textit{game day} (\#324) dijalankan. Atur rentang waktu Grafana ke seluruh run (dari kegagalan pertama sampai pulih), lalu salin dari grup \textit{SLO and error budget}: (a) nilai panel \textit{Critical alert error budget remaining over the selected time range} dan \textit{Read availability error budget remaining}, (b) panel \textit{Critical alerts in the selected time range} yang memuat jumlah terkirim, terlambat, dan belum terkirim, (c) grafik \textit{burn rate} beserta saat melewati garis 6 dan 14,4, dan (d) apakah alert \env{CriticalAlertsUndelivered} atau \texttt{*FastBurn} pernah firing (halaman Alerts Prometheus). Tulis berapa persen budget terpakai dan cantumkan catatan bahwa SLI 2 adalah proksi dan SLI 3 tidak diukur. Jangan memperkirakan angka, hanya menyalin yang terbaca.}
+Target 99,9\% peringatan kritis dalam 5 detik dan 99,5\% ketersediaan baca Tim Lapangan tidak dapat dinilai dari \textit{run} ini untuk peringatan kritis, karena semua kueri aturan SLO di Prometheus tidak mengembalikan data (\texttt{slo:critical\_alert\_sli:ratio\_rate5m} dan turunannya). Untuk baca, ringkasan skrip menyatakan GAGAL: ketersediaan probe 39,477\% terhadap target 99,5\%. Angka itu tidak mengukur kecepatan pemulihan jalur data, karena sebagian besar berasal dari tiga hal yang dijelaskan pada post-mortem di bawah. Budget galat tidak diketahui untuk \textit{run} ini.
 
 \section{Post-mortem Game Day}
 
-\ph{KERANGKA. Bagian ini diisi setelah skrip \textit{game day} (\#324) dijalankan dan template \env{doc/POSTMORTEM_TEMPLATE.md} tersedia. Hapus kotak merah ini setelah semuanya terisi, dan tulis hanya yang benar-benar terjadi.}
+Post-mortem lengkap ada di \texttt{doc/postmortems/2026-11-22-gameday-seed42.md}, diisi dari log skrip, ringkasan, dan CSV probe pada \textit{run} \texttt{20261122-220016}. Hasil skrip adalah GAGAL (ketersediaan baca probe 39,477\% terhadap target 99,5\%). Penyebabnya bukan lambatnya pemulihan jalur data. Sekitar 6 menit API tidak menjawab saat node-c dihapus datanya dan dinyalakan kembali, lalu 10 menit jawaban 401 karena akun probe hilang bersama volume \texttt{user-db}, dan satu dari tiga pemeriksaan baca memakai tipe yang tidak diterima API.
 
 \subsection{Deteksi}
 
-\ph{Isi: kegagalan apa yang disuntikkan dan pada jam berapa (waktu dari log skrip), panel atau alert mana yang pertama kali menunjukkannya (nama panel, nama alert), berapa lama dari mulai kegagalan sampai terdeteksi, dan siapa yang mendeteksi. Lampirkan tangkapan layar panel pada saat itu.}
+Sinyal pertama adalah CSV probe, bukan panel atau aturan: jawaban 000 dan 502 mulai pukul 22.20.23, satu menit setelah \texttt{wipe-node} dimulai pukul 22.19.25. Pukul 22.26.22 probe mulai menerima 401 sampai akhir. Prometheus tidak dapat dibaca oleh skrip, sehingga tidak ada \textit{burn rate} atau peringatan aturan untuk \textit{run} ini. Itu celah deteksi pada \textit{run}, bukan pernyataan tentang aturannya. Pembaca yang hanya melihat angka ketersediaan akan menyimpulkan ada \textit{outage} selama 16 menit, padahal 10 menit di antaranya API menjawab dan hanya akun yang tidak ada.
 
 \subsection{Dampak}
 
-\ph{Isi: sumber yang terdampak, endpoint yang gagal atau melambat, jumlah permintaan gagal, jumlah peringatan kritis terkirim, terlambat, dan belum terkirim (panel hitungan SLO), serta berapa persen \textit{error budget} terpakai (rujuk Subbab Kriteria 8 pada bagian Bukti). Cantumkan juga apakah ada peringatan kritis yang hilang.}
+Per endpoint, probe mencatat: health 1.790 dari 1.876 sampel baik (95,416\%, rentetan gagal terpanjang 48 detik), seismic 1.156 dari 1.947 (59,373\%) dan volcanic 1.153 dari 1.946 (59,250\%), keduanya dengan rentetan gagal terpanjang 791 detik. Pemeriksaan coastal 0 dari 1.956 karena API hanya menerima tipe SEISMIC atau VOLCANIC dan menjawab 400, sehingga kesalahan ada pada probe dan sudah dihapus dari skrip. Jumlah peringatan kritis terkirim, terlambat, dan belum terkirim tidak diketahui karena kueri SLO tidak mengembalikan data. Lonjakan k6 tidak berjalan.
 
 \subsection{Mitigasi}
 
-\ph{Isi: mekanisme yang bekerja sendiri selama jendela pemulihan yaitu \textit{breaker}, backoff, \textit{load shedding}, dan degradasi, beserta bukti waktunya, dan berapa lama sampai sistem pulih. Spesifikasi melarang intervensi selama jendela itu, jadi tulis dengan jelas bila tidak ada.}
+Yang berjalan sendiri: \textit{lease} Aggregator berpindah setelah \texttt{kill-leader} (bersih dalam 8 detik), \texttt{kill-store}, \texttt{schema}, dan \texttt{partition} selesai bersih, dan store serta \texttt{coordination-db} kembali setelah node-c dinyalakan. Yang tidak berjalan sendiri: akun pengguna tidak dikembalikan, karena \texttt{user-db} satu replika pada volume lokal dan setelah dihapus hanya akun Operator seed yang dibuat ulang oleh skrip inisialisasi. Menyalakan VM node-c adalah tindakan skrip, bukan sistem.
 
 \subsection{Perbaikan}
 
-\ph{Isi: akar masalah tiap hal yang tidak berjalan sesuai harapan, perubahan yang dibuat (nomor issue atau commit), dan item yang belum diperbaiki beserta alasannya.}
+Perbaikan yang sudah dibuat: pemeriksaan coastal dihapus dari probe (PR \#426). Yang belum: membuat ulang akun uji atau menanamnya pada skrip inisialisasi \texttt{user-db} sehingga volume yang dihapus tidak terbaca sebagai \textit{outage}, mengambil penanda akhir \texttt{clock-skew} tanpa \texttt{--since-time} (penyebab yang sama dengan yang sudah diperbaiki pada skrip Problem 2, belum diperiksa pada \textit{run} ini), membuat Prometheus terjangkau dari skrip agar verdict SLO punya data, dan menjalankan lonjakan k6 sebelum \texttt{wipe-node}. Daftar lengkap ada pada tabel Perbaikan di dokumen post-mortem.
 
 \section{Batasan yang Disadari}\label{sec:p5m2-batasan}
 
