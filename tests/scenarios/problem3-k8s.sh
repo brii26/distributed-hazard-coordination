@@ -249,10 +249,24 @@ pvmbg_seqs() {
   local cursor="" page i
   for i in $(seq 1 30); do
     page=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000${cursor:+&cursor=$cursor}")
-    jq -r '.items[]?.source_ref_id' <<<"$page"
+    jq -r '.items[]?.source_ref_id | select(startswith("PVMBG-"))' <<<"$page"
     cursor=$(jq -r '.next_cursor // empty' <<<"$page")
     [ -n "$cursor" ] || break
   done | sed 's/^.*-//' | sort -n | uniq
+}
+
+# Each missing PVMBG sequence number after the base, with the status of its row in failed_messages on every store node, if any.
+explain_holes() {
+  local base=$1 seq pod user out="" st
+  user=$(secret store-credentials user)
+  for seq in $(pvmbg_seqs | awk -v base="$base" 'BEGIN { prev = base + 0 } $1 + 0 > base + 0 { for (m = prev + 1; m < $1 + 0; m++) if (prev > 0) print m; prev = $1 + 0 }'); do
+    st=""
+    for pod in $(kc get pods -l app=store -o name); do
+      st="$st$(kc exec "$pod" -- psql -U "$user" -d canonical_store -tAc "SELECT status || '/' || split_part(reason, ':', 1) FROM failed_messages WHERE source_ref_id LIKE 'PVMBG-%-$(printf '%06d' "$seq")'" 2>/dev/null | tr '\n' ',')"
+    done
+    out="$out $seq=${st:-nowhere}"
+  done
+  printf '%s' "$out"
 }
 
 s3() {
@@ -300,6 +314,7 @@ s3() {
   want "S3 no message is left in the retrying state" "$(jq '[.items[]? | select(.status == "retrying")] | length' <<<"$after")" 0
   holes=$(pvmbg_seqs | awk -v base="${max_seq_before:-0}" 'BEGIN { prev = base + 0 } $1 + 0 > base + 0 { if (prev > 0 && $1 + 0 != prev + 1) gap++; prev = $1 + 0 } END { print gap + 0 }')
   want "S3 holes in the PVMBG sequence after the outage (a lost record)" "$holes" 0
+  [ "$holes" -gt 0 ] && info "S3 missing sequence numbers and where they are: $(explain_holes "${max_seq_before:-0}")"
   dup=$(audit_get "/internal/audit/events?source=PVMBG&limit=1000" | jq '[.items[].source_ref_id] | length - (unique | length)')
   want "S3 repeated source_ref_id among the audit events" "$dup" 0
   want "S3 parked messages that disappeared from the auditor's list (#300, #304)" "$(jq -c --argjson b "$parked_before" '[.items[] | select(.status == "parked") | {(.message_id): .attempts}] | add // {} | . as $a | ($b | to_entries | map(select($a[.key] == null)) | length)' <<<"$after")" 0
