@@ -357,3 +357,7 @@ kubectl run np-agg -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels
 kubectl run np-auth -n $NS --rm -it --restart=Never --image=busybox:1.36 --labels=app=auth-service -- nc -zvw2 user-db 5432     # open
 kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice kill-store                                              # still works
 ```
+
+## Failed messages live in the coordination database
+
+`failed_messages` is read and written through the coordination database, so every Aggregator pod sees the same rows (#409). The table comes from `services/aggregator/migrations/016_failed_in_coordination.sql`, which `deploy/make-coordination.sh` puts in the init ConfigMap. The init scripts only run on an empty database, so on a cluster that already has one apply the file by hand, then copy the rows that sit on the store nodes with `deploy/move-failed-messages.sh` (safe to run again). The coordination database is one replica on one node, so these rows are lost with that node.

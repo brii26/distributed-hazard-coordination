@@ -422,14 +422,14 @@ fixtures() {
     "order-new|P3O-$id|{\"report_id\":\"P3O-$id\",\"volcano_id\":\"MERAPI\",\"alert_level\":\"Awas\",\"eruption_count\":5,\"ash_column_height_m\":1000,\"reported_at\":\"2026-10-01T10:00:00Z\"}|now() - interval '5 minutes'"
 }
 
-# Parks the five messages on every store node: a connection of the Aggregator may land on any of them (#409).
+# Parks the five messages in the coordination database, where the Aggregator keeps failed_messages (#409).
 insert_fixtures() {
   local pod user name ref payload at
   user=$(secret store-credentials user)
   RESTORE_FIXTURES=1
-  for pod in $(kc get pods -l app=store -o name); do
+  for pod in pod/coordination-db-0; do
     while IFS='|' read -r name ref payload at; do
-      kc exec -i "$pod" -- psql -U "$user" -d canonical_store -q >/dev/null 2>&1 <<SQL
+      kc exec -i "$pod" -- psql -U "$user" -d coordination -q >/dev/null 2>&1 <<SQL
 INSERT INTO failed_messages (message_id, source, received_at, payload, payload_sha256, payload_size, oversize, reason, retryable, attempts, status, source_ref_id, last_error_at)
 SELECT 'PVMBG:p3-$RUN-$name', 'PVMBG', $at, p, sha256(p), length(p), false, 'schema_incompatible: field ''x'' missing', false, 1, 'parked', '$ref', now()
 FROM (SELECT convert_to('$payload', 'UTF8') AS p) s;
@@ -441,8 +441,8 @@ SQL
 remove_fixtures() {
   local pod user
   user=$(secret store-credentials user)
-  for pod in $(kc get pods -l app=store -o name); do
-    kc exec "$pod" -- psql -U "$user" -d canonical_store -qc "DELETE FROM failed_messages WHERE message_id LIKE 'PVMBG:p3-$RUN-%'" >/dev/null 2>&1
+  for pod in pod/coordination-db-0; do
+    kc exec "$pod" -- psql -U "$user" -d coordination -qc "DELETE FROM failed_messages WHERE message_id LIKE 'PVMBG:p3-$RUN-%'" >/dev/null 2>&1
   done
 }
 

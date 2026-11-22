@@ -23,7 +23,7 @@ func (s *store) claimDue(ctx context.Context, limit int, lease time.Duration) ([
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	q, err := s.db.QueryContext(ctx, claimDueSQL, limit, lease.Seconds())
+	q, err := s.coordDB().QueryContext(ctx, claimDueSQL, limit, lease.Seconds())
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +54,7 @@ func (s *store) recordRetryFailure(ctx context.Context, id string, keep bool, re
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.coordDB().ExecContext(ctx, `
 UPDATE failed_messages SET attempts = attempts + 1, last_error_at = now(), reason = $2, retryable = $3::bool,
     status = CASE WHEN $3::bool THEN 'retrying' ELSE 'parked' END,
     next_attempt_at = CASE WHEN $3::bool THEN now() + make_interval(secs => $4::float8) END
@@ -73,7 +73,7 @@ func (s *store) failedCounts(ctx context.Context) ([]failedCount, error) {
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	q, err := s.db.QueryContext(ctx, `SELECT status, split_part(reason, ':', 1), count(*) FROM failed_messages GROUP BY 1, 2 ORDER BY 1, 2`)
+	q, err := s.coordDB().QueryContext(ctx, `SELECT status, split_part(reason, ':', 1), count(*) FROM failed_messages GROUP BY 1, 2 ORDER BY 1, 2`)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (s *store) parkedPage(ctx context.Context, source string, afterAt time.Time
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	q, err := s.db.QueryContext(ctx, `
+	q, err := s.coordDB().QueryContext(ctx, `
 SELECT message_id, source, received_at, payload, attempts
 FROM failed_messages
 WHERE status = 'parked' AND NOT oversize AND source = $1 AND (received_at, message_id) > ($2, $3)
@@ -130,7 +130,7 @@ func (s *store) countParkedOversize(ctx context.Context, source string) (n int, 
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM failed_messages WHERE status = 'parked' AND oversize AND source = $1`, source).Scan(&n)
+	err = s.coordDB().QueryRowContext(ctx, `SELECT count(*) FROM failed_messages WHERE status = 'parked' AND oversize AND source = $1`, source).Scan(&n)
 
 	return n, err
 }
@@ -149,14 +149,14 @@ func (s *store) recordReplayFailure(ctx context.Context, id, reason string) erro
 	ctx, cancel := context.WithTimeout(ctx, dbQueryTimeout)
 	defer cancel()
 
-	_, err := s.db.ExecContext(ctx, `UPDATE failed_messages SET attempts = attempts + 1, last_error_at = now(), reason = $2 WHERE message_id = $1 AND status = 'parked'`, id, reason)
+	_, err := s.coordDB().ExecContext(ctx, `UPDATE failed_messages SET attempts = attempts + 1, last_error_at = now(), reason = $2 WHERE message_id = $1 AND status = 'parked'`, id, reason)
 
 	return err
 }
 
 // Takes the per-source replay lock on a dedicated connection, so a crashed pod frees it when the connection drops. ok is false when another run holds it.
 func (s *store) lockReplay(ctx context.Context, source string) (release func(), ok bool, err error) {
-	conn, err := s.db.Conn(ctx)
+	conn, err := s.coordDB().Conn(ctx)
 	if err != nil {
 		return nil, false, err
 	}
