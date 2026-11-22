@@ -389,6 +389,15 @@ func (r *rebalancer) writeMetrics(w io.Writer, leader bool) {
 	fmt.Fprintf(&b, "# TYPE store_shards_underreplicated gauge\nstore_shards_underreplicated %d\n", r.under.Load())
 	fmt.Fprintf(&b, "# TYPE store_shards_misplaced gauge\nstore_shards_misplaced %d\n", r.misplaced.Load())
 	fmt.Fprintf(&b, "# TYPE store_repair_rows_total counter\nstore_repair_rows_total %d\n", r.repairRows.Load())
+	b.WriteString("# TYPE store_shard_owner gauge\n")
+
+	live := r.c.live()
+	for sh := range numShards {
+		for _, o := range owners(sh, live) {
+			fmt.Fprintf(&b, "store_shard_owner{shard=\"%d\",node=%q,role=%q} 1\n", sh, o.node.name, o.role)
+		}
+	}
+
 	b.WriteString("# TYPE store_shard_rows gauge\n")
 
 	r.mu.Lock()

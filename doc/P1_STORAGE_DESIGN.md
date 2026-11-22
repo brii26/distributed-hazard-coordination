@@ -124,3 +124,13 @@ With one store node, `cluster` behaves like the single-DB version (every shard h
 ## Kubernetes
 
 `deploy/store.yaml` lives in namespace `sistem-informasi-kebencanaan-bnpb`. It reads Secret `store-credentials` keys `user` and `password` (created by #270 from `.env`). ConfigMap `store-schema` is owned by P1 and built from `services/aggregator/migrations` (`001_hazard_events.sql`, `002_shard.sql`); #270 only adds it to the kustomization. Memory stays 512Mi requests / 1Gi limits and `shared_buffers=128MB`. The hostPath `/var/lib/bnpb-store` must match the Tester Agent wipe-node path (to be verified in #269).
+
+## Loading the earthquake catalog and the skew
+
+`tools/load-quakes` reads the catalog (CSV or JSON, columns named with `--map`), checks and cleans each row, and sends batches of up to 500 to the Aggregator's `POST /internal/admin/ingest` (admin token). The route runs the poller's own mapping, parking and dual write, but moves no cursor, takes no lease and publishes nothing, so old events raise no alerts. `--burst N` sends N events inside one box (the Sunda arc by default) with times in the last 24 hours. With `AUDIT_TOKEN` set the tool prints how many events the Audit API gained and fails if that is fewer than were sent.
+
+`tests/p1/distribution.sh units` prints primary units, replica units and rows per node from `store_shard_owner` and `store_shard_rows`. `tests/p1/distribution.sh watch 180 10` prints the writes each node took, from `store_node_writes_total` summed over the Aggregator pods.
+
+How the system treats uneven data: the shard comes from the hash of the id, not from the place or the time, so a burst in one region does not land on one node. Measured on the local 3 node cluster with a synthetic catalog (2,000 events, 80 percent inside the Sunda arc, then a 3,000 event burst inside it over 3 minutes): the units were 8, 13 and 11 per node (primary and replica), and the writes were 25, 41 and 34 percent. Each event is written to two nodes, so a node's share of writes follows the number of units it holds (8, 13 and 11 of 32), not where the quakes are. The remaining unevenness comes from 16 shards over 3 nodes. The real catalog is only given at the demonstration, so these numbers are synthetic.
+
+`store_shard_owner` shows where each unit should live, computed from the live nodes, not where the rows are right now. During a repair the units table and `store_shard_rows` can disagree until the rebalancer has finished. The loader checks every sent id against the Audit API (recent events first, the whole source if one is missing), so the live BMKG feed cannot hide a lost row.

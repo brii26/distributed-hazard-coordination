@@ -50,6 +50,7 @@ type readAPI struct {
 	auditTok string              // bearer token for the audit routes
 	adminTok string              // bearer token for the admin routes
 	replay   *replayer
+	backfill *backfill
 	failed   func(ctx context.Context, f failedFilter, cursor string, limit int) ([]failedMessage, string, error)
 	fields   *fieldReports // where SaveFieldReport writes; nil answers UNAVAILABLE
 
